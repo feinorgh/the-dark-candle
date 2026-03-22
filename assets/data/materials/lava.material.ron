@@ -1,0 +1,14 @@
+MaterialData(
+    id: 10,
+    name: "Lava",
+    default_phase: Liquid,
+    density: 2700.0,
+    melting_point: None,
+    boiling_point: Some(2773.0),
+    ignition_point: None,
+    hardness: 0.0,
+    color: (1.0, 0.3, 0.0),
+    transparent: false,
+    frozen_into: Some(1),
+    boiled_into: Some(0),
+)

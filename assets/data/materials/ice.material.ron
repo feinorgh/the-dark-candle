@@ -1,0 +1,13 @@
+MaterialData(
+    id: 8,
+    name: "Ice",
+    default_phase: Solid,
+    density: 917.0,
+    melting_point: Some(273.15),
+    boiling_point: None,
+    ignition_point: None,
+    hardness: 0.2,
+    color: (0.7, 0.85, 1.0),
+    transparent: true,
+    melted_into: Some(3),
+)

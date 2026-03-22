@@ -50,6 +50,18 @@ pub struct MaterialData {
     pub color: [f32; 3],
     /// Whether light passes through this material.
     pub transparent: bool,
+    /// MaterialId this becomes when heated above melting_point (solid → liquid).
+    #[serde(default)]
+    pub melted_into: Option<u16>,
+    /// MaterialId this becomes when heated above boiling_point (liquid → gas).
+    #[serde(default)]
+    pub boiled_into: Option<u16>,
+    /// MaterialId this becomes when cooled below melting_point (liquid → solid).
+    #[serde(default)]
+    pub frozen_into: Option<u16>,
+    /// MaterialId this becomes when cooled below boiling_point (gas → liquid).
+    #[serde(default)]
+    pub condensed_into: Option<u16>,
 }
 
 /// Global resource holding handles to loaded data assets.

@@ -9,4 +9,6 @@ MaterialData(
     hardness: 0.0,
     color: (0.2, 0.4, 0.8),
     transparent: true,
+    frozen_into: Some(8),
+    boiled_into: Some(9),
 )
