@@ -1,3 +1,6 @@
+pub mod creatures;
+pub mod items;
+
 use bevy::prelude::*;
 
 pub struct ProcgenPlugin;
