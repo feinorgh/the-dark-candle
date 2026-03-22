@@ -3,7 +3,7 @@
 // Each frame the manager compares the set of currently loaded chunks against
 // the set that *should* be loaded (a sphere of chunks centered on the camera).
 // New chunks are spawned and far-away chunks are despawned. Terrain generation
-// (Phase 1.4) will hook into the spawn path; for now, new chunks are empty air.
+// fills newly created chunks via the TerrainGenerator.
 
 #![allow(dead_code)]
 
@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::chunk::{Chunk, ChunkCoord, CHUNK_SIZE};
+use super::terrain::{TerrainConfig, TerrainGenerator};
 use crate::camera::FpsCamera;
 
 /// How many chunks outward from the camera to load in each axis.
@@ -102,6 +103,7 @@ pub fn update_chunks(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
     radius: Res<ChunkLoadRadius>,
+    terrain_gen: Res<TerrainGeneratorRes>,
     camera_q: Query<&Transform, With<FpsCamera>>,
 ) {
     let Ok(cam_transform) = camera_q.single() else {
@@ -123,7 +125,8 @@ pub fn update_chunks(
     // Spawn new chunks that are in range but not yet loaded
     for &coord in &desired {
         if !chunk_map.contains(&coord) {
-            let chunk = Chunk::new_empty(coord);
+            let mut chunk = Chunk::new_empty(coord);
+            terrain_gen.0.generate_chunk(&mut chunk);
             let origin = coord.world_origin();
             let entity = commands
                 .spawn((
@@ -137,13 +140,20 @@ pub fn update_chunks(
     }
 }
 
+/// Wrapper resource holding the terrain generator.
+#[derive(Resource)]
+pub struct TerrainGeneratorRes(pub TerrainGenerator);
+
 /// Plugin that registers chunk management resources and systems.
 pub struct ChunkManagerPlugin;
 
 impl Plugin for ChunkManagerPlugin {
     fn build(&self, app: &mut App) {
+        let config = TerrainConfig::default();
+        let generator = TerrainGenerator::new(config);
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
+            .insert_resource(TerrainGeneratorRes(generator))
             .add_systems(Update, update_chunks);
     }
 }

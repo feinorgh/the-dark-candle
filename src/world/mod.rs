@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod chunk_manager;
+pub mod terrain;
 pub mod voxel;
 
 use bevy::prelude::*;
