@@ -1,4 +1,5 @@
 pub mod collision;
+pub mod fluids;
 pub mod gravity;
 
 use bevy::prelude::*;
