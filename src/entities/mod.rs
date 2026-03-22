@@ -27,6 +27,8 @@ fn spawn_enemy_when_loaded(
     mut commands: Commands,
     game_assets: Res<GameAssets>,
     enemy_assets: Res<Assets<EnemyData>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut has_spawned: Local<bool>,
 ) {
     if *has_spawned {
@@ -43,12 +45,12 @@ fn spawn_enemy_when_loaded(
             Enemy {
                 speed: goblin_data.speed,
             },
-            Sprite {
-                color: Color::srgb(0.8, 0.2, 0.2),
-                custom_size: Some(Vec2::new(50.0, 50.0)),
+            Mesh3d(meshes.add(Cuboid::new(0.8, 1.2, 0.8))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.8, 0.2, 0.2),
                 ..default()
-            },
-            Transform::from_xyz(0.0, 0.0, 0.0),
+            })),
+            Transform::from_xyz(3.0, 0.6, 0.0),
         ));
 
         *has_spawned = true;
