@@ -1,9 +1,11 @@
+pub mod gravity;
+
 use bevy::prelude::*;
 
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
-    fn build(&self, _app: &mut App) {
-        // Phase 3: gravity, collision, fluid sim, structural integrity, pressure
+    fn build(&self, app: &mut App) {
+        app.add_plugins(gravity::GravityPlugin);
     }
 }
