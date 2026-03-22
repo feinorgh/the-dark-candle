@@ -54,6 +54,7 @@ fn material_color(mat: MaterialId) -> [f32; 4] {
         8 => [0.7, 0.85, 1.0, 0.9],   // ice: pale blue
         9 => [0.9, 0.9, 0.95, 0.3],   // steam: faint white
         10 => [1.0, 0.3, 0.0, 1.0],   // lava: orange-red
+        11 => [0.3, 0.3, 0.3, 1.0],   // ash: dark grey
         _ => [0.8, 0.0, 0.8, 1.0],    // unknown: magenta
     }
 }

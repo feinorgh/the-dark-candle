@@ -12,14 +12,18 @@ use crate::world::voxel::{MaterialId, Voxel};
 /// In the full game this will be loaded from MaterialData; for now use a lookup.
 pub fn conductivity(material: MaterialId) -> f32 {
     match material.0 {
-        0 => 0.02, // air — poor conductor
-        1 => 0.8,  // stone
-        2 => 0.3,  // dirt
-        3 => 0.6,  // water
-        4 => 1.0,  // iron — excellent conductor
-        5 => 0.15, // wood
-        6 => 0.25, // sand
-        7 => 0.1,  // grass
+        0 => 0.02,  // air — poor conductor
+        1 => 0.8,   // stone
+        2 => 0.3,   // dirt
+        3 => 0.6,   // water
+        4 => 1.0,   // iron — excellent conductor
+        5 => 0.15,  // wood
+        6 => 0.25,  // sand
+        7 => 0.1,   // grass
+        8 => 0.5,   // ice
+        9 => 0.03,  // steam
+        10 => 0.9,  // lava
+        11 => 0.15, // ash
         _ => 0.1,
     }
 }

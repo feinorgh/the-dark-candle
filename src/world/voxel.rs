@@ -19,6 +19,7 @@ impl MaterialId {
     pub const ICE: Self = Self(8);
     pub const STEAM: Self = Self(9);
     pub const LAVA: Self = Self(10);
+    pub const ASH: Self = Self(11);
 
     pub fn is_air(self) -> bool {
         self.0 == 0

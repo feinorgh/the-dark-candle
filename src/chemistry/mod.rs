@@ -1,3 +1,4 @@
+pub mod fire_propagation;
 pub mod heat;
 pub mod reactions;
 pub mod state_transitions;

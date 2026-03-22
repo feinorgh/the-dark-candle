@@ -1,0 +1,12 @@
+MaterialData(
+    id: 11,
+    name: "Ash",
+    default_phase: Solid,
+    density: 500.0,
+    melting_point: Some(1273.0),
+    boiling_point: None,
+    ignition_point: None,
+    hardness: 0.05,
+    color: (0.3, 0.3, 0.3),
+    transparent: false,
+)
