@@ -1,3 +1,4 @@
+pub mod chunk;
 pub mod voxel;
 
 use bevy::prelude::*;
