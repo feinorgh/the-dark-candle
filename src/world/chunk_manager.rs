@@ -154,7 +154,10 @@ impl Plugin for ChunkManagerPlugin {
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
             .insert_resource(TerrainGeneratorRes(generator))
-            .add_systems(Update, update_chunks);
+            .add_systems(
+                Update,
+                update_chunks.in_set(super::WorldSet::ChunkManagement),
+            );
     }
 }
 

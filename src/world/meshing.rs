@@ -406,7 +406,7 @@ pub struct MeshingPlugin;
 
 impl Plugin for MeshingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, mesh_dirty_chunks);
+        app.add_systems(Update, mesh_dirty_chunks.in_set(super::WorldSet::Meshing));
     }
 }
 

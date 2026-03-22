@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod chunk_manager;
+pub mod collision;
 pub mod meshing;
 pub mod terrain;
 pub mod voxel;
@@ -9,11 +10,21 @@ use bevy::prelude::*;
 use chunk_manager::ChunkManagerPlugin;
 use meshing::MeshingPlugin;
 
+/// System set ordering for the world pipeline.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WorldSet {
+    /// Chunk loading/unloading.
+    ChunkManagement,
+    /// Mesh generation from voxel data.
+    Meshing,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ChunkManagerPlugin)
+        app.configure_sets(Update, WorldSet::Meshing.after(WorldSet::ChunkManagement))
+            .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)
             .add_systems(Startup, setup_scene);
     }
