@@ -7,7 +7,9 @@ pub struct DataPlugin;
 impl Plugin for DataPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(RonAssetPlugin::<EnemyData>::new(&["enemy.ron"]))
-            .add_plugins(RonAssetPlugin::<MaterialData>::new(&["material.ron"]));
+            .add_plugins(RonAssetPlugin::<MaterialData>::new(&["material.ron"]))
+            .add_plugins(RonAssetPlugin::<CreatureData>::new(&["creature.ron"]))
+            .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]));
     }
 }
 
@@ -68,6 +70,117 @@ pub struct MaterialData {
 #[derive(Resource, Default)]
 pub struct GameAssets {
     pub goblin_data: Handle<EnemyData>,
+}
+
+// --- Creature Data ---
+
+/// Dietary classification for creatures.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Diet {
+    Herbivore,
+    Carnivore,
+    Omnivore,
+    Scavenger,
+}
+
+/// Size category affecting collision, visibility, and resource needs.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodySize {
+    Tiny,
+    Small,
+    Medium,
+    Large,
+    Huge,
+}
+
+/// Base statistics for a creature species, loaded from `.creature.ron`.
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
+pub struct CreatureData {
+    /// Unique species identifier string (e.g., "wolf", "deer").
+    pub species: String,
+    /// Display name shown to the player.
+    pub display_name: String,
+    /// Base health points.
+    pub base_health: f32,
+    /// Base movement speed (voxels per second).
+    pub base_speed: f32,
+    /// Base attack damage (0 for passive creatures).
+    #[serde(default)]
+    pub base_attack: f32,
+    /// Body size category.
+    pub body_size: BodySize,
+    /// Dietary classification.
+    pub diet: Diet,
+    /// Collision half-extents (x, y, z) for AABB.
+    pub hitbox: (f32, f32, f32),
+    /// Base color for rendering (RGB, 0.0–1.0).
+    pub color: [f32; 3],
+    /// How much variation is allowed in stats (0.0–1.0, fraction of base).
+    #[serde(default = "default_variation")]
+    pub stat_variation: f32,
+    /// Preferred biome names (empty = spawns anywhere).
+    #[serde(default)]
+    pub preferred_biomes: Vec<String>,
+    /// Whether the creature is hostile to the player by default.
+    #[serde(default)]
+    pub hostile: bool,
+    /// Lifespan in simulation ticks (None = immortal).
+    #[serde(default)]
+    pub lifespan: Option<u32>,
+}
+
+fn default_variation() -> f32 {
+    0.1
+}
+
+// --- Item Data ---
+
+/// Category of item affecting how it can be used.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemCategory {
+    Tool,
+    Weapon,
+    Armor,
+    Food,
+    Material,
+    Container,
+    Misc,
+}
+
+/// Template for procedural item generation, loaded from `.item.ron`.
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
+pub struct ItemData {
+    /// Unique item type identifier (e.g., "sword", "pickaxe").
+    pub item_type: String,
+    /// Display name template (may include "{material}" placeholder).
+    pub display_name: String,
+    /// Item category.
+    pub category: ItemCategory,
+    /// MaterialId this item is primarily made of (influences properties).
+    pub primary_material: u16,
+    /// Base weight in kg (modified by material density).
+    pub base_weight: f32,
+    /// Base durability (modified by material hardness).
+    pub base_durability: f32,
+    /// Base damage for weapons/tools (0 for non-weapons).
+    #[serde(default)]
+    pub base_damage: f32,
+    /// Base armor value (0 for non-armor).
+    #[serde(default)]
+    pub base_armor: f32,
+    /// Nutritional value if food (calories, 0 for non-food).
+    #[serde(default)]
+    pub nutrition: f32,
+    /// Whether this item can be stacked in inventory.
+    #[serde(default)]
+    pub stackable: bool,
+    /// Maximum stack size (only relevant if stackable).
+    #[serde(default = "default_max_stack")]
+    pub max_stack: u32,
+}
+
+fn default_max_stack() -> u32 {
+    64
 }
 
 #[cfg(test)]
@@ -218,6 +331,195 @@ mod tests {
             assert!(
                 data.hardness >= 0.0 && data.hardness <= 1.0,
                 "{}: hardness out of range",
+                path.display()
+            );
+        }
+    }
+
+    // --- CreatureData tests ---
+
+    #[test]
+    fn creature_data_deserializes_from_ron() {
+        let ron_str = r#"
+            CreatureData(
+                species: "wolf",
+                display_name: "Grey Wolf",
+                base_health: 80.0,
+                base_speed: 6.0,
+                base_attack: 15.0,
+                body_size: Medium,
+                diet: Carnivore,
+                hitbox: (0.4, 0.5, 0.8),
+                color: (0.5, 0.5, 0.5),
+                hostile: true,
+            )
+        "#;
+        let data: CreatureData =
+            ron::from_str(ron_str).expect("Failed to deserialize CreatureData");
+        assert_eq!(data.species, "wolf");
+        assert_eq!(data.base_health, 80.0);
+        assert_eq!(data.diet, Diet::Carnivore);
+        assert_eq!(data.body_size, BodySize::Medium);
+        assert!(data.hostile);
+        assert_eq!(data.stat_variation, 0.1); // default
+        assert!(data.preferred_biomes.is_empty()); // default
+        assert!(data.lifespan.is_none()); // default
+    }
+
+    #[test]
+    fn creature_data_with_all_fields() {
+        let ron_str = r#"
+            CreatureData(
+                species: "deer",
+                display_name: "Forest Deer",
+                base_health: 50.0,
+                base_speed: 8.0,
+                base_attack: 0.0,
+                body_size: Large,
+                diet: Herbivore,
+                hitbox: (0.5, 0.7, 1.0),
+                color: (0.6, 0.4, 0.2),
+                stat_variation: 0.2,
+                preferred_biomes: ["forest", "meadow"],
+                hostile: false,
+                lifespan: Some(50000),
+            )
+        "#;
+        let data: CreatureData = ron::from_str(ron_str).expect("Failed to deserialize deer");
+        assert_eq!(data.stat_variation, 0.2);
+        assert_eq!(data.preferred_biomes, vec!["forest", "meadow"]);
+        assert_eq!(data.lifespan, Some(50000));
+        assert!(!data.hostile);
+    }
+
+    #[test]
+    fn creature_data_rejects_missing_species() {
+        let ron_str = r#"CreatureData(display_name: "?", base_health: 1.0, base_speed: 1.0, body_size: Tiny, diet: Omnivore, hitbox: (0.1, 0.1, 0.1), color: (1.0, 1.0, 1.0))"#;
+        assert!(ron::from_str::<CreatureData>(ron_str).is_err());
+    }
+
+    #[test]
+    fn all_creature_ron_files_are_valid() {
+        let pattern = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/data/creatures/*.creature.ron"
+        );
+        let files: Vec<_> = glob::glob(pattern)
+            .expect("Failed to read glob pattern")
+            .collect();
+
+        assert!(
+            !files.is_empty(),
+            "No .creature.ron files found in assets/data/creatures/"
+        );
+
+        for entry in files {
+            let path = entry.expect("Failed to read glob entry");
+            let contents = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+            let data: CreatureData = ron::from_str(&contents)
+                .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
+            assert!(
+                !data.species.is_empty(),
+                "{}: species is empty",
+                path.display()
+            );
+            assert!(
+                data.base_health > 0.0,
+                "{}: health must be positive",
+                path.display()
+            );
+            assert!(
+                data.base_speed > 0.0,
+                "{}: speed must be positive",
+                path.display()
+            );
+        }
+    }
+
+    // --- ItemData tests ---
+
+    #[test]
+    fn item_data_deserializes_from_ron() {
+        let ron_str = r#"
+            ItemData(
+                item_type: "sword",
+                display_name: "Iron Sword",
+                category: Weapon,
+                primary_material: 4,
+                base_weight: 2.5,
+                base_durability: 100.0,
+                base_damage: 20.0,
+            )
+        "#;
+        let data: ItemData = ron::from_str(ron_str).expect("Failed to deserialize ItemData");
+        assert_eq!(data.item_type, "sword");
+        assert_eq!(data.category, ItemCategory::Weapon);
+        assert_eq!(data.primary_material, 4); // Iron
+        assert_eq!(data.base_damage, 20.0);
+        assert!(!data.stackable); // default
+        assert_eq!(data.max_stack, 64); // default
+    }
+
+    #[test]
+    fn item_data_food_with_nutrition() {
+        let ron_str = r#"
+            ItemData(
+                item_type: "apple",
+                display_name: "Apple",
+                category: Food,
+                primary_material: 0,
+                base_weight: 0.2,
+                base_durability: 10.0,
+                nutrition: 150.0,
+                stackable: true,
+                max_stack: 16,
+            )
+        "#;
+        let data: ItemData = ron::from_str(ron_str).expect("Failed to deserialize food");
+        assert_eq!(data.category, ItemCategory::Food);
+        assert_eq!(data.nutrition, 150.0);
+        assert!(data.stackable);
+        assert_eq!(data.max_stack, 16);
+    }
+
+    #[test]
+    fn item_data_rejects_missing_fields() {
+        let ron_str = r#"ItemData(item_type: "rock", display_name: "Rock")"#;
+        assert!(ron::from_str::<ItemData>(ron_str).is_err());
+    }
+
+    #[test]
+    fn all_item_ron_files_are_valid() {
+        let pattern = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/data/items/*.item.ron");
+        let files: Vec<_> = glob::glob(pattern)
+            .expect("Failed to read glob pattern")
+            .collect();
+
+        assert!(
+            !files.is_empty(),
+            "No .item.ron files found in assets/data/items/"
+        );
+
+        for entry in files {
+            let path = entry.expect("Failed to read glob entry");
+            let contents = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+            let data: ItemData = ron::from_str(&contents)
+                .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
+            assert!(
+                !data.item_type.is_empty(),
+                "{}: item_type is empty",
+                path.display()
+            );
+            assert!(
+                data.base_weight >= 0.0,
+                "{}: negative weight",
+                path.display()
+            );
+            assert!(
+                data.base_durability >= 0.0,
+                "{}: negative durability",
                 path.display()
             );
         }

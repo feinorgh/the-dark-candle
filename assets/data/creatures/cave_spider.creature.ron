@@ -1,0 +1,15 @@
+CreatureData(
+    species: "cave_spider",
+    display_name: "Cave Spider",
+    base_health: 25.0,
+    base_speed: 4.0,
+    base_attack: 10.0,
+    body_size: Small,
+    diet: Carnivore,
+    hitbox: (0.3, 0.15, 0.3),
+    color: (0.2, 0.15, 0.1),
+    stat_variation: 0.25,
+    preferred_biomes: ["cave"],
+    hostile: true,
+    lifespan: Some(15000),
+)

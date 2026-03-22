@@ -1,0 +1,15 @@
+CreatureData(
+    species: "rabbit",
+    display_name: "Wild Rabbit",
+    base_health: 15.0,
+    base_speed: 10.0,
+    base_attack: 0.0,
+    body_size: Small,
+    diet: Herbivore,
+    hitbox: (0.15, 0.15, 0.25),
+    color: (0.7, 0.65, 0.55),
+    stat_variation: 0.1,
+    preferred_biomes: ["meadow", "forest"],
+    hostile: false,
+    lifespan: Some(20000),
+)
