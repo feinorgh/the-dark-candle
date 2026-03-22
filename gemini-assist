@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+cleanup() {
+    rm .current_context.txt
+}
+
+trap cleanup EXIT
+
+main() {
+    local PROMPT
+    PROMPT="$1"
+    cat AGENTS.md docs/02_architecture.md src/main.rs > .current_context.txt
+    printf "*** Asking Gemini for assistance...\n"
+    gemini-cli "Read the attached project context. $PROMPT" --file .current_context.txt
+}
+
+main "$@"
