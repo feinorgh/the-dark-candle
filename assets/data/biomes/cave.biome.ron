@@ -1,0 +1,14 @@
+BiomeData(
+    name: "cave",
+    display_name: "Underground Cave",
+    height_range: (0.0, 45.0),
+    temperature_range: (270.0, 295.0),
+    moisture_range: (0.2, 0.8),
+    surface_material: 1,
+    creature_spawns: [
+        SpawnEntry(id: "cave_spider", weight: 5.0, max_per_chunk: 4),
+    ],
+    item_spawns: [
+        SpawnEntry(id: "pickaxe", weight: 0.5, max_per_chunk: 1),
+    ],
+)

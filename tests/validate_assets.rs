@@ -269,3 +269,58 @@ fn all_item_ron_files_are_valid() {
         );
     }
 }
+
+// --- Biome RON validation ---
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct SpawnEntry {
+    id: String,
+    weight: f32,
+    max_per_chunk: u32,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct BiomeData {
+    name: String,
+    display_name: String,
+    height_range: (f32, f32),
+    temperature_range: (f32, f32),
+    moisture_range: (f32, f32),
+    surface_material: u16,
+    #[serde(default)]
+    creature_spawns: Vec<SpawnEntry>,
+    #[serde(default)]
+    item_spawns: Vec<SpawnEntry>,
+}
+
+#[test]
+fn all_biome_ron_files_are_valid() {
+    let pattern = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/data/biomes/*.biome.ron"
+    );
+    let files: Vec<_> = glob::glob(pattern)
+        .expect("Failed to read glob pattern")
+        .collect();
+
+    assert!(
+        !files.is_empty(),
+        "No .biome.ron files found in assets/data/biomes/"
+    );
+
+    for entry in files {
+        let path = entry.expect("Failed to read glob entry");
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+        let data: BiomeData = ron::from_str(&contents)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
+        assert!(!data.name.is_empty(), "{}: name is empty", path.display());
+        assert!(
+            data.height_range.0 <= data.height_range.1,
+            "{}: invalid height_range",
+            path.display()
+        );
+    }
+}

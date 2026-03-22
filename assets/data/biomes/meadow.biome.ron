@@ -1,0 +1,13 @@
+BiomeData(
+    name: "meadow",
+    display_name: "Open Meadow",
+    height_range: (55.0, 75.0),
+    temperature_range: (270.0, 310.0),
+    moisture_range: (0.2, 0.6),
+    surface_material: 7,
+    creature_spawns: [
+        SpawnEntry(id: "rabbit", weight: 10.0, max_per_chunk: 15),
+        SpawnEntry(id: "deer", weight: 3.0, max_per_chunk: 3),
+    ],
+    item_spawns: [],
+)

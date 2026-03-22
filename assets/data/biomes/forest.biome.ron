@@ -1,0 +1,16 @@
+BiomeData(
+    name: "forest",
+    display_name: "Dense Forest",
+    height_range: (55.0, 80.0),
+    temperature_range: (260.0, 310.0),
+    moisture_range: (0.4, 1.0),
+    surface_material: 7,
+    creature_spawns: [
+        SpawnEntry(id: "wolf", weight: 2.0, max_per_chunk: 3),
+        SpawnEntry(id: "deer", weight: 5.0, max_per_chunk: 5),
+        SpawnEntry(id: "rabbit", weight: 8.0, max_per_chunk: 10),
+    ],
+    item_spawns: [
+        SpawnEntry(id: "apple", weight: 3.0, max_per_chunk: 5),
+    ],
+)
