@@ -1,13 +1,17 @@
 pub mod chunk;
+pub mod chunk_manager;
 pub mod voxel;
 
 use bevy::prelude::*;
+
+use chunk_manager::ChunkManagerPlugin;
 
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_placeholder_scene);
+        app.add_plugins(ChunkManagerPlugin)
+            .add_systems(Startup, setup_placeholder_scene);
     }
 }
 
