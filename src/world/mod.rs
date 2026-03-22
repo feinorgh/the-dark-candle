@@ -1,3 +1,5 @@
+pub mod voxel;
+
 use bevy::prelude::*;
 
 pub struct WorldPlugin;
