@@ -1,0 +1,12 @@
+MaterialData(
+    id: 4,
+    name: "Iron",
+    default_phase: Solid,
+    density: 7874.0,
+    melting_point: Some(1811.0),
+    boiling_point: Some(3134.0),
+    ignition_point: None,
+    hardness: 0.8,
+    color: (0.56, 0.55, 0.55),
+    transparent: false,
+)

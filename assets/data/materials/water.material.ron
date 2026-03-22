@@ -1,0 +1,12 @@
+MaterialData(
+    id: 3,
+    name: "Water",
+    default_phase: Liquid,
+    density: 1000.0,
+    melting_point: Some(273.15),
+    boiling_point: Some(373.15),
+    ignition_point: None,
+    hardness: 0.0,
+    color: (0.2, 0.4, 0.8),
+    transparent: true,
+)

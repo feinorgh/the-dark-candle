@@ -1,0 +1,12 @@
+MaterialData(
+    id: 2,
+    name: "Dirt",
+    default_phase: Solid,
+    density: 1500.0,
+    melting_point: Some(1900.0),
+    boiling_point: None,
+    ignition_point: None,
+    hardness: 0.2,
+    color: (0.45, 0.32, 0.18),
+    transparent: false,
+)

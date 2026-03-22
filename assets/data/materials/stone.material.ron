@@ -1,0 +1,12 @@
+MaterialData(
+    id: 1,
+    name: "Stone",
+    default_phase: Solid,
+    density: 2700.0,
+    melting_point: Some(1473.0),
+    boiling_point: Some(2773.0),
+    ignition_point: None,
+    hardness: 0.9,
+    color: (0.5, 0.5, 0.5),
+    transparent: false,
+)

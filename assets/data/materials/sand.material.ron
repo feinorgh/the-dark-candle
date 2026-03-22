@@ -1,0 +1,12 @@
+MaterialData(
+    id: 6,
+    name: "Sand",
+    default_phase: Solid,
+    density: 1600.0,
+    melting_point: Some(1973.0),
+    boiling_point: Some(2503.0),
+    ignition_point: None,
+    hardness: 0.15,
+    color: (0.85, 0.78, 0.55),
+    transparent: false,
+)

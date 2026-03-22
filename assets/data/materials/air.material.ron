@@ -1,0 +1,12 @@
+MaterialData(
+    id: 0,
+    name: "Air",
+    default_phase: Gas,
+    density: 1.225,
+    melting_point: None,
+    boiling_point: None,
+    ignition_point: None,
+    hardness: 0.0,
+    color: (0.8, 0.9, 1.0),
+    transparent: true,
+)

@@ -1,0 +1,12 @@
+MaterialData(
+    id: 5,
+    name: "Wood",
+    default_phase: Solid,
+    density: 600.0,
+    melting_point: None,
+    boiling_point: None,
+    ignition_point: Some(573.0),
+    hardness: 0.3,
+    color: (0.6, 0.4, 0.2),
+    transparent: false,
+)
