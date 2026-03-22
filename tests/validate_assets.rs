@@ -81,3 +81,47 @@ fn all_material_ron_files_are_valid() {
             .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
     }
 }
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct ReactionData {
+    name: String,
+    input_a: u16,
+    input_b: Option<u16>,
+    min_temperature: f32,
+    max_temperature: f32,
+    output_a: u16,
+    output_b: Option<u16>,
+    heat_output: f32,
+}
+
+/// Validate that every .reaction.ron file in assets/data/reactions/ deserializes correctly.
+#[test]
+fn all_reaction_ron_files_are_valid() {
+    let pattern = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/data/reactions/*.reaction.ron"
+    );
+    let files: Vec<_> = glob::glob(pattern)
+        .expect("Failed to read glob pattern")
+        .collect();
+
+    assert!(
+        !files.is_empty(),
+        "No .reaction.ron files found in assets/data/reactions/"
+    );
+
+    for entry in files {
+        let path = entry.expect("Failed to read glob entry");
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+        let data: ReactionData = ron::from_str(&contents)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
+        assert!(!data.name.is_empty(), "{}: name is empty", path.display());
+        assert!(
+            data.min_temperature <= data.max_temperature,
+            "{}: min_temp > max_temp",
+            path.display()
+        );
+    }
+}
