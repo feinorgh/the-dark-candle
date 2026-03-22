@@ -73,6 +73,35 @@ As the project moves beyond pure simulation into Bevy-integrated systems:
 - **Maintain the pure-logic / Bevy-integration split** — keep game logic testable without a running app, even when adding rendering or input handling.
 - **Expect more Bevy API friction** — rendering, assets, and windowing change between Bevy versions more than ECS fundamentals do. Document every workaround in AGENTS.md.
 
+## Model Selection Guide
+
+Different tasks benefit from different model tiers. The key variable for this project is **Bevy 0.18 hallucination risk** — every model tends to generate older Bevy API, and premium models follow AGENTS.md constraints more reliably.
+
+### By Task Type
+
+| Task | Recommended Tier | Example Models | Notes |
+|------|-----------------|----------------|-------|
+| Architecture & design | Premium | `claude-opus-4.6`, `gpt-5.4` | System interactions, trade-offs, design review |
+| New simulation systems | Premium / Standard | `claude-opus-4.6`, `claude-sonnet-4.6` | Rust + ECS patterns; high hallucination risk on Bevy code |
+| Debugging subtle bugs | Premium | `claude-opus-4.6` | Edge cases need careful logical reasoning |
+| Routine implementation | Standard | `claude-sonnet-4.6`, `gpt-5.3-codex` | Fine when module patterns are established |
+| Refactoring / clippy fixes | Standard / Fast | `gpt-5.1-codex`, `claude-sonnet-4.5` | Mechanical transforms, low reasoning demand |
+| RON data files | Fast | `claude-haiku-4.5`, `gpt-4.1` | Structured data authoring |
+| Exploration / search | Fast | `claude-haiku-4.5` | Finding files and patterns (explore agent default) |
+| Test writing | Standard | `claude-sonnet-4.6` | Needs module pattern awareness, not full architecture |
+| Documentation | Standard | `claude-sonnet-4.5`, `gpt-5.1` | Prose quality, not code-heavy |
+
+### Cost Strategy
+
+Use a premium model (Opus) as the **session orchestrator** for planning, reviewing, and Bevy-touching work. Delegate sub-agent work to standard/fast models via the `model` parameter on task calls. This gives premium reasoning where hallucination risk is highest and speed where it isn't.
+
+### Key Observations
+
+- **Bevy-touching code** (cameras, spawning, ECS systems, windowing) is the riskiest task — always use a premium or top-tier standard model with AGENTS.md loaded.
+- **Pure simulation logic** (physics, chemistry, biology, behavior, social) has no Bevy dependency, so any standard-tier model handles it well. Sonnet-class is the sweet spot.
+- **Codex-family models** excel at mechanical code tasks (implementing a function from a spec, writing tests that follow existing patterns) but may not reason as deeply about architectural decisions.
+- **Context window matters more than model quality** for this project — our modules are well-isolated specifically so an agent can load one module's AGENTS.md and work effectively without the whole codebase.
+
 ## Current Codebase Structure
 
 For reference, the simulation stack as of Phase 7 completion:
