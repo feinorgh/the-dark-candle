@@ -1,3 +1,4 @@
+pub mod collision;
 pub mod gravity;
 
 use bevy::prelude::*;
@@ -6,6 +7,6 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(gravity::GravityPlugin);
+        app.add_plugins((gravity::GravityPlugin, collision::CollisionPlugin));
     }
 }
