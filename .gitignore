@@ -1,0 +1,19 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Bevy dynamic linking libraries (dev-only, generated at runtime)
+*.so
+*.dylib
+*.dll

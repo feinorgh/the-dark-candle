@@ -1,0 +1,5 @@
+EnemyData(
+    name: "Goblin",
+    health: 50.0,
+    speed: 2.5,
+)

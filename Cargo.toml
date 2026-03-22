@@ -1,0 +1,25 @@
+[package]
+name = "the_dark_candle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The core engine (using the Wayland feature for modern Linux)
+bevy = { version = "0.18", features = ["wayland"] }
+
+# Data-driven pipeline dependencies
+serde = { version = "1.0", features = ["derive"] }
+# Allows loading .ron and .yaml files directly as Bevy Assets
+bevy_common_assets = { version = "0.15", features = ["ron", "yaml"] } 
+
+# Enable maximum optimizations for dependencies, but keep your code compiling fast
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+# Optimize the final Windows/Linux release build
+[profile.release]
+lto = "thin"
+codegen-units = 1
