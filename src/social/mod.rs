@@ -1,9 +1,14 @@
+pub mod factions;
+pub mod group_behaviors;
+pub mod relationships;
+pub mod reputation;
+
 use bevy::prelude::*;
 
 pub struct SocialPlugin;
 
 impl Plugin for SocialPlugin {
     fn build(&self, _app: &mut App) {
-        // Phase 7: relationships, factions, reputation, group behaviors
+        // Social systems run on FixedUpdate after behavior
     }
 }
