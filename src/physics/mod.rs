@@ -2,6 +2,7 @@ pub mod collision;
 pub mod fluids;
 pub mod gravity;
 pub mod integrity;
+pub mod pressure;
 
 use bevy::prelude::*;
 
