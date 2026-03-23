@@ -1,77 +1,98 @@
-// Physics constants – data-driven via `physics_constants.ron`.
+// Physics constants — split into universal and world-specific.
 //
-// The canonical values live in `assets/data/physics_constants.ron` and are
-// loaded at runtime through `bevy_common_assets`.  A `Default` impl provides
-// the same NIST / ISO reference values so non-ECS code and tests can use
-// `PhysicsConstants::default()`.
+// Universal constants (Stefan-Boltzmann, gas constant, etc.) are loaded
+// from `assets/data/universal_constants.ron` and never change between worlds.
 //
+// World constants (gravity, atmosphere, etc.) are loaded from
+// `assets/data/world_constants.ron` and can be overridden per world.
+//
+// `Default` impls provide NIST/ISO reference values for tests and non-ECS code.
 // Backward-compatible module-level `pub const` items and free functions are
-// retained so that existing callers (`constants::GRAVITY`, etc.) keep working.
+// retained so existing callers (`constants::GRAVITY`, etc.) keep working.
 //
 // Unit system: strict SI (meters, kilograms, seconds, Kelvin, Pascals, etc.)
-// Spatial mapping: 1 voxel = 1 meter.
+// Spatial mapping: 1 voxel = 1 meter (configurable via `voxel_size`).
 //
 // Sources:
 //   - NIST CODATA 2018 (fundamental constants)
-//   - ISO 2533:1975 (standard atmosphere)
+//   - ISO 2533:1975 (standard atmosphere / Earth defaults)
 
 use bevy::prelude::*;
 use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
-// Data-driven struct
+// Universal constants — same in any world
 // ---------------------------------------------------------------------------
 
-/// Physics constants loaded from `physics_constants.ron`.
+/// Universal physical constants loaded from `universal_constants.ron`.
 ///
-/// All values use strict SI units.
-/// Provides a `Default` impl with NIST/ISO standard values so tests
-/// and non-ECS code can use `PhysicsConstants::default()`.
+/// These are fundamental constants of nature that do not vary between worlds.
 #[derive(Deserialize, Asset, TypePath, Debug, Clone, Resource)]
-pub struct PhysicsConstants {
-    /// Standard gravitational acceleration (m/s²). NIST: 9.80665
-    pub gravity: f32,
-    /// Standard atmospheric pressure at sea level (Pa). ISO 2533: 101325
-    pub atmospheric_pressure: f32,
-    /// Stefan–Boltzmann constant (W/(m²·K⁴)). NIST CODATA 2018
+pub struct UniversalConstants {
+    /// Stefan–Boltzmann constant (W/(m²·K⁴)). NIST CODATA 2018.
     pub stefan_boltzmann: f64,
-    /// Universal gas constant (J/(mol·K)). NIST CODATA 2018
+    /// Universal (molar) gas constant (J/(mol·K)). NIST CODATA 2018.
     pub gas_constant: f32,
-    /// Mean molar mass of dry air (kg/mol). ISO 2533
-    pub molar_mass_air: f32,
-    /// Triple point of water (K). NIST ITS-90
+    /// Triple point of water (K). NIST ITS-90.
     pub water_triple_point: f32,
-    /// Standard sea-level temperature (K). ISO 2533 (15 °C)
-    pub sea_level_temperature: f32,
-    /// Voxel edge length (m). Defines spatial scale.
-    pub voxel_size: f32,
-    /// Sea-level Y coordinate in voxel world (voxels above y = 0)
-    pub sea_level_y: f32,
-    /// Density of dry air at sea level and 15 °C (kg/m³). ISO 2533
-    pub air_density_sea_level: f32,
 }
 
-impl Default for PhysicsConstants {
+impl Default for UniversalConstants {
     fn default() -> Self {
         Self {
-            gravity: 9.806_65,
-            atmospheric_pressure: 101_325.0,
             stefan_boltzmann: 5.670_374_419e-8,
             gas_constant: 8.314_462,
-            molar_mass_air: 0.028_964_7,
             water_triple_point: 273.16,
-            sea_level_temperature: 288.15,
-            voxel_size: 1.0,
-            sea_level_y: 64.0,
-            air_density_sea_level: 1.225,
         }
     }
 }
 
-impl PhysicsConstants {
+impl UniversalConstants {
     /// Absolute zero (K). Lower bound for all temperatures.
     pub const ABSOLUTE_ZERO: f32 = 0.0;
+}
 
+// ---------------------------------------------------------------------------
+// World constants — vary per planet / world
+// ---------------------------------------------------------------------------
+
+/// World-specific constants loaded from `world_constants.ron`.
+///
+/// These define the physical environment of a particular world.
+/// Defaults are Earth values from ISO 2533:1975.
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, Resource)]
+pub struct WorldConstants {
+    /// Surface gravitational acceleration (m/s²). Earth: 9.80665.
+    pub gravity: f32,
+    /// Atmospheric pressure at sea level (Pa). Earth: 101325.
+    pub atmospheric_pressure: f32,
+    /// Mean molar mass of atmosphere (kg/mol). Earth air: 0.0289647.
+    pub molar_mass_air: f32,
+    /// Sea-level temperature (K). Earth: 288.15 (15 °C).
+    pub sea_level_temperature: f32,
+    /// Air density at sea level (kg/m³). Earth: 1.225.
+    pub air_density_sea_level: f32,
+    /// Sea-level Y coordinate in voxel world (voxels above y=0).
+    pub sea_level_y: f32,
+    /// Voxel edge length (m). Defines spatial scale.
+    pub voxel_size: f32,
+}
+
+impl Default for WorldConstants {
+    fn default() -> Self {
+        Self {
+            gravity: 9.806_65,
+            atmospheric_pressure: 101_325.0,
+            molar_mass_air: 0.028_964_7,
+            sea_level_temperature: 288.15,
+            air_density_sea_level: 1.225,
+            sea_level_y: 64.0,
+            voxel_size: 1.0,
+        }
+    }
+}
+
+impl WorldConstants {
     /// Voxel face area (m²).
     pub fn voxel_face_area(&self) -> f32 {
         self.voxel_size * self.voxel_size
@@ -87,20 +108,6 @@ impl PhysicsConstants {
         self.sea_level_temperature
     }
 
-    /// Barometric formula: pressure at a given altitude above sea level.
-    ///
-    /// `P(h) = P₀ × exp(−M × g × h / (R × T))`
-    pub fn pressure_at_altitude(&self, altitude: f32, temperature_k: f32) -> f32 {
-        let exponent =
-            -(self.molar_mass_air * self.gravity * altitude) / (self.gas_constant * temperature_k);
-        self.atmospheric_pressure * exponent.exp()
-    }
-
-    /// Air density via ideal gas law: ρ = PM / (RT)
-    pub fn air_density(&self, pressure_pa: f32, temperature_k: f32) -> f32 {
-        (pressure_pa * self.molar_mass_air) / (self.gas_constant * temperature_k)
-    }
-
     /// Mass of a voxel given material density (kg).
     pub fn voxel_mass(&self, density_kg_m3: f32) -> f32 {
         density_kg_m3 * self.voxel_volume()
@@ -108,7 +115,35 @@ impl PhysicsConstants {
 }
 
 // ---------------------------------------------------------------------------
-// Backward-compatible module-level constants
+// Combined helpers that need both universal + world constants
+// ---------------------------------------------------------------------------
+
+/// Barometric formula: pressure at a given altitude above sea level.
+///
+/// `P(h) = P₀ × exp(−M × g × h / (R × T))`
+pub fn pressure_at_altitude_full(
+    world: &WorldConstants,
+    universal: &UniversalConstants,
+    altitude: f32,
+    temperature_k: f32,
+) -> f32 {
+    let exponent = -(world.molar_mass_air * world.gravity * altitude)
+        / (universal.gas_constant * temperature_k);
+    world.atmospheric_pressure * exponent.exp()
+}
+
+/// Air density via ideal gas law: ρ = PM / (RT).
+pub fn air_density_full(
+    world: &WorldConstants,
+    universal: &UniversalConstants,
+    pressure_pa: f32,
+    temperature_k: f32,
+) -> f32 {
+    (pressure_pa * world.molar_mass_air) / (universal.gas_constant * temperature_k)
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compatible module-level constants (Earth defaults)
 // ---------------------------------------------------------------------------
 
 /// Standard gravitational acceleration at Earth's surface (m/s²).
@@ -154,22 +189,32 @@ pub const AMBIENT_TEMPERATURE: f32 = SEA_LEVEL_TEMPERATURE;
 pub const AIR_DENSITY_SEA_LEVEL: f32 = 1.225;
 
 // ---------------------------------------------------------------------------
-// Backward-compatible free functions (delegate to PhysicsConstants::default())
+// Backward-compatible free functions (delegate to defaults)
 // ---------------------------------------------------------------------------
 
 /// Barometric formula: pressure at a given altitude above sea level.
 pub fn pressure_at_altitude(altitude_above_sea_level: f32, temperature_k: f32) -> f32 {
-    PhysicsConstants::default().pressure_at_altitude(altitude_above_sea_level, temperature_k)
+    pressure_at_altitude_full(
+        &WorldConstants::default(),
+        &UniversalConstants::default(),
+        altitude_above_sea_level,
+        temperature_k,
+    )
 }
 
 /// Air density at a given pressure and temperature via the ideal gas law.
 pub fn air_density(pressure_pa: f32, temperature_k: f32) -> f32 {
-    PhysicsConstants::default().air_density(pressure_pa, temperature_k)
+    air_density_full(
+        &WorldConstants::default(),
+        &UniversalConstants::default(),
+        pressure_pa,
+        temperature_k,
+    )
 }
 
 /// Mass of a voxel given its material density (kg).
 pub fn voxel_mass(density_kg_m3: f32) -> f32 {
-    PhysicsConstants::default().voxel_mass(density_kg_m3)
+    WorldConstants::default().voxel_mass(density_kg_m3)
 }
 
 // ---------------------------------------------------------------------------
@@ -256,61 +301,76 @@ mod tests {
         );
     }
 
-    // --- PhysicsConstants struct tests ---
+    // --- Struct tests ---
 
     #[test]
-    fn default_matches_module_constants() {
-        let c = PhysicsConstants::default();
-        assert_eq!(c.gravity, GRAVITY);
-        assert_eq!(c.atmospheric_pressure, ATMOSPHERIC_PRESSURE);
-        assert_eq!(c.stefan_boltzmann, STEFAN_BOLTZMANN);
-        assert_eq!(c.gas_constant, GAS_CONSTANT);
-        assert_eq!(c.molar_mass_air, MOLAR_MASS_AIR);
-        assert_eq!(c.water_triple_point, WATER_TRIPLE_POINT);
-        assert_eq!(c.sea_level_temperature, SEA_LEVEL_TEMPERATURE);
-        assert_eq!(c.voxel_size, VOXEL_SIZE);
-        assert_eq!(c.sea_level_y, SEA_LEVEL_Y);
-        assert_eq!(c.air_density_sea_level, AIR_DENSITY_SEA_LEVEL);
+    fn universal_default_matches_module_constants() {
+        let u = UniversalConstants::default();
+        assert_eq!(u.stefan_boltzmann, STEFAN_BOLTZMANN);
+        assert_eq!(u.gas_constant, GAS_CONSTANT);
+        assert_eq!(u.water_triple_point, WATER_TRIPLE_POINT);
     }
 
     #[test]
-    fn struct_methods_match_free_functions() {
-        let c = PhysicsConstants::default();
+    fn world_default_matches_module_constants() {
+        let w = WorldConstants::default();
+        assert_eq!(w.gravity, GRAVITY);
+        assert_eq!(w.atmospheric_pressure, ATMOSPHERIC_PRESSURE);
+        assert_eq!(w.molar_mass_air, MOLAR_MASS_AIR);
+        assert_eq!(w.sea_level_temperature, SEA_LEVEL_TEMPERATURE);
+        assert_eq!(w.air_density_sea_level, AIR_DENSITY_SEA_LEVEL);
+        assert_eq!(w.sea_level_y, SEA_LEVEL_Y);
+        assert_eq!(w.voxel_size, VOXEL_SIZE);
+    }
+
+    #[test]
+    fn world_derived_values_match_constants() {
+        let w = WorldConstants::default();
+        assert_eq!(w.voxel_face_area(), VOXEL_FACE_AREA);
+        assert_eq!(w.voxel_volume(), VOXEL_VOLUME);
+        assert_eq!(w.ambient_temperature(), AMBIENT_TEMPERATURE);
+    }
+
+    #[test]
+    fn full_functions_match_free_functions() {
+        let w = WorldConstants::default();
+        let u = UniversalConstants::default();
         assert_eq!(
-            c.pressure_at_altitude(1000.0, 288.15),
+            pressure_at_altitude_full(&w, &u, 1000.0, 288.15),
             pressure_at_altitude(1000.0, 288.15)
         );
         assert_eq!(
-            c.air_density(101_325.0, 288.15),
+            air_density_full(&w, &u, 101_325.0, 288.15),
             air_density(101_325.0, 288.15)
         );
-        assert_eq!(c.voxel_mass(1000.0), voxel_mass(1000.0));
+        assert_eq!(w.voxel_mass(1000.0), voxel_mass(1000.0));
     }
 
     #[test]
-    fn struct_derived_values_match_constants() {
-        let c = PhysicsConstants::default();
-        assert_eq!(c.voxel_face_area(), VOXEL_FACE_AREA);
-        assert_eq!(c.voxel_volume(), VOXEL_VOLUME);
-        assert_eq!(c.ambient_temperature(), AMBIENT_TEMPERATURE);
-    }
-
-    #[test]
-    fn ron_file_parses_to_defaults() {
-        let ron_str = std::fs::read_to_string("assets/data/physics_constants.ron")
-            .expect("physics_constants.ron should exist");
-        let parsed: PhysicsConstants =
-            ron::from_str(&ron_str).expect("RON should deserialize into PhysicsConstants");
-        let defaults = PhysicsConstants::default();
-        assert_eq!(parsed.gravity, defaults.gravity);
-        assert_eq!(parsed.atmospheric_pressure, defaults.atmospheric_pressure);
+    fn universal_ron_file_parses_to_defaults() {
+        let ron_str = std::fs::read_to_string("assets/data/universal_constants.ron")
+            .expect("universal_constants.ron should exist");
+        let parsed: UniversalConstants =
+            ron::from_str(&ron_str).expect("RON should deserialize into UniversalConstants");
+        let defaults = UniversalConstants::default();
         assert_eq!(parsed.stefan_boltzmann, defaults.stefan_boltzmann);
         assert_eq!(parsed.gas_constant, defaults.gas_constant);
-        assert_eq!(parsed.molar_mass_air, defaults.molar_mass_air);
         assert_eq!(parsed.water_triple_point, defaults.water_triple_point);
+    }
+
+    #[test]
+    fn world_ron_file_parses_to_defaults() {
+        let ron_str = std::fs::read_to_string("assets/data/world_constants.ron")
+            .expect("world_constants.ron should exist");
+        let parsed: WorldConstants =
+            ron::from_str(&ron_str).expect("RON should deserialize into WorldConstants");
+        let defaults = WorldConstants::default();
+        assert_eq!(parsed.gravity, defaults.gravity);
+        assert_eq!(parsed.atmospheric_pressure, defaults.atmospheric_pressure);
+        assert_eq!(parsed.molar_mass_air, defaults.molar_mass_air);
         assert_eq!(parsed.sea_level_temperature, defaults.sea_level_temperature);
-        assert_eq!(parsed.voxel_size, defaults.voxel_size);
-        assert_eq!(parsed.sea_level_y, defaults.sea_level_y);
         assert_eq!(parsed.air_density_sea_level, defaults.air_density_sea_level);
+        assert_eq!(parsed.sea_level_y, defaults.sea_level_y);
+        assert_eq!(parsed.voxel_size, defaults.voxel_size);
     }
 }

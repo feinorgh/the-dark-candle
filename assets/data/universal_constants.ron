@@ -1,0 +1,7 @@
+// Universal physical constants — valid in any world/universe.
+// Sources: NIST CODATA 2018, thermodynamic definitions.
+(
+    stefan_boltzmann: 5.670374419e-8,
+    gas_constant: 8.314462,
+    water_triple_point: 273.16,
+)

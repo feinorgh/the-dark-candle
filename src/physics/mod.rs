@@ -12,8 +12,11 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(RonAssetPlugin::<constants::PhysicsConstants>::new(&[
-            "physics_constants.ron",
+        app.add_plugins(RonAssetPlugin::<constants::UniversalConstants>::new(&[
+            "universal_constants.ron",
+        ]))
+        .add_plugins(RonAssetPlugin::<constants::WorldConstants>::new(&[
+            "world_constants.ron",
         ]))
         .add_plugins((gravity::GravityPlugin, collision::CollisionPlugin));
     }

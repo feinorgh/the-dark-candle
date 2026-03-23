@@ -1,0 +1,11 @@
+// World-specific constants — Earth defaults.
+// Override these to create worlds with different gravity, atmospheres, etc.
+(
+    gravity: 9.80665,
+    atmospheric_pressure: 101325.0,
+    molar_mass_air: 0.0289647,
+    sea_level_temperature: 288.15,
+    air_density_sea_level: 1.225,
+    sea_level_y: 64.0,
+    voxel_size: 1.0,
+)
