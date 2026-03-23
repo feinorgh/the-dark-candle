@@ -1,0 +1,18 @@
+(
+    description: "Chunk well above max terrain height contains only air",
+    config: (
+        seed: 42,
+        sea_level: 64,
+        height_scale: 32.0,
+        continent_freq: 0.005,
+        detail_freq: 0.02,
+        cave_freq: 0.03,
+        cave_threshold: -0.3,
+        soil_depth: 4,
+    ),
+    chunk_coord: (0, 6, 0),
+    expect_has_air: Some(true),
+    expect_has_solid: Some(false),
+    expect_solid_fraction_gt: None,
+    expect_solid_fraction_lt: Some(0.01),
+)

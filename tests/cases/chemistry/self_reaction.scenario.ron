@@ -1,0 +1,18 @@
+(
+    description: "Self-reaction (no input_b) fires regardless of neighbour material",
+    rule: (
+        name: "SelfOxidation",
+        input_a: 7,
+        input_b: None,
+        min_temperature: 200.0,
+        max_temperature: 1000.0,
+        output_a: 1,
+        output_b: None,
+        heat_output: 10.0,
+    ),
+    material_a: 7,
+    material_b: 99,
+    temperature: 500.0,
+    expect_reacts: true,
+    expect_output_a: Some(1),
+)

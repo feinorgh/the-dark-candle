@@ -4598,6 +4598,7 @@ dependencies = [
 name = "the_dark_candle"
 version = "0.1.0"
 dependencies = [
+ "approx",
  "bevy",
  "bevy_common_assets",
  "glob",

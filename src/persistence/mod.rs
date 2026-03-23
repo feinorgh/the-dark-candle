@@ -22,7 +22,7 @@ use crate::{
 pub struct SaveIdCounter(u64);
 
 impl SaveIdCounter {
-    pub fn next(&mut self) -> u64 {
+    pub fn generate(&mut self) -> u64 {
         let id = self.0;
         self.0 += 1;
         id
@@ -56,7 +56,7 @@ fn assign_enemy_save_ids(
     query: Query<Entity, (With<Enemy>, Without<SaveId>)>,
 ) {
     for entity in &query {
-        commands.entity(entity).insert(SaveId(counter.next()));
+        commands.entity(entity).insert(SaveId(counter.generate()));
     }
 }
 
@@ -66,7 +66,7 @@ fn assign_creature_save_ids(
     query: Query<Entity, (With<Creature>, Without<SaveId>)>,
 ) {
     for entity in &query {
-        commands.entity(entity).insert(SaveId(counter.next()));
+        commands.entity(entity).insert(SaveId(counter.generate()));
     }
 }
 
@@ -76,6 +76,6 @@ fn assign_item_save_ids(
     query: Query<Entity, (With<Item>, Without<SaveId>)>,
 ) {
     for entity in &query {
-        commands.entity(entity).insert(SaveId(counter.next()));
+        commands.entity(entity).insert(SaveId(counter.generate()));
     }
 }

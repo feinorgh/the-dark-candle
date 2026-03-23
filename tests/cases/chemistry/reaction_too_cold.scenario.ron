@@ -1,0 +1,18 @@
+(
+    description: "Combustion does not occur when temperature is below minimum",
+    rule: (
+        name: "Combustion",
+        input_a: 5,
+        input_b: Some(4),
+        min_temperature: 573.0,
+        max_temperature: 2000.0,
+        output_a: 11,
+        output_b: None,
+        heat_output: 500.0,
+    ),
+    material_a: 5,
+    material_b: 4,
+    temperature: 200.0,
+    expect_reacts: false,
+    expect_output_a: None,
+)

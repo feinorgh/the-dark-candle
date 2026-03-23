@@ -1,0 +1,9 @@
+(
+    description: "Weightless body (gravity_scale=0) does not accumulate velocity",
+    initial_velocity_y: 0.0,
+    gravity_scale: 0.0,
+    steps: 60,
+    delta_secs: 0.016666,
+    expect_velocity_y: 0.0,
+    tolerance: 0.0001,
+)

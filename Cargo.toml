@@ -27,6 +27,7 @@ opt-level = 1
 
 [dev-dependencies]
 glob = "0.3"
+approx = "0.5"
 
 # Optimize the final Windows/Linux release build
 [profile.release]
