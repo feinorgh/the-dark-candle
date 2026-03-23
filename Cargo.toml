@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# The core engine — Wayland for the primary desktop target, X11 for Xvfb / CI.
+# Core engine — default features only; platform-specific display backends below.
+bevy = { version = "0.18" }
+
+# Linux: Wayland for the primary desktop target, X11 for Xvfb / CI.
+[target.'cfg(target_os = "linux")'.dependencies]
 bevy = { version = "0.18", features = ["wayland", "x11"] }
 
 # Data-driven pipeline dependencies
