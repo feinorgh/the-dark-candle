@@ -8,6 +8,7 @@
 use serde::Deserialize;
 
 use the_dark_candle::chemistry::reactions::{check_reaction, ReactionData};
+use the_dark_candle::data::MaterialRegistry;
 use the_dark_candle::physics::gravity::{GRAVITY, TERMINAL_VELOCITY};
 use the_dark_candle::world::chunk::{Chunk, ChunkCoord, CHUNK_VOLUME};
 use the_dark_candle::world::terrain::{TerrainConfig, TerrainGenerator};
@@ -34,6 +35,8 @@ struct PhysicsScenario {
 #[derive(Deserialize, Debug)]
 struct ChemistryScenario {
     description: String,
+    /// Name-to-ID mapping for building a MaterialRegistry in the test.
+    materials: std::collections::HashMap<String, u16>,
     rule: ReactionData,
     material_a: u16,
     material_b: u16,
@@ -106,11 +109,34 @@ fn run_physics(s: &PhysicsScenario) -> Result<(), String> {
 }
 
 fn run_chemistry(s: &ChemistryScenario) -> Result<(), String> {
+    use the_dark_candle::data::{MaterialData, Phase};
+
+    let mut registry = MaterialRegistry::new();
+    for (name, &id) in &s.materials {
+        registry.insert(MaterialData {
+            id,
+            name: name.clone(),
+            default_phase: Phase::Solid,
+            density: 1000.0,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: None,
+            hardness: 0.5,
+            color: [0.5, 0.5, 0.5],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+    }
+
     let result = check_reaction(
         &s.rule,
         MaterialId(s.material_a),
         MaterialId(s.material_b),
         s.temperature,
+        &registry,
     );
 
     let reacted = result.is_some();

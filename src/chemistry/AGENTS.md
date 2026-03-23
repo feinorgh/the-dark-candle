@@ -8,18 +8,18 @@ Heat transfer, chemical reactions, material state transitions, and fire propagat
 |------|---------|
 | `heat.rs` | Temperature diffusion between neighboring voxels |
 | `reactions.rs` | `ReactionData` RON struct, condition matching |
-| `state_transitions.rs` | `MaterialRegistry`, phase changes (melt/boil/freeze/condense) |
+| `state_transitions.rs` | Phase changes (melt/boil/freeze/condense) |
 | `fire_propagation.rs` | Integration: heat + reactions + transitions per tick |
 
 ## Dependencies
 
-- **Imports from:** `crate::data::{MaterialData, Phase}`, `crate::world::voxel::{MaterialId, Voxel}`
+- **Imports from:** `crate::data::{MaterialData, MaterialRegistry, Phase}`, `crate::world::voxel::{MaterialId, Voxel}`
 - **Imported by:** (fire_propagation integrates heat + reactions + transitions)
 
 ## Key Types
 
-- `MaterialRegistry` — `HashMap<u16, MaterialData>` for runtime material property lookups
-- `ReactionData` — loaded from `.reaction.ron` files: reactant, catalyst, product, temperature range
+- `MaterialRegistry` — defined in `crate::data`, provides `HashMap<u16, MaterialData>` and name→ID lookup for runtime material resolution
+- `ReactionData` — loaded from `.reaction.ron` files: uses material names (Strings) for reactant, catalyst, product, plus temperature range
 - `TransitionResult` — what a voxel becomes when heated/cooled past a threshold
 
 ## Data Files
@@ -31,7 +31,7 @@ Heat transfer, chemical reactions, material state transitions, and fire propagat
 
 - `conductivity(material_id)` returns a thermal conductivity constant per material.
 - `diffuse_chunk()` applies one tick of heat diffusion across a flat voxel array.
-- `check_reaction()` tests if a voxel meets reaction conditions (material, temperature, neighbor).
+- `check_reaction()` tests if a voxel meets reaction conditions (material name, temperature, neighbor); requires `MaterialRegistry` to resolve names to IDs.
 - `check_transition()` tests if a voxel should change phase based on temperature.
 
 ## Fire Propagation Tuning
@@ -49,4 +49,4 @@ equilibrium ≈ (heat_output + N × ambient) / (N + 1)
 ## Gotchas
 
 - RON `[f32; 3]` arrays must use tuple syntax: `(0.5, 0.5, 0.5)`, not `[0.5, 0.5, 0.5]`.
-- `melted_into`, `boiled_into`, `frozen_into`, `condensed_into` fields use `#[serde(default)]` — they can be omitted from RON files for materials that don't transition.
+- `melted_into`, `boiled_into`, `frozen_into`, `condensed_into` fields are `Option<String>` (material names) with `#[serde(default)]` — they can be omitted from RON files for materials that don't transition.

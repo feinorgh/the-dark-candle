@@ -86,12 +86,12 @@ fn all_material_ron_files_are_valid() {
 #[allow(dead_code)]
 struct ReactionData {
     name: String,
-    input_a: u16,
-    input_b: Option<u16>,
+    input_a: String,
+    input_b: Option<String>,
     min_temperature: f32,
     max_temperature: f32,
-    output_a: u16,
-    output_b: Option<u16>,
+    output_a: String,
+    output_b: Option<String>,
     heat_output: f32,
 }
 
@@ -224,7 +224,7 @@ struct ItemData {
     item_type: String,
     display_name: String,
     category: ItemCategory,
-    primary_material: u16,
+    primary_material: String,
     base_weight: f32,
     base_durability: f32,
     #[serde(default)]
@@ -288,7 +288,7 @@ struct BiomeData {
     height_range: (f32, f32),
     temperature_range: (f32, f32),
     moisture_range: (f32, f32),
-    surface_material: u16,
+    surface_material: String,
     #[serde(default)]
     creature_spawns: Vec<SpawnEntry>,
     #[serde(default)]

@@ -9,5 +9,5 @@ MaterialData(
     hardness: 0.0,
     color: (0.9, 0.9, 0.95),
     transparent: true,
-    condensed_into: Some(3),
+    condensed_into: Some("Water"),
 )

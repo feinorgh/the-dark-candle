@@ -9,5 +9,5 @@ MaterialData(
     hardness: 0.2,
     color: (0.7, 0.85, 1.0),
     transparent: true,
-    melted_into: Some(3),
+    melted_into: Some("Water"),
 )

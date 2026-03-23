@@ -2,7 +2,7 @@ ItemData(
     item_type: "wooden_shield",
     display_name: "Wooden Shield",
     category: Armor,
-    primary_material: 5,
+    primary_material: "Wood",
     base_weight: 4.0,
     base_durability: 80.0,
     base_armor: 10.0,

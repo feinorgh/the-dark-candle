@@ -12,41 +12,10 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-
-use crate::data::MaterialData;
+use crate::data::MaterialRegistry;
 use crate::world::voxel::{MaterialId, Voxel};
 
-/// Lookup table from MaterialId to material properties.
-/// Built at startup from loaded MaterialData assets.
-#[derive(Debug, Default, Clone)]
-pub struct MaterialRegistry {
-    materials: HashMap<u16, MaterialData>,
-}
-
-impl MaterialRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register a material's properties.
-    pub fn insert(&mut self, data: MaterialData) {
-        self.materials.insert(data.id, data);
-    }
-
-    /// Look up material data by ID.
-    pub fn get(&self, id: MaterialId) -> Option<&MaterialData> {
-        self.materials.get(&id.0)
-    }
-
-    pub fn len(&self) -> usize {
-        self.materials.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.materials.is_empty()
-    }
-}
+// MaterialRegistry is now defined in crate::data and re-exported from there.
 
 /// Result of checking a single voxel for phase transitions.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,31 +37,39 @@ pub fn check_transition(voxel: &Voxel, registry: &MaterialRegistry) -> Transitio
     match data.default_phase {
         crate::data::Phase::Solid => {
             // Solid → liquid when above melting point
-            if let (Some(mp), Some(target)) = (data.melting_point, data.melted_into) {
+            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.melted_into) {
                 if temp > mp {
-                    return TransitionResult::TransformTo(MaterialId(target));
+                    if let Some(target) = registry.resolve_name(target_name) {
+                        return TransitionResult::TransformTo(target);
+                    }
                 }
             }
         }
         crate::data::Phase::Liquid => {
             // Liquid → gas when above boiling point
-            if let (Some(bp), Some(target)) = (data.boiling_point, data.boiled_into) {
+            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.boiled_into) {
                 if temp > bp {
-                    return TransitionResult::TransformTo(MaterialId(target));
+                    if let Some(target) = registry.resolve_name(target_name) {
+                        return TransitionResult::TransformTo(target);
+                    }
                 }
             }
             // Liquid → solid when below melting point (freezing)
-            if let (Some(mp), Some(target)) = (data.melting_point, data.frozen_into) {
+            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.frozen_into) {
                 if temp < mp {
-                    return TransitionResult::TransformTo(MaterialId(target));
+                    if let Some(target) = registry.resolve_name(target_name) {
+                        return TransitionResult::TransformTo(target);
+                    }
                 }
             }
         }
         crate::data::Phase::Gas => {
             // Gas → liquid when below boiling point (condensation)
-            if let (Some(bp), Some(target)) = (data.boiling_point, data.condensed_into) {
+            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.condensed_into) {
                 if temp < bp {
-                    return TransitionResult::TransformTo(MaterialId(target));
+                    if let Some(target) = registry.resolve_name(target_name) {
+                        return TransitionResult::TransformTo(target);
+                    }
                 }
             }
         }
@@ -123,7 +100,7 @@ pub fn apply_transitions(voxels: &mut [Voxel], registry: &MaterialRegistry) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::Phase;
+    use crate::data::{MaterialData, Phase};
 
     fn test_registry() -> MaterialRegistry {
         let mut reg = MaterialRegistry::new();
@@ -154,7 +131,7 @@ mod tests {
             hardness: 0.9,
             color: [0.5, 0.5, 0.5],
             transparent: false,
-            melted_into: Some(10),
+            melted_into: Some("Lava".into()),
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
@@ -171,8 +148,8 @@ mod tests {
             color: [0.2, 0.4, 0.8],
             transparent: true,
             melted_into: None,
-            boiled_into: Some(9),
-            frozen_into: Some(8),
+            boiled_into: Some("Steam".into()),
+            frozen_into: Some("Ice".into()),
             condensed_into: None,
         });
         reg.insert(MaterialData {
@@ -186,7 +163,7 @@ mod tests {
             hardness: 0.2,
             color: [0.7, 0.85, 1.0],
             transparent: true,
-            melted_into: Some(3),
+            melted_into: Some("Water".into()),
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
@@ -205,7 +182,7 @@ mod tests {
             melted_into: None,
             boiled_into: None,
             frozen_into: None,
-            condensed_into: Some(3),
+            condensed_into: Some("Water".into()),
         });
         reg.insert(MaterialData {
             id: 10,
@@ -219,8 +196,8 @@ mod tests {
             color: [1.0, 0.3, 0.0],
             transparent: false,
             melted_into: None,
-            boiled_into: Some(0),
-            frozen_into: Some(1),
+            boiled_into: Some("Air".into()),
+            frozen_into: Some("Stone".into()),
             condensed_into: None,
         });
         reg

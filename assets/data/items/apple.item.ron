@@ -2,7 +2,7 @@ ItemData(
     item_type: "apple",
     display_name: "Apple",
     category: Food,
-    primary_material: 0,
+    primary_material: "Air",
     base_weight: 0.2,
     base_durability: 10.0,
     nutrition: 150.0,

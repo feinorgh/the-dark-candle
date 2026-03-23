@@ -42,8 +42,8 @@ pub struct BiomeData {
     pub temperature_range: (f32, f32),
     /// Moisture range (0.0 = arid, 1.0 = saturated).
     pub moisture_range: (f32, f32),
-    /// Surface material ID (what the top layer is made of).
-    pub surface_material: u16,
+    /// Surface material name (what the top layer is made of).
+    pub surface_material: String,
     /// Creature spawn table.
     #[serde(default)]
     pub creature_spawns: Vec<SpawnEntry>,
@@ -107,7 +107,7 @@ mod tests {
             height_range: (50.0, 80.0),
             temperature_range: (260.0, 310.0),
             moisture_range: (0.4, 1.0),
-            surface_material: 7, // grass
+            surface_material: "Grass".into(),
             creature_spawns: vec![
                 SpawnEntry {
                     id: "wolf".into(),
@@ -140,7 +140,7 @@ mod tests {
             height_range: (0.0, 40.0),
             temperature_range: (270.0, 290.0),
             moisture_range: (0.2, 0.8),
-            surface_material: 1, // stone
+            surface_material: "Stone".into(),
             creature_spawns: vec![SpawnEntry {
                 id: "cave_spider".into(),
                 weight: 5.0,
@@ -159,7 +159,7 @@ mod tests {
                 height_range: (55.0, 75.0),
                 temperature_range: (270.0, 310.0),
                 moisture_range: (0.3, 0.7),
-                surface_material: 7,
+                surface_material: "Grass",
                 creature_spawns: [
                     SpawnEntry(id: "rabbit", weight: 10.0, max_per_chunk: 15),
                 ],

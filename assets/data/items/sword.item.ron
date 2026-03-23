@@ -2,7 +2,7 @@ ItemData(
     item_type: "sword",
     display_name: "Iron Sword",
     category: Weapon,
-    primary_material: 4,
+    primary_material: "Iron",
     base_weight: 2.5,
     base_durability: 150.0,
     base_damage: 20.0,

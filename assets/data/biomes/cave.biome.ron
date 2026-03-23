@@ -4,7 +4,7 @@ BiomeData(
     height_range: (0.0, 45.0),
     temperature_range: (270.0, 295.0),
     moisture_range: (0.2, 0.8),
-    surface_material: 1,
+    surface_material: "Stone",
     creature_spawns: [
         SpawnEntry(id: "cave_spider", weight: 5.0, max_per_chunk: 4),
     ],

@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use crate::data::{ItemCategory, ItemData, MaterialData};
+use crate::data::{ItemCategory, ItemData, MaterialData, MaterialRegistry};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +51,12 @@ fn material_modifiers(material: &MaterialData) -> MaterialModifiers {
 }
 
 /// Generate an item instance from a template, optionally modified by material properties.
-pub fn generate_item(template: &ItemData, material: Option<&MaterialData>) -> Item {
+/// When no material override is given, the registry resolves the template's primary_material name.
+pub fn generate_item(
+    template: &ItemData,
+    material: Option<&MaterialData>,
+    registry: &MaterialRegistry,
+) -> Item {
     let (weight, durability, damage, armor, display_name, material_id) = if let Some(mat) = material
     {
         let m = material_modifiers(mat);
@@ -65,13 +70,17 @@ pub fn generate_item(template: &ItemData, material: Option<&MaterialData>) -> It
             mat.id,
         )
     } else {
+        let default_id = registry
+            .resolve_name(&template.primary_material)
+            .map(|m| m.0)
+            .unwrap_or(0);
         (
             template.base_weight,
             template.base_durability,
             template.base_damage,
             template.base_armor,
             template.display_name.clone(),
-            template.primary_material,
+            default_id,
         )
     };
 
@@ -97,12 +106,81 @@ mod tests {
     use super::*;
     use crate::data::Phase;
 
+    fn test_registry() -> MaterialRegistry {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: 0,
+            name: "Air".into(),
+            default_phase: Phase::Gas,
+            density: 1.225,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: None,
+            hardness: 0.0,
+            color: [0.8, 0.9, 1.0],
+            transparent: true,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 4,
+            name: "Iron".into(),
+            default_phase: Phase::Solid,
+            density: 7874.0,
+            melting_point: Some(1811.0),
+            boiling_point: Some(3134.0),
+            ignition_point: None,
+            hardness: 0.6,
+            color: [0.7, 0.7, 0.72],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 1,
+            name: "Stone".into(),
+            default_phase: Phase::Solid,
+            density: 2700.0,
+            melting_point: Some(1473.0),
+            boiling_point: Some(2773.0),
+            ignition_point: None,
+            hardness: 0.9,
+            color: [0.5, 0.5, 0.5],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 5,
+            name: "Wood".into(),
+            default_phase: Phase::Solid,
+            density: 600.0,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: Some(573.0),
+            hardness: 0.3,
+            color: [0.6, 0.4, 0.2],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg
+    }
+
     fn sword_template() -> ItemData {
         ItemData {
             item_type: "sword".into(),
             display_name: "{material} Sword".into(),
             category: ItemCategory::Weapon,
-            primary_material: 4,
+            primary_material: "Iron".into(),
             base_weight: 2.5,
             base_durability: 150.0,
             base_damage: 20.0,
@@ -172,7 +250,8 @@ mod tests {
 
     #[test]
     fn generate_item_without_material() {
-        let item = generate_item(&sword_template(), None);
+        let reg = test_registry();
+        let item = generate_item(&sword_template(), None, &reg);
         assert_eq!(item.item_type, "sword");
         assert_eq!(item.display_name, "{material} Sword");
         assert_eq!(item.weight, 2.5);
@@ -182,7 +261,8 @@ mod tests {
 
     #[test]
     fn iron_sword_uses_reference_material() {
-        let item = generate_item(&sword_template(), Some(&iron_material()));
+        let reg = test_registry();
+        let item = generate_item(&sword_template(), Some(&iron_material()), &reg);
         assert_eq!(item.display_name, "Iron Sword");
         assert_eq!(item.material_id, 4);
         // Iron is the reference material, so multipliers ≈ 1.0
@@ -193,8 +273,9 @@ mod tests {
 
     #[test]
     fn stone_sword_is_heavier_more_durable() {
-        let iron_item = generate_item(&sword_template(), Some(&iron_material()));
-        let stone_item = generate_item(&sword_template(), Some(&stone_material()));
+        let reg = test_registry();
+        let iron_item = generate_item(&sword_template(), Some(&iron_material()), &reg);
+        let stone_item = generate_item(&sword_template(), Some(&stone_material()), &reg);
 
         // Stone is less dense than iron → lighter
         assert!(stone_item.weight < iron_item.weight);
@@ -205,8 +286,9 @@ mod tests {
 
     #[test]
     fn wood_sword_is_light_and_fragile() {
-        let iron_item = generate_item(&sword_template(), Some(&iron_material()));
-        let wood_item = generate_item(&sword_template(), Some(&wood_material()));
+        let reg = test_registry();
+        let iron_item = generate_item(&sword_template(), Some(&iron_material()), &reg);
+        let wood_item = generate_item(&sword_template(), Some(&wood_material()), &reg);
 
         assert!(
             wood_item.weight < iron_item.weight,
@@ -225,11 +307,12 @@ mod tests {
 
     #[test]
     fn food_item_retains_nutrition() {
+        let reg = test_registry();
         let template = ItemData {
             item_type: "apple".into(),
             display_name: "Apple".into(),
             category: ItemCategory::Food,
-            primary_material: 0,
+            primary_material: "Air".into(),
             base_weight: 0.2,
             base_durability: 10.0,
             base_damage: 0.0,
@@ -238,7 +321,7 @@ mod tests {
             stackable: true,
             max_stack: 16,
         };
-        let item = generate_item(&template, None);
+        let item = generate_item(&template, None, &reg);
         assert_eq!(item.nutrition, 150.0);
         assert!(item.stackable);
         assert_eq!(item.max_stack, 16);
@@ -247,23 +330,26 @@ mod tests {
 
     #[test]
     fn max_durability_equals_initial() {
-        let item = generate_item(&sword_template(), Some(&iron_material()));
+        let reg = test_registry();
+        let item = generate_item(&sword_template(), Some(&iron_material()), &reg);
         assert_eq!(item.durability, item.max_durability);
     }
 
     #[test]
     fn weight_is_always_positive() {
+        let reg = test_registry();
         let mut t = sword_template();
         t.base_weight = 0.0;
-        let item = generate_item(&t, Some(&iron_material()));
+        let item = generate_item(&t, Some(&iron_material()), &reg);
         assert!(item.weight > 0.0);
     }
 
     #[test]
     fn material_name_substitution() {
+        let reg = test_registry();
         let mut t = sword_template();
         t.display_name = "Mighty {material} Blade".into();
-        let item = generate_item(&t, Some(&stone_material()));
+        let item = generate_item(&t, Some(&stone_material()), &reg);
         assert_eq!(item.display_name, "Mighty Stone Blade");
     }
 }

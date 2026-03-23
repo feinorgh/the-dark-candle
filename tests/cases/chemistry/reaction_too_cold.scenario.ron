@@ -1,12 +1,17 @@
 (
     description: "Combustion does not occur when temperature is below minimum",
+    materials: {
+        "Wood": 5,
+        "Iron": 4,
+        "Ash": 11,
+    },
     rule: (
         name: "Combustion",
-        input_a: 5,
-        input_b: Some(4),
+        input_a: "Wood",
+        input_b: Some("Iron"),
         min_temperature: 573.0,
         max_temperature: 2000.0,
-        output_a: 11,
+        output_a: "Ash",
         output_b: None,
         heat_output: 500.0,
     ),

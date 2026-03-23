@@ -2,7 +2,7 @@ ItemData(
     item_type: "pickaxe",
     display_name: "Stone Pickaxe",
     category: Tool,
-    primary_material: 1,
+    primary_material: "Stone",
     base_weight: 3.0,
     base_durability: 100.0,
     base_damage: 8.0,

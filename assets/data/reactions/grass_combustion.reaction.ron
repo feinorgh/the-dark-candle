@@ -1,10 +1,10 @@
 ReactionData(
     name: "Grass combustion",
-    input_a: 7,
-    input_b: Some(0),
+    input_a: "Grass",
+    input_b: Some("Air"),
     min_temperature: 533.0,
     max_temperature: 99999.0,
-    output_a: 0,
+    output_a: "Air",
     output_b: None,
     heat_output: 100.0,
 )

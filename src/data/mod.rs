@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use serde::{Deserialize, Serialize};
+
+use crate::world::voxel::MaterialId;
 
 pub struct DataPlugin;
 
@@ -52,18 +56,18 @@ pub struct MaterialData {
     pub color: [f32; 3],
     /// Whether light passes through this material.
     pub transparent: bool,
-    /// MaterialId this becomes when heated above melting_point (solid → liquid).
+    /// Material name this becomes when heated above melting_point (solid → liquid).
     #[serde(default)]
-    pub melted_into: Option<u16>,
-    /// MaterialId this becomes when heated above boiling_point (liquid → gas).
+    pub melted_into: Option<String>,
+    /// Material name this becomes when heated above boiling_point (liquid → gas).
     #[serde(default)]
-    pub boiled_into: Option<u16>,
-    /// MaterialId this becomes when cooled below melting_point (liquid → solid).
+    pub boiled_into: Option<String>,
+    /// Material name this becomes when cooled below melting_point (liquid → solid).
     #[serde(default)]
-    pub frozen_into: Option<u16>,
-    /// MaterialId this becomes when cooled below boiling_point (gas → liquid).
+    pub frozen_into: Option<String>,
+    /// Material name this becomes when cooled below boiling_point (gas → liquid).
     #[serde(default)]
-    pub condensed_into: Option<u16>,
+    pub condensed_into: Option<String>,
 }
 
 /// Global resource holding handles to loaded data assets.
@@ -156,8 +160,8 @@ pub struct ItemData {
     pub display_name: String,
     /// Item category.
     pub category: ItemCategory,
-    /// MaterialId this item is primarily made of (influences properties).
-    pub primary_material: u16,
+    /// Material name this item is primarily made of (influences properties).
+    pub primary_material: String,
     /// Base weight in kg (modified by material density).
     pub base_weight: f32,
     /// Base durability (modified by material hardness).
@@ -181,6 +185,50 @@ pub struct ItemData {
 
 fn default_max_stack() -> u32 {
     64
+}
+
+/// Lookup table from MaterialId to material properties, with name-based resolution.
+/// Built at startup from loaded MaterialData assets.
+#[derive(Debug, Default, Clone)]
+pub struct MaterialRegistry {
+    materials: HashMap<u16, MaterialData>,
+    name_to_id: HashMap<String, u16>,
+}
+
+impl MaterialRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a material's properties, indexing by both ID and name.
+    pub fn insert(&mut self, data: MaterialData) {
+        self.name_to_id.insert(data.name.clone(), data.id);
+        self.materials.insert(data.id, data);
+    }
+
+    /// Look up material data by numeric ID.
+    pub fn get(&self, id: MaterialId) -> Option<&MaterialData> {
+        self.materials.get(&id.0)
+    }
+
+    /// Look up material data by name.
+    pub fn get_by_name(&self, name: &str) -> Option<&MaterialData> {
+        let id = self.name_to_id.get(name)?;
+        self.materials.get(id)
+    }
+
+    /// Resolve a material name to its numeric MaterialId.
+    pub fn resolve_name(&self, name: &str) -> Option<MaterialId> {
+        self.name_to_id.get(name).map(|&id| MaterialId(id))
+    }
+
+    pub fn len(&self) -> usize {
+        self.materials.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.materials.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -251,6 +299,7 @@ mod tests {
                 hardness: 0.9,
                 color: (0.5, 0.5, 0.5),
                 transparent: false,
+                melted_into: Some("Lava"),
             )
         "#;
         let data: MaterialData =
@@ -261,6 +310,7 @@ mod tests {
         assert_eq!(data.melting_point, Some(1473.0));
         assert_eq!(data.ignition_point, None);
         assert!(!data.transparent);
+        assert_eq!(data.melted_into, Some("Lava".into()));
     }
 
     #[test]
@@ -446,7 +496,7 @@ mod tests {
                 item_type: "sword",
                 display_name: "Iron Sword",
                 category: Weapon,
-                primary_material: 4,
+                primary_material: "Iron",
                 base_weight: 2.5,
                 base_durability: 100.0,
                 base_damage: 20.0,
@@ -455,7 +505,7 @@ mod tests {
         let data: ItemData = ron::from_str(ron_str).expect("Failed to deserialize ItemData");
         assert_eq!(data.item_type, "sword");
         assert_eq!(data.category, ItemCategory::Weapon);
-        assert_eq!(data.primary_material, 4); // Iron
+        assert_eq!(data.primary_material, "Iron");
         assert_eq!(data.base_damage, 20.0);
         assert!(!data.stackable); // default
         assert_eq!(data.max_stack, 64); // default
@@ -468,7 +518,7 @@ mod tests {
                 item_type: "apple",
                 display_name: "Apple",
                 category: Food,
-                primary_material: 0,
+                primary_material: "Air",
                 base_weight: 0.2,
                 base_durability: 10.0,
                 nutrition: 150.0,

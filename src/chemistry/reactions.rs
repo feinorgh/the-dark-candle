@@ -9,24 +9,25 @@ use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 
+use crate::data::MaterialRegistry;
 use crate::world::voxel::MaterialId;
 
 /// A single reaction rule loaded from `.reaction.ron`.
 #[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
 pub struct ReactionData {
     pub name: String,
-    /// Material ID of the primary reactant.
-    pub input_a: u16,
-    /// Material ID of the adjacent catalyst/reactant (or None for self-reactions).
-    pub input_b: Option<u16>,
+    /// Material name of the primary reactant.
+    pub input_a: String,
+    /// Material name of the adjacent catalyst/reactant (or None for self-reactions).
+    pub input_b: Option<String>,
     /// Minimum temperature (K) for this reaction to occur.
     pub min_temperature: f32,
     /// Maximum temperature (K) — use a very high value for "no upper limit".
     pub max_temperature: f32,
-    /// What material the primary voxel becomes.
-    pub output_a: u16,
-    /// What the adjacent voxel becomes (if input_b was specified).
-    pub output_b: Option<u16>,
+    /// What material the primary voxel becomes (by name).
+    pub output_a: String,
+    /// What the adjacent voxel becomes (if input_b was specified, by name).
+    pub output_b: Option<String>,
     /// Temperature change applied to the output voxel (positive = exothermic).
     pub heat_output: f32,
 }
@@ -45,12 +46,15 @@ pub fn check_reaction(
     material_a: MaterialId,
     material_b: MaterialId,
     temperature: f32,
+    registry: &MaterialRegistry,
 ) -> Option<ReactionResult> {
-    if material_a.0 != rule.input_a {
+    let required_a = registry.resolve_name(&rule.input_a)?;
+    if material_a != required_a {
         return None;
     }
-    if let Some(req_b) = rule.input_b {
-        if material_b.0 != req_b {
+    if let Some(ref req_b_name) = rule.input_b {
+        let required_b = registry.resolve_name(req_b_name)?;
+        if material_b != required_b {
             return None;
         }
     }
@@ -59,8 +63,11 @@ pub fn check_reaction(
     }
 
     Some(ReactionResult {
-        new_material_a: MaterialId(rule.output_a),
-        new_material_b: rule.output_b.map(MaterialId),
+        new_material_a: registry.resolve_name(&rule.output_a)?,
+        new_material_b: rule
+            .output_b
+            .as_ref()
+            .and_then(|name| registry.resolve_name(name)),
         heat_output: rule.heat_output,
     })
 }
@@ -77,16 +84,118 @@ impl Plugin for ReactionPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::{MaterialData, MaterialRegistry, Phase};
+
+    fn test_registry() -> MaterialRegistry {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: 0,
+            name: "Air".into(),
+            default_phase: Phase::Gas,
+            density: 1.225,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: None,
+            hardness: 0.0,
+            color: [0.8, 0.9, 1.0],
+            transparent: true,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 3,
+            name: "Water".into(),
+            default_phase: Phase::Liquid,
+            density: 1000.0,
+            melting_point: Some(273.15),
+            boiling_point: Some(373.15),
+            ignition_point: None,
+            hardness: 0.0,
+            color: [0.2, 0.4, 0.8],
+            transparent: true,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 5,
+            name: "Wood".into(),
+            default_phase: Phase::Solid,
+            density: 600.0,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: Some(573.0),
+            hardness: 0.3,
+            color: [0.6, 0.4, 0.2],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 1,
+            name: "Stone".into(),
+            default_phase: Phase::Solid,
+            density: 2700.0,
+            melting_point: Some(1473.0),
+            boiling_point: Some(2773.0),
+            ignition_point: None,
+            hardness: 0.9,
+            color: [0.5, 0.5, 0.5],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 8,
+            name: "Charcoal".into(),
+            default_phase: Phase::Solid,
+            density: 400.0,
+            melting_point: None,
+            boiling_point: None,
+            ignition_point: None,
+            hardness: 0.1,
+            color: [0.2, 0.2, 0.2],
+            transparent: false,
+            melted_into: None,
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg.insert(MaterialData {
+            id: 9,
+            name: "Ice".into(),
+            default_phase: Phase::Solid,
+            density: 917.0,
+            melting_point: Some(273.15),
+            boiling_point: None,
+            ignition_point: None,
+            hardness: 0.2,
+            color: [0.7, 0.85, 1.0],
+            transparent: true,
+            melted_into: Some("Water".into()),
+            boiled_into: None,
+            frozen_into: None,
+            condensed_into: None,
+        });
+        reg
+    }
 
     fn wood_burning_rule() -> ReactionData {
         ReactionData {
             name: "Wood combustion".into(),
-            input_a: 5,       // wood
-            input_b: Some(0), // adjacent to air (oxygen)
+            input_a: "Wood".into(),
+            input_b: Some("Air".into()),
             min_temperature: 573.0,
             max_temperature: 99999.0,
-            output_a: 8,    // charcoal (hypothetical material ID)
-            output_b: None, // air stays air
+            output_a: "Charcoal".into(),
+            output_b: None,
             heat_output: 200.0,
         }
     }
@@ -94,11 +203,11 @@ mod tests {
     fn ice_melting_rule() -> ReactionData {
         ReactionData {
             name: "Ice melting".into(),
-            input_a: 9, // ice (hypothetical)
+            input_a: "Ice".into(),
             input_b: None,
             min_temperature: 273.15,
             max_temperature: 99999.0,
-            output_a: 3, // water
+            output_a: "Water".into(),
             output_b: None,
             heat_output: -50.0, // endothermic
         }
@@ -107,7 +216,8 @@ mod tests {
     #[test]
     fn reaction_matches_when_conditions_met() {
         let rule = wood_burning_rule();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 600.0);
+        let reg = test_registry();
+        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 600.0, &reg);
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.new_material_a, MaterialId(8));
@@ -117,29 +227,33 @@ mod tests {
     #[test]
     fn reaction_fails_wrong_material() {
         let rule = wood_burning_rule();
-        let result = check_reaction(&rule, MaterialId(1), MaterialId(0), 600.0);
+        let reg = test_registry();
+        let result = check_reaction(&rule, MaterialId(1), MaterialId(0), 600.0, &reg);
         assert!(result.is_none(), "Stone shouldn't burn");
     }
 
     #[test]
     fn reaction_fails_wrong_neighbor() {
         let rule = wood_burning_rule();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(3), 600.0);
+        let reg = test_registry();
+        let result = check_reaction(&rule, MaterialId(5), MaterialId(3), 600.0, &reg);
         assert!(result.is_none(), "Wood next to water shouldn't combust");
     }
 
     #[test]
     fn reaction_fails_below_min_temp() {
         let rule = wood_burning_rule();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 293.0);
+        let reg = test_registry();
+        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 293.0, &reg);
         assert!(result.is_none(), "Room temp shouldn't ignite wood");
     }
 
     #[test]
     fn self_reaction_ignores_neighbor_material() {
         let rule = ice_melting_rule();
+        let reg = test_registry();
         // input_b is None, so neighbor material doesn't matter
-        let result = check_reaction(&rule, MaterialId(9), MaterialId(1), 280.0);
+        let result = check_reaction(&rule, MaterialId(9), MaterialId(1), 280.0, &reg);
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.new_material_a, MaterialId(3)); // becomes water
@@ -151,11 +265,11 @@ mod tests {
         let ron_str = r#"
             ReactionData(
                 name: "Test Reaction",
-                input_a: 5,
-                input_b: Some(0),
+                input_a: "Wood",
+                input_b: Some("Air"),
                 min_temperature: 573.0,
                 max_temperature: 99999.0,
-                output_a: 8,
+                output_a: "Charcoal",
                 output_b: None,
                 heat_output: 200.0,
             )
@@ -163,8 +277,8 @@ mod tests {
         let data: ReactionData =
             ron::from_str(ron_str).expect("Failed to deserialize ReactionData");
         assert_eq!(data.name, "Test Reaction");
-        assert_eq!(data.input_a, 5);
-        assert_eq!(data.input_b, Some(0));
+        assert_eq!(data.input_a, "Wood");
+        assert_eq!(data.input_b, Some("Air".into()));
         assert_eq!(data.heat_output, 200.0);
     }
 }

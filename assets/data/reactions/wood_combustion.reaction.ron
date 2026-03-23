@@ -1,10 +1,10 @@
 ReactionData(
     name: "Wood combustion",
-    input_a: 5,
-    input_b: Some(0),
+    input_a: "Wood",
+    input_b: Some("Air"),
     min_temperature: 573.0,
     max_temperature: 99999.0,
-    output_a: 11,
+    output_a: "Ash",
     output_b: None,
     heat_output: 200.0,
 )

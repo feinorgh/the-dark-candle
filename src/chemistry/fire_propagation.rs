@@ -14,7 +14,8 @@
 
 use crate::chemistry::heat::diffuse_chunk;
 use crate::chemistry::reactions::{check_reaction, ReactionData};
-use crate::chemistry::state_transitions::{apply_transitions, MaterialRegistry};
+use crate::chemistry::state_transitions::apply_transitions;
+use crate::data::MaterialRegistry;
 use crate::world::voxel::{MaterialId, Voxel};
 
 const WOOD: u16 = 5;
@@ -24,11 +25,11 @@ const AIR: u16 = 0;
 fn wood_combustion_rule() -> ReactionData {
     ReactionData {
         name: "Wood combustion".into(),
-        input_a: WOOD,
-        input_b: Some(AIR),
+        input_a: "Wood".into(),
+        input_b: Some("Air".into()),
         min_temperature: 573.0,
         max_temperature: 99999.0,
-        output_a: ASH,
+        output_a: "Ash".into(),
         output_b: None,
         // High impulse to overcome conduction-only heat spread on 2D surfaces.
         // Real fire uses convection + radiation; our model compensates with
@@ -101,6 +102,7 @@ fn simulate_tick(
                             voxel_a.material,
                             voxel_b.material,
                             voxel_a.temperature,
+                            registry,
                         ) {
                             voxels[idx].material = result.new_material_a;
                             voxels[idx].temperature += result.heat_output;

@@ -9,6 +9,6 @@ MaterialData(
     hardness: 0.0,
     color: (1.0, 0.3, 0.0),
     transparent: false,
-    frozen_into: Some(1),
-    boiled_into: Some(0),
+    frozen_into: Some("Stone"),
+    boiled_into: Some("Air"),
 )

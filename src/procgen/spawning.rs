@@ -98,7 +98,7 @@ mod tests {
             height_range: (0.0, 100.0),
             temperature_range: (200.0, 400.0),
             moisture_range: (0.0, 1.0),
-            surface_material: 7,
+            surface_material: "Grass".into(),
             creature_spawns: vec![
                 SpawnEntry {
                     id: "wolf".into(),
@@ -192,7 +192,7 @@ mod tests {
             height_range: (0.0, 100.0),
             temperature_range: (200.0, 400.0),
             moisture_range: (0.0, 1.0),
-            surface_material: 0,
+            surface_material: "Air".into(),
             creature_spawns: vec![],
             item_spawns: vec![],
         };
