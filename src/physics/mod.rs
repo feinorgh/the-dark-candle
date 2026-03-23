@@ -6,11 +6,15 @@ pub mod integrity;
 pub mod pressure;
 
 use bevy::prelude::*;
+use bevy_common_assets::ron::RonAssetPlugin;
 
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((gravity::GravityPlugin, collision::CollisionPlugin));
+        app.add_plugins(RonAssetPlugin::<constants::PhysicsConstants>::new(&[
+            "physics_constants.ron",
+        ]))
+        .add_plugins((gravity::GravityPlugin, collision::CollisionPlugin));
     }
 }

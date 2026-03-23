@@ -18,6 +18,7 @@ use the_dark_candle::world::chunk_manager::ChunkMap;
 fn physics_app() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
+        .add_plugins(AssetPlugin::default())
         .add_plugins(PhysicsPlugin)
         .init_resource::<ChunkMap>()
         // Each call to app.update() advances virtual time by exactly 1/60 s.

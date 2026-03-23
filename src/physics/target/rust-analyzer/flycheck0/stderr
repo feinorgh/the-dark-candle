@@ -1,0 +1,205 @@
+   0.159941958s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("the_dark_candle", ["lib"], "/home/pk/Devel/the-dark-candle/src/lib.rs", Edition2021) }
+   0.159958822s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-c6be1d2a88bab4e8/lib-the_dark_candle`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.263754670s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: true }/TargetInner { name_inferred: true, ..: lib_target("the_dark_candle", ["lib"], "/home/pk/Devel/the-dark-candle/src/lib.rs", Edition2021) }
+   0.263767782s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-791b668e579347ba/test-lib-the_dark_candle`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.264658963s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: false }/TargetInner { name: "the_dark_candle", doc: true, ..: with_path("/home/pk/Devel/the-dark-candle/src/main.rs", Edition2021) }
+   0.264665869s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-8937fff0446ae228/bin-the_dark_candle`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.265381249s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: true }/TargetInner { name: "the_dark_candle", doc: true, ..: with_path("/home/pk/Devel/the-dark-candle/src/main.rs", Edition2021) }
+   0.265386853s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="the_dark_candle"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-3d2cf61b11f3fcd9/test-bin-the_dark_candle`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.266108560s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="gameplay"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: true }/TargetInner { kind: "test", name: "gameplay", benched: false, ..: with_path("/home/pk/Devel/the-dark-candle/tests/gameplay.rs", Edition2021) }
+   0.266115110s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="gameplay"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-da76993916fea758/test-integration-test-gameplay`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.266830483s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="scenarios"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: true }/TargetInner { kind: "test", name: "scenarios", benched: false, ..: with_path("/home/pk/Devel/the-dark-candle/tests/scenarios.rs", Edition2021) }
+   0.266836351s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="scenarios"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-b5f73370a5297c4a/test-integration-test-scenarios`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+   0.267534415s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="validate_assets"}: cargo::core::compiler::fingerprint: fingerprint error for the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)/Check { test: true }/TargetInner { kind: "test", name: "validate_assets", benched: false, ..: with_path("/home/pk/Devel/the-dark-candle/tests/validate_assets.rs", Edition2021) }
+   0.267540092s  INFO prepare_target{force=false package_id=the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle) target="validate_assets"}: cargo::core::compiler::fingerprint:     err: failed to read `/home/pk/Devel/the-dark-candle/target/debug/.fingerprint/the_dark_candle-8ceb246452da865f/test-integration-test-validate_assets`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: __libc_start_call_main
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+  18: __libc_start_main_impl
+             at /usr/src/debug/sys-libs/glibc-2.42-r5/glibc-2.42/csu/../csu/libc-start.c:360:3
+  19: <unknown>
+    Checking the_dark_candle v0.1.0 (/home/pk/Devel/the-dark-candle)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 2.68s
