@@ -6,9 +6,11 @@
 
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
+
 /// Identifies a material type. Index 0 is always air (empty).
 /// Material properties are looked up from RON-loaded `MaterialData` via this ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MaterialId(pub u16);
 
 impl MaterialId {
@@ -27,7 +29,7 @@ impl MaterialId {
 }
 
 /// Physical state of a single voxel.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Voxel {
     pub material: MaterialId,
     /// Temperature in Kelvin (ambient ~293 K).

@@ -4,6 +4,7 @@ mod camera;
 mod chemistry;
 mod data;
 mod entities;
+mod persistence;
 mod physics;
 mod procgen;
 mod social;
@@ -32,6 +33,7 @@ fn main() {
             procgen::ProcgenPlugin,
             behavior::BehaviorPlugin,
             social::SocialPlugin,
+            persistence::PersistencePlugin,
         ))
         .run();
 }

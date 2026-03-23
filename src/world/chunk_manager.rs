@@ -63,6 +63,10 @@ impl ChunkMap {
         self.map.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+
     pub fn coords(&self) -> impl Iterator<Item = &ChunkCoord> {
         self.map.keys()
     }

@@ -7,9 +7,10 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Growth stage of a creature's life cycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrowthStage {
     Juvenile,
     Adult,
@@ -17,7 +18,7 @@ pub enum GrowthStage {
 }
 
 /// ECS component tracking a creature's age and growth.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Growth {
     /// Current age in simulation ticks.
     pub age: u32,

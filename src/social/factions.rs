@@ -8,10 +8,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+
 use super::relationships::CreatureId;
 
 /// Unique faction identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FactionId(pub u32);
 
 /// A faction: a group of creatures with shared identity.
@@ -68,7 +71,7 @@ impl Faction {
 }
 
 /// Inter-faction relationship.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FactionRelation {
     /// -1.0 (war) to 1.0 (alliance).
     pub standing: f32,
@@ -81,7 +84,7 @@ impl Default for FactionRelation {
 }
 
 /// Registry of all factions and their inter-relationships.
-#[derive(Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct FactionRegistry {
     pub factions: HashMap<FactionId, Faction>,
     /// Relations between faction pairs. Key is (min_id, max_id) for canonical ordering.

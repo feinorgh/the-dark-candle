@@ -40,7 +40,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
+            libx11-dev libxi-dev libxkbcommon-dev libxrandr-dev libxcursor-dev
       - run: cargo clippy --all-targets -- -D warnings
 
   test:
@@ -61,7 +62,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
+            libx11-dev libxi-dev libxkbcommon-dev libxrandr-dev libxcursor-dev
       - run: cargo test
 
   build:
@@ -82,5 +84,9 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
+            libx11-dev libxi-dev libxkbcommon-dev libxrandr-dev libxcursor-dev \
+            xvfb
       - run: cargo build --release
+      - name: Smoke test (headless via Xvfb)
+        run: xvfb-run -a timeout 10 ./target/release/the_dark_candle || true

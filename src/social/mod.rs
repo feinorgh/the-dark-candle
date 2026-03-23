@@ -8,7 +8,7 @@ use bevy::prelude::*;
 pub struct SocialPlugin;
 
 impl Plugin for SocialPlugin {
-    fn build(&self, _app: &mut App) {
-        // Social systems run on FixedUpdate after behavior
+    fn build(&self, app: &mut App) {
+        app.init_resource::<factions::FactionRegistry>();
     }
 }

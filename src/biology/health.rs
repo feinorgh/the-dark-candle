@@ -7,9 +7,10 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Types of damage a creature can receive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DamageType {
     Physical,
     Fire,
@@ -21,7 +22,7 @@ pub enum DamageType {
 }
 
 /// ECS component tracking creature health.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Health {
     /// Current hit points.
     pub current: f32,
@@ -38,7 +39,7 @@ pub struct Health {
 }
 
 /// A timed status effect that deals damage or modifies stats.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StatusEffect {
     pub effect_type: DamageType,
     /// Damage per tick.

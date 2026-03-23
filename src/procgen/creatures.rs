@@ -9,9 +9,10 @@
 
 use crate::data::{BodySize, CreatureData, Diet};
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// ECS component for a spawned creature instance.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Creature {
     pub species: String,
     pub display_name: String,

@@ -7,9 +7,10 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Core motivational drives for a creature.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Needs {
     /// Hunger: driven by metabolism energy depletion (0 = sated, 1 = starving).
     pub hunger: f32,

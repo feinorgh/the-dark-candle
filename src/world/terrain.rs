@@ -12,12 +12,13 @@
 #![allow(dead_code)]
 
 use noise::{NoiseFn, Perlin};
+use serde::{Deserialize, Serialize};
 
 use super::chunk::{Chunk, CHUNK_SIZE};
 use super::voxel::MaterialId;
 
 /// Configuration for terrain generation, stored as a Bevy resource.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TerrainConfig {
     pub seed: u32,
     /// Sea level in voxel Y coordinates.
@@ -70,6 +71,10 @@ impl TerrainGenerator {
             detail_noise,
             cave_noise,
         }
+    }
+
+    pub fn config(&self) -> &TerrainConfig {
+        &self.config
     }
 
     /// Sample the terrain height at a world XZ position.

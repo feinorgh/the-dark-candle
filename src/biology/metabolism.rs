@@ -8,11 +8,12 @@
 #![allow(dead_code)]
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::data::BodySize;
 
 /// ECS component tracking a creature's metabolic state.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Metabolism {
     /// Current energy reserve (calories).
     pub energy: f32,

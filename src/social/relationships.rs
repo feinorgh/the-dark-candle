@@ -9,14 +9,15 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a creature in the social system.
 /// Maps to Bevy Entity bits but kept as u64 for pure-function testability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CreatureId(pub u64);
 
 /// How one creature feels about another.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Relationship {
     /// Trust: -1.0 (total distrust) to 1.0 (total trust).
     pub trust: f32,

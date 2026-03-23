@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub struct DataPlugin;
 
@@ -22,7 +22,7 @@ pub struct EnemyData {
 }
 
 /// Material phase (solid, liquid, gas) at standard conditions.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Solid,
     Liquid,
@@ -75,7 +75,7 @@ pub struct GameAssets {
 // --- Creature Data ---
 
 /// Dietary classification for creatures.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Diet {
     Herbivore,
     Carnivore,
@@ -84,7 +84,7 @@ pub enum Diet {
 }
 
 /// Size category affecting collision, visibility, and resource needs.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodySize {
     Tiny,
     Small,
@@ -136,7 +136,7 @@ fn default_variation() -> f32 {
 // --- Item Data ---
 
 /// Category of item affecting how it can be used.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemCategory {
     Tool,
     Weapon,

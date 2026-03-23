@@ -19,7 +19,9 @@ pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// Integer coordinate identifying a chunk in world space.
 /// Each unit corresponds to CHUNK_SIZE voxels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Component)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Component,
+)]
 pub struct ChunkCoord {
     pub x: i32,
     pub y: i32,

@@ -8,9 +8,10 @@
 
 use crate::data::{ItemCategory, ItemData, MaterialData};
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// ECS component for a spawned item instance.
-#[derive(Component, Debug, Clone)]
+#[derive(Serialize, Deserialize, Component, Debug, Clone)]
 pub struct Item {
     pub item_type: String,
     pub display_name: String,

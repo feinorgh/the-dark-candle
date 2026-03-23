@@ -4,14 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# The core engine (using the Wayland feature for modern Linux)
-bevy = { version = "0.18", features = ["wayland"] }
+# The core engine — Wayland for the primary desktop target, X11 for Xvfb / CI.
+bevy = { version = "0.18", features = ["wayland", "x11"] }
 
 # Data-driven pipeline dependencies
 serde = { version = "1.0", features = ["derive"] }
 # Allows loading .ron and .yaml files directly as Bevy Assets
 bevy_common_assets = { version = "0.15", features = ["ron", "yaml"] } 
 noise = "0.9.0"
+ron = "0.8"
 
 # Enable maximum optimizations for dependencies, but keep your code compiling fast
 [profile.dev.package."*"]
@@ -21,7 +22,6 @@ opt-level = 3
 opt-level = 1
 
 [dev-dependencies]
-ron = "0.8"
 glob = "0.3"
 
 # Optimize the final Windows/Linux release build
