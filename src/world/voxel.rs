@@ -32,11 +32,11 @@ impl MaterialId {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Voxel {
     pub material: MaterialId,
-    /// Temperature in Kelvin (ambient ~293 K).
+    /// Temperature in Kelvin (ambient ~288.15 K = 15 °C).
     pub temperature: f32,
-    /// Ambient pressure in atmospheres (sea level = 1.0).
+    /// Ambient pressure in Pascals (sea level = 101325 Pa).
     pub pressure: f32,
-    /// Structural damage [0.0 = intact, 1.0 = destroyed].
+    /// Structural damage / mass fraction remaining [1.0 = intact, 0.0 = destroyed].
     pub damage: f32,
 }
 
@@ -44,8 +44,8 @@ impl Default for Voxel {
     fn default() -> Self {
         Self {
             material: MaterialId::AIR,
-            temperature: 293.0,
-            pressure: 1.0,
+            temperature: 288.15,
+            pressure: 101_325.0,
             damage: 0.0,
         }
     }
@@ -86,8 +86,8 @@ mod tests {
         assert_eq!(v.material, MaterialId::STONE);
         assert!(!v.is_air());
         assert!(v.is_solid());
-        assert_eq!(v.temperature, 293.0);
-        assert_eq!(v.pressure, 1.0);
+        assert_eq!(v.temperature, 288.15);
+        assert_eq!(v.pressure, 101_325.0);
         assert_eq!(v.damage, 0.0);
     }
 
@@ -127,9 +127,9 @@ mod tests {
     fn voxel_temperature_and_pressure() {
         let mut v = Voxel::new(MaterialId::WATER);
         v.temperature = 373.15; // boiling point
-        v.pressure = 2.0;
+        v.pressure = 200_000.0; // ~2 atm in Pascals
         assert_eq!(v.temperature, 373.15);
-        assert_eq!(v.pressure, 2.0);
+        assert_eq!(v.pressure, 200_000.0);
     }
 
     #[test]

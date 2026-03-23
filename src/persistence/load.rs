@@ -24,7 +24,33 @@ use crate::{
     },
 };
 
-use super::types::{decode_rle, SaveId, SAVE_PATH};
+use super::types::{decode_rle, SaveId, SAVE_PATH, SAVE_VERSION};
+
+/// Migrate a save from an older version to the current format.
+/// Returns true if migration was applied, false if already current.
+fn migrate_save(save: &mut super::types::SaveGame) -> bool {
+    if save.version >= SAVE_VERSION {
+        return false;
+    }
+
+    // v1 → v2: pressure atm→Pa, temperature 293→288.15 default
+    if save.version == 1 {
+        info!("Migrating save v1 → v2: pressure atm→Pa, temperature to standard atmosphere");
+        for chunk in &mut save.chunks {
+            for run in &mut chunk.runs {
+                // Convert pressure from atmospheres to Pascals
+                run.pressure *= 101_325.0;
+                // Adjust default temperature (293 K → 288.15 K for ambient voxels)
+                if (run.temperature - 293.0).abs() < 0.01 {
+                    run.temperature = 288.15;
+                }
+            }
+        }
+        save.version = 2;
+    }
+
+    true
+}
 
 // ---------------------------------------------------------------------------
 // Load system
@@ -56,13 +82,17 @@ pub fn load_game(
         }
     };
 
-    let save: super::types::SaveGame = match ron::from_str(&text) {
+    let mut save: super::types::SaveGame = match ron::from_str(&text) {
         Ok(s) => s,
         Err(e) => {
             error!("Failed to parse save file: {e}");
             return;
         }
     };
+
+    if migrate_save(&mut save) {
+        info!("Save file migrated to v{}", save.version);
+    }
 
     info!(
         "Loading save (v{}) — {} chunks, {} creatures, {} items, {} enemies…",

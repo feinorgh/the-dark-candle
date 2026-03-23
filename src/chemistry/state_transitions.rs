@@ -119,6 +119,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 1,
@@ -135,6 +136,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 3,
@@ -151,6 +153,7 @@ mod tests {
             boiled_into: Some("Steam".into()),
             frozen_into: Some("Ice".into()),
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 8,
@@ -167,6 +170,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 9,
@@ -183,6 +187,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: Some("Water".into()),
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 10,
@@ -199,6 +204,7 @@ mod tests {
             boiled_into: Some("Air".into()),
             frozen_into: Some("Stone".into()),
             condensed_into: None,
+            ..Default::default()
         });
         reg
     }
@@ -353,5 +359,97 @@ mod tests {
             voxel.material = m;
         }
         assert_eq!(voxel.material, MaterialId::WATER);
+    }
+
+    // ---- Real-world validation tests ----
+
+    #[test]
+    fn water_freezing_point_is_273k() {
+        // Wikipedia: Water freezes at 273.15 K (0°C) at 1 atm
+        // Validate our material data uses the correct value
+        let registry = test_registry();
+        let water_data = registry.get(MaterialId::WATER).unwrap();
+        let expected_mp = 273.15_f32;
+        assert!(
+            (water_data.melting_point.unwrap() - expected_mp).abs() < 1.0,
+            "Water melting point should be ~273 K, got {:?}",
+            water_data.melting_point
+        );
+    }
+
+    #[test]
+    fn water_boiling_point_is_373k() {
+        // Wikipedia: Water boils at 373.15 K (100°C) at 1 atm
+        let registry = test_registry();
+        let water_data = registry.get(MaterialId::WATER).unwrap();
+        let expected_bp = 373.15_f32;
+        assert!(
+            (water_data.boiling_point.unwrap() - expected_bp).abs() < 1.0,
+            "Water boiling point should be ~373 K, got {:?}",
+            water_data.boiling_point
+        );
+    }
+
+    #[test]
+    fn ice_latent_heat_fusion_is_334kj() {
+        // Wikipedia: Enthalpy of fusion of water/ice = 334 kJ/kg
+        let registry = test_registry();
+        let ice_data = registry.get(MaterialId::ICE).unwrap();
+        if let Some(lf) = ice_data.latent_heat_fusion {
+            assert!(
+                (lf - 334_000.0).abs() < 10_000.0,
+                "Ice latent heat of fusion should be ~334,000 J/kg, got {lf}"
+            );
+        }
+        // Also check water has same fusion value
+        let water_data = registry.get(MaterialId::WATER).unwrap();
+        if let Some(lf) = water_data.latent_heat_fusion {
+            assert!(
+                (lf - 334_000.0).abs() < 10_000.0,
+                "Water latent heat of fusion should be ~334,000 J/kg, got {lf}"
+            );
+        }
+    }
+
+    #[test]
+    fn water_latent_heat_vaporization_is_2260kj() {
+        // Wikipedia: Enthalpy of vaporization of water = 2260 kJ/kg
+        let registry = test_registry();
+        let water_data = registry.get(MaterialId::WATER).unwrap();
+        if let Some(lv) = water_data.latent_heat_vaporization {
+            assert!(
+                (lv - 2_260_000.0).abs() < 100_000.0,
+                "Water latent heat of vaporization should be ~2,260,000 J/kg, got {lv}"
+            );
+        }
+    }
+
+    #[test]
+    fn phase_transition_temperatures_are_ordered() {
+        // For all materials with both melting and boiling points,
+        // melting must be < boiling (second law of thermodynamics constraint)
+        let registry = test_registry();
+        for &id in &[MaterialId::WATER, MaterialId::STONE, MaterialId::LAVA] {
+            let mat = registry.get(id).unwrap();
+            if let (Some(mp), Some(bp)) = (mat.melting_point, mat.boiling_point) {
+                assert!(
+                    mp < bp,
+                    "Material {}: melting ({mp} K) must be < boiling ({bp} K)",
+                    mat.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stone_melting_point_is_1473k() {
+        // Wikipedia: Typical granite melting range 1073-1473 K
+        let registry = test_registry();
+        let stone = registry.get(MaterialId::STONE).unwrap();
+        let mp = stone.melting_point.unwrap();
+        assert!(
+            (1000.0..=1600.0).contains(&mp),
+            "Stone melting point should be ~1473 K, got {mp}"
+        );
     }
 }

@@ -2,6 +2,10 @@
 
 Voxel world infrastructure: types, chunk storage, terrain generation, Surface Nets meshing, and collision queries.
 
+## Spatial Mapping
+
+**1 voxel = 1 meter.** This is the fundamental mapping that makes all SI units work without coordinate transforms. All physics values (density in kg/m³, force in N, energy in J) apply directly to voxel-sized volumes.
+
 ## Files
 
 | File | Purpose |
@@ -17,6 +21,14 @@ Voxel world infrastructure: types, chunk storage, terrain generation, Surface Ne
 
 - `CHUNK_SIZE = 32` — edge length in voxels (32³ = 32,768 per chunk)
 - `CHUNK_VOLUME = 32,768`
+
+### Voxel Defaults (SI Units)
+
+| Field | Default | Unit | Notes |
+|-------|---------|------|-------|
+| `temperature` | 288.15 | K | Standard atmosphere (15 °C) |
+| `pressure` | 101325.0 | Pa | Sea level atmospheric pressure |
+| `damage` | 0.0 | — | 0.0 = intact, 1.0 = destroyed |
 
 ### MaterialId Registry
 
@@ -52,6 +64,8 @@ When adding new materials: define a `MaterialId` constant in `voxel.rs`, create 
 
 ## Gotchas
 
-- Voxel is 12 bytes. Keep it compact — no strings or heap allocations.
+- Voxel is 16 bytes (MaterialId:2 + temperature:f32 + pressure:f32 + damage:f32 + 2 padding). Keep it compact — no strings or heap allocations.
 - `is_solid()` returns true for everything except air. Water is "not air" but also not structural (see physics/integrity).
 - Surface Nets meshing expects the chunk plus a 1-voxel border from neighbors for seamless edges.
+- Pressure is in **Pascals** (101325 Pa = 1 atm). Do NOT use atmospheres.
+- Temperature is in **Kelvin** (288.15 K = 15 °C). Do NOT use Celsius or Fahrenheit.

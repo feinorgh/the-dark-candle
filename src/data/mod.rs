@@ -26,8 +26,9 @@ pub struct EnemyData {
 }
 
 /// Material phase (solid, liquid, gas) at standard conditions.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Phase {
+    #[default]
     Solid,
     Liquid,
     Gas,
@@ -35,7 +36,18 @@ pub enum Phase {
 
 /// Physical and chemical properties of a material, loaded from `.material.ron`.
 /// The `id` field maps to `MaterialId` in the voxel system.
-#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
+///
+/// All values use SI units:
+///   - density: kg/m³
+///   - temperatures (melting, boiling, ignition): Kelvin
+///   - thermal_conductivity: W/(m·K)
+///   - specific_heat_capacity: J/(kg·K)
+///   - hardness: Mohs scale (0–10)
+///   - viscosity: Pa·s
+///   - latent heats: J/kg
+///   - heat_of_combustion: J/kg
+///   - molar_mass: kg/mol
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq, Default)]
 pub struct MaterialData {
     /// Numeric ID matching `MaterialId` in the voxel system (0 = air).
     pub id: u16,
@@ -50,12 +62,62 @@ pub struct MaterialData {
     pub boiling_point: Option<f32>,
     /// Ignition temperature in Kelvin (None if non-flammable).
     pub ignition_point: Option<f32>,
-    /// Structural hardness (0.0 = no resistance, 1.0 = maximum].
+    /// Scratch resistance on the Mohs scale (0 = air/fluids, 10 = diamond).
+    /// Source: Wikipedia — Mohs scale of mineral hardness.
     pub hardness: f32,
     /// Base color for rendering (RGB, 0.0–1.0).
     pub color: [f32; 3],
     /// Whether light passes through this material.
     pub transparent: bool,
+
+    // --- Thermal properties (SI) ---
+    /// Thermal conductivity in W/(m·K). How fast heat flows through this material.
+    /// Source: Wikipedia — List of thermal conductivities.
+    #[serde(default)]
+    pub thermal_conductivity: f32,
+    /// Specific heat capacity in J/(kg·K). Energy to raise 1 kg by 1 K.
+    /// Source: Wikipedia — Table of specific heat capacities.
+    #[serde(default)]
+    pub specific_heat_capacity: f32,
+    /// Energy absorbed during solid→liquid transition (J/kg). None if no melting.
+    /// Source: Wikipedia — Enthalpy of fusion.
+    #[serde(default)]
+    pub latent_heat_fusion: Option<f32>,
+    /// Energy absorbed during liquid→gas transition (J/kg). None if no boiling.
+    /// Source: Wikipedia — Enthalpy of vaporization.
+    #[serde(default)]
+    pub latent_heat_vaporization: Option<f32>,
+    /// Emissivity for radiative heat transfer (0.0–1.0, dimensionless).
+    #[serde(default)]
+    pub emissivity: f32,
+
+    // --- Mechanical properties (SI) ---
+    /// Dynamic viscosity in Pa·s. Only meaningful for fluids.
+    /// Source: Wikipedia — Viscosity.
+    #[serde(default)]
+    pub viscosity: Option<f32>,
+    /// Kinetic friction coefficient (dimensionless, 0.0–1.0).
+    /// Source: Wikipedia — Friction § Coefficient of friction.
+    #[serde(default)]
+    pub friction_coefficient: f32,
+    /// Coefficient of restitution (0 = perfectly inelastic, 1 = perfectly elastic).
+    #[serde(default)]
+    pub restitution: f32,
+    /// Young's modulus in Pascals. Stiffness of the material.
+    /// Source: Wikipedia — Young's modulus.
+    #[serde(default)]
+    pub youngs_modulus: Option<f32>,
+
+    // --- Chemical / combustion properties (SI) ---
+    /// Energy released per kg when burned (J/kg). None if non-flammable.
+    /// Source: Wikipedia — Heat of combustion.
+    #[serde(default)]
+    pub heat_of_combustion: Option<f32>,
+    /// Molar mass in kg/mol. Used for ideal gas law calculations (gases only).
+    #[serde(default)]
+    pub molar_mass: Option<f32>,
+
+    // --- Phase transition targets ---
     /// Material name this becomes when heated above melting_point (solid → liquid).
     #[serde(default)]
     pub melted_into: Option<String>,
@@ -296,9 +358,15 @@ mod tests {
                 melting_point: Some(1473.0),
                 boiling_point: Some(2773.0),
                 ignition_point: None,
-                hardness: 0.9,
+                hardness: 6.5,
                 color: (0.5, 0.5, 0.5),
                 transparent: false,
+                thermal_conductivity: 2.5,
+                specific_heat_capacity: 790.0,
+                latent_heat_fusion: Some(400000.0),
+                friction_coefficient: 0.7,
+                restitution: 0.2,
+                emissivity: 0.93,
                 melted_into: Some("Lava"),
             )
         "#;
@@ -311,6 +379,11 @@ mod tests {
         assert_eq!(data.ignition_point, None);
         assert!(!data.transparent);
         assert_eq!(data.melted_into, Some("Lava".into()));
+        // Verify new SI fields
+        assert_eq!(data.thermal_conductivity, 2.5);
+        assert_eq!(data.specific_heat_capacity, 790.0);
+        assert_eq!(data.latent_heat_fusion, Some(400000.0));
+        assert_eq!(data.friction_coefficient, 0.7);
     }
 
     #[test]
@@ -327,12 +400,16 @@ mod tests {
                 hardness: 0.0,
                 color: (0.8, 0.9, 1.0),
                 transparent: true,
+                thermal_conductivity: 0.026,
+                specific_heat_capacity: 1005.0,
+                molar_mass: Some(0.0289647),
             )
         "#;
         let data: MaterialData = ron::from_str(ron_str).expect("Failed to deserialize air");
         assert!(data.transparent);
         assert_eq!(data.hardness, 0.0);
         assert_eq!(data.melting_point, None);
+        assert_eq!(data.molar_mass, Some(0.0289647));
     }
 
     #[test]
@@ -346,13 +423,48 @@ mod tests {
                 melting_point: None,
                 boiling_point: None,
                 ignition_point: Some(573.0),
-                hardness: 0.3,
+                hardness: 2.0,
                 color: (0.6, 0.4, 0.2),
                 transparent: false,
+                thermal_conductivity: 0.15,
+                specific_heat_capacity: 1700.0,
+                heat_of_combustion: Some(15000000.0),
             )
         "#;
         let data: MaterialData = ron::from_str(ron_str).expect("Failed to deserialize wood");
         assert_eq!(data.ignition_point, Some(573.0));
+        assert_eq!(data.heat_of_combustion, Some(15_000_000.0));
+    }
+
+    #[test]
+    fn material_data_new_fields_default_to_zero() {
+        // Minimal RON with only the original fields — new fields should default
+        let ron_str = r#"
+            MaterialData(
+                id: 99,
+                name: "Test",
+                default_phase: Solid,
+                density: 1000.0,
+                melting_point: None,
+                boiling_point: None,
+                ignition_point: None,
+                hardness: 1.0,
+                color: (1.0, 1.0, 1.0),
+                transparent: false,
+            )
+        "#;
+        let data: MaterialData = ron::from_str(ron_str).expect("Failed to deserialize");
+        assert_eq!(data.thermal_conductivity, 0.0);
+        assert_eq!(data.specific_heat_capacity, 0.0);
+        assert_eq!(data.viscosity, None);
+        assert_eq!(data.friction_coefficient, 0.0);
+        assert_eq!(data.restitution, 0.0);
+        assert_eq!(data.emissivity, 0.0);
+        assert_eq!(data.latent_heat_fusion, None);
+        assert_eq!(data.latent_heat_vaporization, None);
+        assert_eq!(data.heat_of_combustion, None);
+        assert_eq!(data.molar_mass, None);
+        assert_eq!(data.youngs_modulus, None);
     }
 
     #[test]
@@ -379,8 +491,8 @@ mod tests {
             assert!(!data.name.is_empty(), "{}: name is empty", path.display());
             assert!(data.density >= 0.0, "{}: negative density", path.display());
             assert!(
-                data.hardness >= 0.0 && data.hardness <= 1.0,
-                "{}: hardness out of range",
+                data.hardness >= 0.0 && data.hardness <= 10.0,
+                "{}: hardness out of Mohs range (0-10)",
                 path.display()
             );
         }

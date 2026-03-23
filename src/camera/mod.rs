@@ -2,6 +2,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::physics::constants;
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::ChunkMap;
 use crate::world::collision::ground_height_at;
@@ -28,7 +29,7 @@ pub struct FpsCamera {
     pub sensitivity: f32,
     pub pitch: f32,
     pub yaw: f32,
-    /// Vertical velocity for gravity.
+    /// Vertical velocity for gravity (m/s).
     pub vertical_velocity: f32,
     /// Whether the camera is on the ground.
     pub grounded: bool,
@@ -36,17 +37,28 @@ pub struct FpsCamera {
     pub gravity_enabled: bool,
 }
 
-/// Player eye height above the ground surface.
+/// Player eye height above the ground surface (m).
+/// Average adult eye height when standing: ~1.7 m.
 const EYE_HEIGHT: f32 = 1.7;
-/// Gravity acceleration in voxel units per second².
-const GRAVITY: f32 = 20.0;
-/// Terminal falling speed.
-const TERMINAL_VELOCITY: f32 = 50.0;
+
+/// Player walk speed (m/s). Average human: ~1.4 m/s.
+const WALK_SPEED: f32 = 5.0;
+
+/// Player sprint speed (m/s). Average human sprint: ~5–8 m/s.
+const SPRINT_SPEED: f32 = 8.0;
+
+/// Fly-mode speed (m/s). Fast traversal when gravity is disabled.
+const FLY_SPEED: f32 = 20.0;
+
+/// Jump initial velocity (m/s).
+/// Derived from desired jump height of ~1.25 m: v₀ = sqrt(2×g×h).
+/// Source: Wikipedia — Projectile motion.
+const JUMP_VELOCITY: f32 = 4.95;
 
 impl Default for FpsCamera {
     fn default() -> Self {
         Self {
-            speed: 10.0,
+            speed: WALK_SPEED,
             sensitivity: 0.002,
             pitch: 0.0,
             yaw: 0.0,
@@ -169,9 +181,9 @@ fn camera_move(
         if key.pressed(KeyCode::KeyA) {
             direction -= right_xz;
         }
-        // Jump
+        // Jump — v₀ = sqrt(2gh) for ~1.25 m jump height
         if key.just_pressed(KeyCode::Space) && cam.grounded {
-            cam.vertical_velocity = 8.0;
+            cam.vertical_velocity = JUMP_VELOCITY;
             cam.grounded = false;
         }
     } else {
@@ -200,7 +212,16 @@ fn camera_move(
         direction = direction.normalize();
     }
 
-    transform.translation += direction * cam.speed * time.delta_secs();
+    // Determine effective movement speed
+    let effective_speed = if !cam.gravity_enabled {
+        FLY_SPEED
+    } else if key.pressed(KeyCode::ControlLeft) {
+        SPRINT_SPEED
+    } else {
+        cam.speed
+    };
+
+    transform.translation += direction * effective_speed * time.delta_secs();
 }
 
 /// Apply gravity and ground collision to the camera.
@@ -221,9 +242,11 @@ fn camera_gravity(
     let dt = time.delta_secs();
     let pos = transform.translation;
 
-    // Apply gravity
-    cam.vertical_velocity -= GRAVITY * dt;
-    cam.vertical_velocity = cam.vertical_velocity.max(-TERMINAL_VELOCITY);
+    // Apply gravity (SI: 9.80665 m/s²)
+    cam.vertical_velocity -= constants::GRAVITY * dt;
+    // Safety cap at 200 m/s — real terminal velocity (~53 m/s for a human)
+    // will be handled by the force-based drag model once applied to camera.
+    cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
     transform.translation.y += cam.vertical_velocity * dt;
 
     // Ground collision
@@ -246,7 +269,7 @@ mod tests {
     #[test]
     fn fps_camera_default_values() {
         let cam = FpsCamera::default();
-        assert_eq!(cam.speed, 10.0);
+        assert_eq!(cam.speed, WALK_SPEED);
         assert_eq!(cam.pitch, 0.0);
         assert_eq!(cam.yaw, 0.0);
         assert!(cam.sensitivity > 0.0);
@@ -273,8 +296,24 @@ mod tests {
     }
 
     #[test]
-    fn gravity_constants_are_positive() {
-        const { assert!(GRAVITY > 0.0) };
-        const { assert!(TERMINAL_VELOCITY > 0.0) };
+    fn walk_speed_is_realistic() {
+        // Average human walk speed: 1.4 m/s, our value set for gameplay feel
+        const { assert!(WALK_SPEED >= 1.0 && WALK_SPEED <= 10.0) };
+    }
+
+    #[test]
+    fn jump_velocity_matches_physics() {
+        // v₀ = sqrt(2gh) for h = 1.25 m → v₀ ≈ 4.95 m/s
+        // Source: Wikipedia — Projectile motion
+        let expected = (2.0 * constants::GRAVITY * 1.25_f32).sqrt();
+        assert!(
+            (JUMP_VELOCITY - expected).abs() < 0.1,
+            "Jump velocity {JUMP_VELOCITY} should be ~{expected} m/s for 1.25m jump"
+        );
+    }
+
+    #[test]
+    fn sprint_faster_than_walk() {
+        const { assert!(SPRINT_SPEED > WALK_SPEED) };
     }
 }

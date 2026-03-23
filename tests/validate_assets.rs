@@ -33,6 +33,40 @@ struct MaterialData {
     hardness: f32,
     color: [f32; 3],
     transparent: bool,
+    // SI thermal properties
+    #[serde(default)]
+    thermal_conductivity: f32,
+    #[serde(default)]
+    specific_heat_capacity: f32,
+    #[serde(default)]
+    latent_heat_fusion: Option<f32>,
+    #[serde(default)]
+    latent_heat_vaporization: Option<f32>,
+    #[serde(default)]
+    emissivity: f32,
+    // SI mechanical properties
+    #[serde(default)]
+    viscosity: Option<f32>,
+    #[serde(default)]
+    friction_coefficient: f32,
+    #[serde(default)]
+    restitution: f32,
+    #[serde(default)]
+    youngs_modulus: Option<f32>,
+    // Chemical / combustion properties
+    #[serde(default)]
+    heat_of_combustion: Option<f32>,
+    #[serde(default)]
+    molar_mass: Option<f32>,
+    // Phase transition targets
+    #[serde(default)]
+    melted_into: Option<String>,
+    #[serde(default)]
+    boiled_into: Option<String>,
+    #[serde(default)]
+    frozen_into: Option<String>,
+    #[serde(default)]
+    condensed_into: Option<String>,
 }
 
 /// Validate that every .enemy.ron file in assets/data/ deserializes correctly.
@@ -79,6 +113,120 @@ fn all_material_ron_files_are_valid() {
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
         let _data: MaterialData = ron::from_str(&contents)
             .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()));
+    }
+}
+
+/// Validate that every .material.ron file has physically plausible SI values.
+#[test]
+fn all_materials_have_physically_valid_si_values() {
+    let pattern = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/data/materials/*.material.ron"
+    );
+    let files: Vec<_> = glob::glob(pattern)
+        .expect("Failed to read glob pattern")
+        .collect();
+
+    assert!(
+        !files.is_empty(),
+        "No .material.ron files found in assets/data/materials/"
+    );
+
+    for entry in files {
+        let path = entry.expect("Failed to read glob entry");
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let contents =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {name}: {e}"));
+        let mat: MaterialData =
+            ron::from_str(&contents).unwrap_or_else(|e| panic!("Failed to parse {name}: {e}"));
+
+        // Density must be positive (kg/m³)
+        assert!(
+            mat.density > 0.0,
+            "{name}: density must be > 0, got {}",
+            mat.density
+        );
+
+        // Thermal conductivity must be non-negative (W/(m·K)); zero allowed for defaults
+        assert!(
+            mat.thermal_conductivity >= 0.0,
+            "{name}: thermal_conductivity must be >= 0, got {}",
+            mat.thermal_conductivity
+        );
+
+        // Specific heat capacity must be non-negative (J/(kg·K)); zero allowed for defaults
+        assert!(
+            mat.specific_heat_capacity >= 0.0,
+            "{name}: specific_heat_capacity must be >= 0, got {}",
+            mat.specific_heat_capacity
+        );
+
+        // Hardness 0–10 Mohs
+        assert!(
+            mat.hardness >= 0.0 && mat.hardness <= 10.0,
+            "{name}: hardness must be 0–10 Mohs, got {}",
+            mat.hardness
+        );
+
+        // Friction coefficient 0–1
+        assert!(
+            mat.friction_coefficient >= 0.0 && mat.friction_coefficient <= 1.0,
+            "{name}: friction_coefficient must be 0–1, got {}",
+            mat.friction_coefficient
+        );
+
+        // Restitution 0–1
+        assert!(
+            mat.restitution >= 0.0 && mat.restitution <= 1.0,
+            "{name}: restitution must be 0–1, got {}",
+            mat.restitution
+        );
+
+        // Emissivity 0–1
+        assert!(
+            mat.emissivity >= 0.0 && mat.emissivity <= 1.0,
+            "{name}: emissivity must be 0–1, got {}",
+            mat.emissivity
+        );
+
+        // Melting point must be below boiling point where both exist
+        if let (Some(mp), Some(bp)) = (mat.melting_point, mat.boiling_point) {
+            assert!(
+                mp < bp,
+                "{name}: melting_point ({mp} K) must be < boiling_point ({bp} K)"
+            );
+        }
+
+        // Latent heats must be positive where defined
+        if let Some(lf) = mat.latent_heat_fusion {
+            assert!(lf > 0.0, "{name}: latent_heat_fusion must be > 0, got {lf}");
+        }
+        if let Some(lv) = mat.latent_heat_vaporization {
+            assert!(
+                lv > 0.0,
+                "{name}: latent_heat_vaporization must be > 0, got {lv}"
+            );
+        }
+
+        // Heat of combustion must be positive where defined
+        if let Some(hc) = mat.heat_of_combustion {
+            assert!(hc > 0.0, "{name}: heat_of_combustion must be > 0, got {hc}");
+        }
+
+        // Viscosity must be positive where defined
+        if let Some(v) = mat.viscosity {
+            assert!(v > 0.0, "{name}: viscosity must be > 0, got {v}");
+        }
+
+        // Molar mass must be positive where defined
+        if let Some(mm) = mat.molar_mass {
+            assert!(mm > 0.0, "{name}: molar_mass must be > 0, got {mm}");
+        }
+
+        // Young's modulus must be positive where defined
+        if let Some(ym) = mat.youngs_modulus {
+            assert!(ym > 0.0, "{name}: youngs_modulus must be > 0, got {ym}");
+        }
     }
 }
 

@@ -123,6 +123,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 4,
@@ -139,6 +140,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 1,
@@ -155,6 +157,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 5,
@@ -171,6 +174,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg
     }
@@ -207,6 +211,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         }
     }
 
@@ -226,6 +231,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         }
     }
 
@@ -245,6 +251,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         }
     }
 

@@ -1,9 +1,9 @@
 (
-    description: "Free-falling body clamps at terminal velocity after a large timestep",
+    description: "Free-falling body clamps at safety velocity cap after a large timestep",
     initial_velocity_y: 0.0,
     gravity_scale: 1.0,
     steps: 1,
     delta_secs: 100.0,
-    expect_velocity_y: -50.0,
+    expect_velocity_y: -200.0,
     tolerance: 0.001,
 )

@@ -601,4 +601,100 @@ mod tests {
             "Buoyancy should reduce downward acceleration: {accel_with} vs {accel_without}"
         );
     }
+
+    // --- Real-world validation tests ---
+
+    #[test]
+    fn neutral_buoyancy_near_zero_net_force() {
+        // Entity with density ≈ water density should have near-zero net vertical force
+        // Wikipedia: Archimedes' principle - neutral buoyancy when ρ_object ≈ ρ_fluid
+        let mass = 1000.0; // 1 m³ of water-density material
+        let volume = 1.0;
+        let fluid_density = 1000.0; // water
+        let f_grav = gravitational_force(mass);
+        let f_buoy = buoyancy_force(fluid_density, volume);
+        let net = f_grav - f_buoy;
+        assert!(
+            net.abs() < 0.01,
+            "Neutral buoyancy: net force should be ~0, got {net}"
+        );
+    }
+
+    #[test]
+    fn dense_object_higher_terminal_velocity() {
+        // Wikipedia: Terminal velocity increases with mass
+        // Iron sphere vs wood sphere, same size (1m³), same drag
+        let cd = 0.47; // sphere
+        let area = std::f32::consts::PI * 0.5 * 0.5; // r=0.5m sphere cross-section
+        let rho_air = 1.225;
+
+        let iron_mass = 7874.0; // kg/m³ × 1m³
+        let wood_mass = 600.0;
+
+        let vt_iron = terminal_velocity(iron_mass, rho_air, cd, area);
+        let vt_wood = terminal_velocity(wood_mass, rho_air, cd, area);
+
+        assert!(
+            vt_iron > vt_wood,
+            "Iron ({vt_iron:.1}) should have higher terminal velocity than wood ({vt_wood:.1})"
+        );
+        // Iron ~137 m/s, Wood ~38 m/s (both in air)
+    }
+
+    #[test]
+    fn terminal_velocity_lower_in_denser_medium() {
+        // Wikipedia: drag increases with medium density
+        let mass = 80.0;
+        let cd = 1.2;
+        let area = 0.7;
+
+        let vt_air = terminal_velocity(mass, 1.225, cd, area);
+        let vt_water = terminal_velocity(mass, 1000.0, cd, area);
+
+        assert!(vt_air > vt_water * 5.0,
+            "Terminal velocity in air ({vt_air:.1}) should be much higher than in water ({vt_water:.1})");
+    }
+
+    #[test]
+    fn ice_much_less_friction_than_stone() {
+        // Wikipedia: Coefficient of friction - ice μ≈0.05, stone μ≈0.7
+        let mass = 80.0;
+        let normal = mass * GRAVITY; // standing on surface
+
+        let f_ice = friction_force(0.05, normal);
+        let f_stone = friction_force(0.7, normal);
+
+        // Stone friction should be 14× ice friction (0.7/0.05 = 14)
+        let ratio = f_stone / f_ice;
+        assert!(
+            (ratio - 14.0).abs() < 0.1,
+            "Stone/ice friction ratio should be 14, got {ratio:.1}"
+        );
+    }
+
+    #[test]
+    fn friction_force_80kg_on_stone() {
+        // F_f = μ × m × g = 0.7 × 80 × 9.80665 ≈ 549.2 N
+        // Wikipedia: friction force equation
+        let mass = 80.0;
+        let mu = 0.7; // stone
+        let normal = mass * GRAVITY;
+        let f = friction_force(mu, normal);
+        let expected = 0.7 * 80.0 * 9.80665;
+        assert!(
+            (f - expected).abs() < 0.1,
+            "Friction on stone: expected {expected:.1} N, got {f:.1} N"
+        );
+    }
+
+    #[test]
+    fn buoyancy_force_1m3_in_water_is_9810n() {
+        // F_b = ρ × V × g = 1000 × 1.0 × 9.80665 = 9806.65 N
+        // Wikipedia: Archimedes' principle
+        let f = buoyancy_force(1000.0, 1.0);
+        assert!(
+            (f - 9806.65).abs() < 1.0,
+            "1m³ buoyancy in water: expected ~9807 N, got {f:.1}"
+        );
+    }
 }

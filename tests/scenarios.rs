@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use the_dark_candle::chemistry::reactions::{check_reaction, ReactionData};
 use the_dark_candle::data::MaterialRegistry;
-use the_dark_candle::physics::gravity::{GRAVITY, TERMINAL_VELOCITY};
+use the_dark_candle::physics::gravity::{GRAVITY, VELOCITY_SAFETY_CAP};
 use the_dark_candle::world::chunk::{Chunk, ChunkCoord, CHUNK_VOLUME};
 use the_dark_candle::world::terrain::{TerrainConfig, TerrainGenerator};
 use the_dark_candle::world::voxel::MaterialId;
@@ -97,7 +97,7 @@ fn run_physics(s: &PhysicsScenario) -> Result<(), String> {
     let mut vel = s.initial_velocity_y;
     for _ in 0..s.steps {
         vel -= GRAVITY * s.gravity_scale * s.delta_secs;
-        vel = vel.max(-TERMINAL_VELOCITY);
+        vel = vel.max(-VELOCITY_SAFETY_CAP);
     }
     if !approx::abs_diff_eq!(vel, s.expect_velocity_y, epsilon = s.tolerance) {
         return Err(format!(
@@ -128,6 +128,7 @@ fn run_chemistry(s: &ChemistryScenario) -> Result<(), String> {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
     }
 

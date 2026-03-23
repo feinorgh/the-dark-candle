@@ -26,6 +26,38 @@ If tasked with creating a new entity (like an Item or Enemy):
 3. Generate the actual data file in `assets/data/name.your_suffix.ron`.
 4. Write a system that listens for the asset load via `Res<Assets<YourStruct>>` and spawns the entity using Bevy 0.18 component tuples.
 
+## ⚠️ CRITICAL: SI Unit System & Real-World Physics
+
+All physical properties in this project use the **International System of Units (SI)** with real-world values. AI agents MUST NOT introduce arbitrary/game-feel constants. Emergent behaviors (terminal velocity, buoyancy effects, drag) arise from the interaction of fundamental forces — they are NOT hardcoded.
+
+### Core Rules
+
+1. **1 voxel = 1 meter.** All spatial units map directly. A 32³ chunk is 32 m × 32 m × 32 m.
+2. **No arbitrary physics constants.** Use real values: g = 9.80665 m/s², P₀ = 101325 Pa, etc. All constants live in `src/physics/constants.rs`.
+3. **Material properties are real-world SI.** Density in kg/m³, thermal conductivity in W/(m·K), specific heat in J/(kg·K), hardness in Mohs (0–10), viscosity in Pa·s, latent heats in J/kg, heats of combustion in J/kg.
+4. **Emergent over hardcoded.** Terminal velocity, buoyancy, drag — these emerge from the force model (gravity + buoyancy + drag + friction). Do NOT add constant caps or magic numbers.
+5. **Force model for entities:** Every entity has mass (kg) and a drag profile. Forces are summed per tick: `F_net = F_gravity + F_buoyancy + F_drag + F_friction`. Acceleration = F_net / mass.
+6. **Heat transfer uses Fourier's law.** Thermal diffusivity α = k / (ρ × Cₚ). Latent heat must be absorbed before phase transitions complete.
+7. **Pressure in Pascals.** Altitude-dependent via the barometric formula. Gas density from ideal gas law.
+8. **Reaction energies in J/kg.** Combustion is a sustained process with a burn rate, not an instant conversion.
+
+### SI Unit Reference Table
+
+| Quantity | Unit | Symbol | Example |
+|---|---|---|---|
+| Length / position | meters | m | 1 voxel = 1 m |
+| Mass | kilograms | kg | Iron voxel = 7874 kg |
+| Time | seconds | s | Bevy `FixedUpdate` dt |
+| Temperature | Kelvin | K | Ambient = 288.15 K |
+| Pressure | Pascals | Pa | Sea level = 101325 Pa |
+| Force | Newtons | N | Weight = m × g |
+| Energy | Joules | J | Latent heat of ice = 334000 J/kg |
+| Power | Watts | W | Heat flux = k × A × ΔT / Δx |
+| Thermal conductivity | W/(m·K) | k | Iron = 80.2 |
+| Specific heat capacity | J/(kg·K) | Cₚ | Water = 4186 |
+| Viscosity | Pascal-seconds | Pa·s | Water = 1.0e-3 |
+| Density | kg/m³ | ρ | Water = 1000 |
+
 ## Terminal Commands
 When asked to provide build or run commands, use the following:
 - **Run (Fast execution):** `cargo run --features bevy/dynamic_linking` (or `cargo run --release` for testing performance).

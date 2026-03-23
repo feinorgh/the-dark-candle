@@ -14,7 +14,7 @@ use crate::{
     procgen::{creatures::Creature, items::Item},
 };
 
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 pub const SAVE_PATH: &str = "saves/save.ron";
 
 // ---------------------------------------------------------------------------

@@ -13,8 +13,11 @@
 
 use crate::world::voxel::{MaterialId, Voxel};
 
-/// Standard atmospheric pressure in arbitrary units (1 atm).
-pub const ATMOSPHERIC_PRESSURE: f32 = 1.0;
+use super::constants;
+
+/// Standard atmospheric pressure at sea level (Pa).
+/// Source: NIST / ISO 2533:1975.
+pub const ATMOSPHERIC_PRESSURE: f32 = constants::ATMOSPHERIC_PRESSURE;
 
 /// Default diffusion rate per tick (0.0–1.0). Higher = faster equalization.
 const DEFAULT_DIFFUSION_RATE: f32 = 0.25;
@@ -189,22 +192,29 @@ mod tests {
     }
 
     #[test]
+    fn atmospheric_pressure_is_si() {
+        // Source: NIST / ISO 2533 — sea level pressure is 101325 Pa
+        assert_eq!(ATMOSPHERIC_PRESSURE, 101_325.0);
+    }
+
+    #[test]
     fn uniform_pressure_is_stable() {
         let mut grid = make_grid(4);
         let delta = diffuse_pressure(&mut grid, 4);
-        assert!(delta < 1e-6, "Uniform pressure should not change");
+        assert!(delta < 1e-1, "Uniform pressure should not change");
     }
 
     #[test]
     fn high_pressure_diffuses_to_neighbors() {
         let mut grid = make_grid(4);
-        grid[idx(2, 2, 2, 4)].pressure = 10.0;
+        // Explosion-level overpressure: 10 atm at center
+        grid[idx(2, 2, 2, 4)].pressure = 1_013_250.0;
 
         let delta = diffuse_pressure(&mut grid, 4);
         assert!(delta > 0.0, "Pressure should spread");
 
         // Center should have decreased
-        assert!(grid[idx(2, 2, 2, 4)].pressure < 10.0);
+        assert!(grid[idx(2, 2, 2, 4)].pressure < 1_013_250.0);
         // Neighbor should have increased
         assert!(grid[idx(1, 2, 2, 4)].pressure > ATMOSPHERIC_PRESSURE);
     }
@@ -221,13 +231,13 @@ mod tests {
         }
 
         // High pressure on one side
-        grid[idx(1, 2, 2, 4)].pressure = 10.0;
+        grid[idx(1, 2, 2, 4)].pressure = 1_013_250.0;
 
         diffuse_pressure(&mut grid, 4);
 
         // Pressure should not cross the wall
         assert!(
-            (grid[idx(3, 2, 2, 4)].pressure - ATMOSPHERIC_PRESSURE).abs() < 1e-6,
+            (grid[idx(3, 2, 2, 4)].pressure - ATMOSPHERIC_PRESSURE).abs() < 1.0,
             "Pressure should not cross solid wall"
         );
     }
@@ -235,14 +245,15 @@ mod tests {
     #[test]
     fn explosion_propagates_radially() {
         let mut grid = make_grid(8);
-        create_pressure_source(&mut grid, 8, 4, 4, 4, 50.0);
+        // 50 atm explosion source
+        create_pressure_source(&mut grid, 8, 4, 4, 4, 5_066_250.0);
 
         // Run several diffusion ticks
         for _ in 0..20 {
             diffuse_pressure(&mut grid, 8);
         }
 
-        // Center should still be above atmospheric (decayed but not gone)
+        // Center should still be above atmospheric
         assert!(grid[idx(4, 4, 4, 8)].pressure > ATMOSPHERIC_PRESSURE);
 
         // Neighbors closer to center should have higher pressure than distant ones
@@ -257,7 +268,8 @@ mod tests {
     #[test]
     fn pressure_converges_to_equilibrium() {
         let mut grid = make_grid(4);
-        grid[idx(2, 2, 2, 4)].pressure = 20.0;
+        // 20 atm at center
+        grid[idx(2, 2, 2, 4)].pressure = 2_026_500.0;
 
         // Run many ticks
         for _ in 0..200 {
@@ -274,7 +286,7 @@ mod tests {
         let avg = pressures.iter().sum::<f32>() / pressures.len() as f32;
         for &p in &pressures {
             assert!(
-                (p - avg).abs() < 0.01,
+                (p - avg).abs() < 100.0,
                 "Pressure should converge: p={p}, avg={avg}"
             );
         }
@@ -287,7 +299,7 @@ mod tests {
         for x in 0..4 {
             grid[idx(x, 2, 2, 4)].material = MaterialId::STEAM;
         }
-        grid[idx(0, 2, 2, 4)].pressure = 5.0;
+        grid[idx(0, 2, 2, 4)].pressure = 506_625.0; // 5 atm
 
         diffuse_pressure(&mut grid, 4);
 
@@ -301,11 +313,11 @@ mod tests {
     #[test]
     fn pressure_gradient_points_from_high_to_low() {
         let mut grid = make_grid(4);
-        grid[idx(0, 2, 2, 4)].pressure = 5.0;
-        grid[idx(2, 2, 2, 4)].pressure = 1.0;
+        grid[idx(0, 2, 2, 4)].pressure = 506_625.0; // 5 atm
+        grid[idx(2, 2, 2, 4)].pressure = ATMOSPHERIC_PRESSURE;
 
         let (gx, _, _) = pressure_gradient(&grid, 4, 1, 2, 2);
-        // Gradient should point from high (x=0) toward low (x=2), so positive x
+        // Gradient should push away from high pressure
         assert!(
             gx < 0.0,
             "Gradient should push away from high pressure: gx={gx}"
@@ -315,11 +327,11 @@ mod tests {
     #[test]
     fn zero_rate_means_no_diffusion() {
         let mut grid = make_grid(4);
-        grid[idx(2, 2, 2, 4)].pressure = 50.0;
+        grid[idx(2, 2, 2, 4)].pressure = 5_066_250.0;
 
         let delta = diffuse_pressure_with_rate(&mut grid, 4, 0.0);
-        assert!(delta < 1e-6, "Zero rate should mean no change");
-        assert_eq!(grid[idx(2, 2, 2, 4)].pressure, 50.0);
+        assert!(delta < 1e-1, "Zero rate should mean no change");
+        assert_eq!(grid[idx(2, 2, 2, 4)].pressure, 5_066_250.0);
     }
 
     #[test]
@@ -328,11 +340,37 @@ mod tests {
         grid[idx(2, 2, 2, 4)].material = MaterialId::STONE;
         let original = grid[idx(2, 2, 2, 4)].pressure;
 
-        create_pressure_source(&mut grid, 4, 2, 2, 2, 100.0);
+        create_pressure_source(&mut grid, 4, 2, 2, 2, 10_000_000.0);
         assert_eq!(
             grid[idx(2, 2, 2, 4)].pressure,
             original,
             "Solid voxels should not become pressure sources"
+        );
+    }
+
+    // --- Real-world validation tests ---
+
+    #[test]
+    fn hydrostatic_pressure_at_depth() {
+        // Wikipedia: Hydrostatic pressure P = ρgh
+        // 10 m of water: 1000 × 9.80665 × 10 = 98066.5 Pa
+        // Total at 10 m depth: 101325 + 98066.5 = 199391.5 Pa
+        let water_density = 1000.0_f32;
+        let depth = 10.0_f32;
+        let p_total = ATMOSPHERIC_PRESSURE + water_density * constants::GRAVITY * depth;
+        assert!(
+            (p_total - 199_391.5).abs() < 1.0,
+            "Got {p_total} Pa, expected ~199391.5 Pa"
+        );
+    }
+
+    #[test]
+    fn barometric_pressure_at_altitude() {
+        // Wikipedia: Barometric formula — pressure at 1000 m ≈ 89875 Pa
+        let p = constants::pressure_at_altitude(1000.0, constants::SEA_LEVEL_TEMPERATURE);
+        assert!(
+            (p - 89_875.0).abs() < 500.0,
+            "Got {p} Pa at 1000m, expected ~89875 Pa"
         );
     }
 }

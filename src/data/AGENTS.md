@@ -19,10 +19,33 @@ Central data structs loaded from RON files via `bevy_common_assets`. This is the
 
 ## Enums
 
-- `Phase` — Solid, Liquid, Gas
+- `Phase` — Solid, Liquid, Gas (derives `Default`, default = `Solid`)
 - `Diet` — Herbivore, Carnivore, Omnivore, Scavenger
 - `BodySize` — Tiny, Small, Medium, Large, Huge
 - `ItemCategory` — Tool, Weapon, Armor, Food, Material, Container, Misc
+
+## ⚠️ MaterialData SI Unit Fields
+
+All material properties use **real-world SI units**. When adding or editing materials, source values from Wikipedia or NIST. `MaterialData` derives `Default` — use `..Default::default()` in test struct literals.
+
+| Field | Unit | Example (Iron) | Source |
+|---|---|---|---|
+| `density` | kg/m³ | 7874.0 | Wikipedia: Density of iron |
+| `melting_point` | K | 1811.0 | Wikipedia: Iron § Properties |
+| `boiling_point` | K | 3134.0 | Wikipedia: Iron § Properties |
+| `ignition_point` | K | None (non-flammable) | — |
+| `hardness` | Mohs (0–10) | 4.5 | Wikipedia: Mohs scale |
+| `thermal_conductivity` | W/(m·K) | 80.2 | Wikipedia: List of thermal conductivities |
+| `specific_heat_capacity` | J/(kg·K) | 449.0 | Wikipedia: Table of specific heat capacities |
+| `latent_heat_fusion` | J/kg | 247000.0 | Wikipedia: Enthalpy of fusion |
+| `latent_heat_vaporization` | J/kg | 6088000.0 | Wikipedia: Enthalpy of vaporization |
+| `emissivity` | dimensionless (0–1) | 0.21 | Engineering tables |
+| `viscosity` | Pa·s | None (solid) | Wikipedia: Viscosity |
+| `friction_coefficient` | dimensionless (0–1) | 0.5 | Wikipedia: Friction |
+| `restitution` | dimensionless (0–1) | 0.2 | — |
+| `youngs_modulus` | Pa | 200e9 | Wikipedia: Young's modulus |
+| `heat_of_combustion` | J/kg | None (non-flammable) | Wikipedia: Heat of combustion |
+| `molar_mass` | kg/mol | None (used for gases) | — |
 
 ## Dependencies
 

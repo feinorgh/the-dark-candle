@@ -10,7 +10,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
-use the_dark_candle::physics::gravity::{PhysicsBody, TERMINAL_VELOCITY};
+use the_dark_candle::physics::gravity::{PhysicsBody, VELOCITY_SAFETY_CAP};
 use the_dark_candle::physics::PhysicsPlugin;
 use the_dark_candle::world::chunk_manager::ChunkMap;
 
@@ -89,9 +89,9 @@ fn velocity_never_exceeds_terminal_velocity() {
 
     let body = app.world().get::<PhysicsBody>(entity).unwrap();
     assert!(
-        body.velocity.y >= -TERMINAL_VELOCITY,
-        "downward speed {:.2} m/s exceeds terminal velocity {:.2} m/s",
+        body.velocity.y >= -VELOCITY_SAFETY_CAP,
+        "downward speed {:.2} m/s exceeds safety cap {:.2} m/s",
         -body.velocity.y,
-        TERMINAL_VELOCITY
+        VELOCITY_SAFETY_CAP
     );
 }
