@@ -6,5 +6,6 @@ ReactionData(
     max_temperature: 99999.0,
     output_a: "Ash",
     output_b: None,
-    heat_output: 200.0,
+    // ΔT ≈ flame temperature (1300 K) − ignition point (573 K)
+    heat_output: 800.0,
 )

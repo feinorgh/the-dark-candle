@@ -28,7 +28,21 @@ pub struct ReactionData {
     pub output_a: String,
     /// What the adjacent voxel becomes (if input_b was specified, by name).
     pub output_b: Option<String>,
-    /// Temperature change applied to the output voxel (positive = exothermic).
+    /// Temperature change in Kelvin (ΔT) applied to the reacted voxel.
+    ///
+    /// Positive values are exothermic (combustion heats up the product voxel),
+    /// negative values are endothermic (melting absorbs heat).
+    ///
+    /// This is a pragmatic temperature delta — the simulation loop adds it
+    /// directly to the voxel's temperature. Values should approximate the
+    /// expected product temperature relative to the reaction's trigger point.
+    /// For example, wood combustion yields ~800 K delta, bringing a voxel
+    /// from its ignition point (~573 K) up toward flame temperature (~1300 K).
+    ///
+    // TODO: Convert to J/kg (real SI energy) and use a sustained burn-rate
+    // model: ΔT = heat_output × burn_rate × dt / (ρ_product × Cₚ_product).
+    // This requires `MaterialRegistry` access at reaction-application time
+    // and a per-voxel burn-progress tracker. See `MaterialData::heat_of_combustion`.
     pub heat_output: f32,
 }
 
@@ -37,6 +51,7 @@ pub struct ReactionData {
 pub struct ReactionResult {
     pub new_material_a: MaterialId,
     pub new_material_b: Option<MaterialId>,
+    /// Temperature delta (K) to add to the reacted voxel. See [`ReactionData::heat_output`].
     pub heat_output: f32,
 }
 
@@ -103,6 +118,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 3,
@@ -119,6 +135,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 5,
@@ -135,6 +152,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 1,
@@ -151,6 +169,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 8,
@@ -167,6 +186,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg.insert(MaterialData {
             id: 9,
@@ -183,6 +203,7 @@ mod tests {
             boiled_into: None,
             frozen_into: None,
             condensed_into: None,
+            ..Default::default()
         });
         reg
     }
@@ -196,7 +217,8 @@ mod tests {
             max_temperature: 99999.0,
             output_a: "Charcoal".into(),
             output_b: None,
-            heat_output: 200.0,
+            // ΔT ≈ flame temperature (1300 K) minus ignition point (573 K).
+            heat_output: 800.0,
         }
     }
 
@@ -209,7 +231,9 @@ mod tests {
             max_temperature: 99999.0,
             output_a: "Water".into(),
             output_b: None,
-            heat_output: -50.0, // endothermic
+            // Endothermic: latent heat absorption cools the melt product.
+            // Approximate ΔT for the phase change (real latent heat TBD in Phase 5).
+            heat_output: -10.0,
         }
     }
 
@@ -221,7 +245,7 @@ mod tests {
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(r.new_material_a, MaterialId(8));
-        assert_eq!(r.heat_output, 200.0);
+        assert_eq!(r.heat_output, 800.0);
     }
 
     #[test]
@@ -271,7 +295,7 @@ mod tests {
                 max_temperature: 99999.0,
                 output_a: "Charcoal",
                 output_b: None,
-                heat_output: 200.0,
+                heat_output: 800.0,
             )
         "#;
         let data: ReactionData =
@@ -279,6 +303,6 @@ mod tests {
         assert_eq!(data.name, "Test Reaction");
         assert_eq!(data.input_a, "Wood");
         assert_eq!(data.input_b, Some("Air".into()));
-        assert_eq!(data.heat_output, 200.0);
+        assert_eq!(data.heat_output, 800.0);
     }
 }
