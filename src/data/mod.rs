@@ -13,7 +13,8 @@ impl Plugin for DataPlugin {
         app.add_plugins(RonAssetPlugin::<EnemyData>::new(&["enemy.ron"]))
             .add_plugins(RonAssetPlugin::<MaterialData>::new(&["material.ron"]))
             .add_plugins(RonAssetPlugin::<CreatureData>::new(&["creature.ron"]))
-            .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]));
+            .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]))
+            .add_plugins(RonAssetPlugin::<FluidConfig>::new(&["fluid_config.ron"]));
     }
 }
 
@@ -290,6 +291,53 @@ impl MaterialRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.materials.is_empty()
+    }
+}
+
+/// Configuration for the AMR Navier-Stokes fluid simulation, loaded from
+/// `assets/data/fluid_config.ron`.
+///
+/// All values use SI units where applicable.
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
+pub struct FluidConfig {
+    /// Maximum Jacobi iterations for the pressure Poisson solver.
+    #[serde(default = "default_pressure_iterations")]
+    pub pressure_solver_iterations: usize,
+
+    /// Maximum allowed CFL number before warning. Accuracy degrades above 1.0.
+    #[serde(default = "default_cfl_max")]
+    pub cfl_max: f32,
+
+    /// Default fluid density in kg/m³ (used when material lookup fails).
+    #[serde(default = "default_density")]
+    pub density_default: f32,
+
+    /// Jacobi iterations for the viscosity diffusion solve.
+    #[serde(default = "default_diffusion_iterations")]
+    pub diffusion_iterations: usize,
+}
+
+fn default_pressure_iterations() -> usize {
+    50
+}
+fn default_cfl_max() -> f32 {
+    1.0
+}
+fn default_density() -> f32 {
+    1000.0
+}
+fn default_diffusion_iterations() -> usize {
+    20
+}
+
+impl Default for FluidConfig {
+    fn default() -> Self {
+        Self {
+            pressure_solver_iterations: default_pressure_iterations(),
+            cfl_max: default_cfl_max(),
+            density_default: default_density(),
+            diffusion_iterations: default_diffusion_iterations(),
+        }
     }
 }
 

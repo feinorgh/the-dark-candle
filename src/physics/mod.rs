@@ -1,3 +1,4 @@
+pub mod amr_fluid;
 pub mod collision;
 pub mod constants;
 pub mod fluids;
