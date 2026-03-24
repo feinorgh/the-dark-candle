@@ -17,21 +17,6 @@ use crate::world::octree::OctreeNode;
 use crate::world::voxel::Voxel;
 use crate::world::voxel_access::{flat_to_octree, octree_to_flat};
 
-/// Simulate one tick of cellular automata fluid flow on an octree.
-///
-/// Flattens the tree to a `size³` array, runs `simulate_fluids_with_tick`,
-/// and rebuilds the octree. Returns `(updated_tree, voxels_moved)`.
-pub fn simulate_fluids_octree(
-    tree: &OctreeNode<Voxel>,
-    size: usize,
-    tick: u64,
-) -> (OctreeNode<Voxel>, usize) {
-    let mut flat = octree_to_flat(tree, size);
-    let moved = super::fluids::simulate_fluids_with_tick(&mut flat, size, tick);
-    let new_tree = flat_to_octree(&flat, size);
-    (new_tree, moved)
-}
-
 /// Diffuse gas pressure through an octree volume.
 ///
 /// Flattens, runs `diffuse_pressure_with_rate`, rebuilds.
@@ -144,10 +129,6 @@ mod tests {
         Voxel::new(MaterialId::STONE)
     }
 
-    fn water() -> Voxel {
-        Voxel::new(MaterialId::WATER)
-    }
-
     fn test_registry() -> MaterialRegistry {
         let mut reg = MaterialRegistry::new();
         reg.insert(MaterialData {
@@ -187,56 +168,6 @@ mod tests {
 
     fn idx(x: usize, y: usize, z: usize, size: usize) -> usize {
         z * size * size + y * size + x
-    }
-
-    // --- Fluid bridge tests ---
-
-    #[test]
-    fn fluids_bridge_water_falls() {
-        let size = 4;
-        let mut flat = vec![air(); size * size * size];
-        flat[idx(1, 3, 1, size)] = water();
-        let tree = make_octree(&flat, size);
-
-        let (result_tree, moved) = simulate_fluids_octree(&tree, size, 0);
-        assert!(moved > 0, "Water should fall");
-
-        let result_flat = octree_to_flat(&result_tree, size);
-        assert!(
-            result_flat[idx(1, 3, 1, size)].material.is_air(),
-            "Original position should be empty"
-        );
-    }
-
-    #[test]
-    fn fluids_bridge_roundtrip_conserves_material() {
-        let size = 4;
-        let mut flat = vec![air(); size * size * size];
-        // Stone floor
-        for x in 0..size {
-            for z in 0..size {
-                flat[idx(x, 0, z, size)] = stone();
-            }
-        }
-        flat[idx(1, 1, 1, size)] = water();
-        flat[idx(2, 1, 1, size)] = water();
-        let initial_water = flat
-            .iter()
-            .filter(|v| v.material == MaterialId::WATER)
-            .count();
-
-        let tree = make_octree(&flat, size);
-        let (result_tree, _) = simulate_fluids_octree(&tree, size, 0);
-        let result_flat = octree_to_flat(&result_tree, size);
-
-        let final_water = result_flat
-            .iter()
-            .filter(|v| v.material == MaterialId::WATER)
-            .count();
-        assert_eq!(
-            initial_water, final_water,
-            "Water count should be conserved"
-        );
     }
 
     // --- Pressure bridge tests ---

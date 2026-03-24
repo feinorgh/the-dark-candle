@@ -183,14 +183,14 @@ Simulation tuning parameters (new file `assets/data/fluid_config.ron`):
 
 ## Migration Path from Current System
 
-The current cellular automata fluid system (`src/physics/fluids.rs`) is replaced
-incrementally:
+The legacy cellular automata fluid system (`src/physics/fluids.rs`) has been replaced
+by three physics-accurate models:
 
-1. **Keep CA fluids operational** while building the new system alongside it.
-2. **Implement AMR N-S for water first** — the most visible improvement (proper wave
-   propagation, realistic lava flow).
-3. **Add LBM for gases** — enables wind, pressure waves, steam behavior.
-4. **Add FLIP particles** — enables snow, rain, spray, erosion.
-5. **Remove CA fluids** once all three models are validated.
+1. ~~Keep CA fluids operational~~ — done (kept operational during development).
+2. ~~Implement AMR N-S for water first~~ — done (`src/physics/amr_fluid/`).
+3. ~~Add LBM for gases~~ — done (`src/physics/lbm_gas/`).
+4. ~~Add FLIP particles~~ — done (`src/physics/flip_pic/`).
+5. ~~Remove CA fluids~~ — done. `fluids.rs` and its octree bridge wrapper deleted.
 
-Each model can be developed and tested independently before coupling them together.
+Each model was developed and tested independently. The three-model stack is now the
+sole fluid simulation system.
