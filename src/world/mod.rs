@@ -1,14 +1,20 @@
 pub mod chunk;
 pub mod chunk_manager;
 pub mod collision;
+pub mod interpolation;
+pub mod lod;
 pub mod meshing;
+pub mod octree;
+pub mod refinement;
 pub mod terrain;
 pub mod voxel;
+pub mod voxel_access;
 
 use bevy::prelude::*;
 
 use chunk_manager::ChunkManagerPlugin;
 use meshing::MeshingPlugin;
+use refinement::RefinementPlugin;
 
 /// System set ordering for the world pipeline.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,6 +32,7 @@ impl Plugin for WorldPlugin {
         app.configure_sets(Update, WorldSet::Meshing.after(WorldSet::ChunkManagement))
             .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)
+            .add_plugins(RefinementPlugin)
             .add_systems(Startup, setup_scene);
     }
 }

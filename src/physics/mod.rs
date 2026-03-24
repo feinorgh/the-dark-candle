@@ -4,6 +4,7 @@ pub mod fluids;
 pub mod gravity;
 pub mod integrity;
 pub mod pressure;
+pub mod voxel_bridge;
 
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;

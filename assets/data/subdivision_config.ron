@@ -1,0 +1,11 @@
+// Adaptive refinement thresholds for voxel octree subdivision.
+// Controls when the SVO subdivides a region for higher detail.
+(
+    max_depth: 4,
+    thermal_gradient_threshold: 50.0,
+    pressure_gradient_threshold: 5000.0,
+    refine_surfaces: true,
+    refine_material_boundaries: true,
+    refine_damage_gradients: false,
+    damage_gradient_threshold: 0.2,
+)

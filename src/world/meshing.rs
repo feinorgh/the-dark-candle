@@ -16,7 +16,8 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use super::chunk::{Chunk, CHUNK_SIZE};
-use super::voxel::MaterialId;
+use super::octree::OctreeNode;
+use super::voxel::{MaterialId, Voxel};
 
 /// Output of the meshing pass for a single chunk.
 pub struct ChunkMesh {
@@ -84,18 +85,95 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId) {
 
 /// Generate a mesh from a chunk's voxel data using the Surface Nets algorithm.
 pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
-    let size = CHUNK_SIZE as i32;
+    generate_mesh_generic(CHUNK_SIZE as i32, |x, y, z| sample(chunk, x, y, z))
+}
 
-    // Phase 1: For each cell, determine if it contains a surface crossing.
-    // A cell is the cube from (x,y,z) to (x+1,y+1,z+1).
-    // We iterate cells from 0..size-1 (staying within chunk bounds for the +1 samples,
-    // which may be out-of-bounds and treated as air).
-    let mut vertex_map: HashMap<(i32, i32, i32), u32> = HashMap::new();
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
+/// Sample the scalar field from an octree at a given cell coordinate and size.
+/// Returns (solidity, material). Out-of-bounds → air.
+#[inline]
+fn sample_octree(
+    tree: &OctreeNode<Voxel>,
+    size: usize,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> (f32, MaterialId) {
+    if x >= 0
+        && y >= 0
+        && z >= 0
+        && (x as usize) < size
+        && (y as usize) < size
+        && (z as usize) < size
+    {
+        let v = tree.get(x as usize, y as usize, z as usize, size);
+        if v.is_air() {
+            (0.0, MaterialId::AIR)
+        } else {
+            (1.0, v.material)
+        }
+    } else {
+        (0.0, MaterialId::AIR)
+    }
+}
 
-    // The 8 corners of a cell, as offsets from (x, y, z)
+/// Generate a mesh from an octree volume using Surface Nets.
+///
+/// This produces identical results to `generate_mesh()` when the octree
+/// represents the same data as a flat chunk at base resolution. It also
+/// works correctly with sub-voxel octree data (higher depth leaves are
+/// read at base resolution via `OctreeNode::get()`).
+///
+/// `size` is the grid dimension (e.g. CHUNK_SIZE = 32).
+pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> ChunkMesh {
+    generate_mesh_generic(size as i32, |x, y, z| sample_octree(tree, size, x, y, z))
+}
+
+/// Generate a mesh at reduced resolution for LOD.
+///
+/// `lod_step` is the cell stride: 1 = full resolution (32³), 2 = half (16³),
+/// 4 = quarter (8³), etc. The output mesh covers the same world-space volume
+/// but with fewer vertices and triangles.
+pub fn generate_mesh_lod(chunk: &Chunk, lod_step: usize) -> ChunkMesh {
+    assert!(lod_step > 0 && lod_step.is_power_of_two());
+    let effective_size = CHUNK_SIZE / lod_step;
+    let step = lod_step as i32;
+
+    generate_mesh_generic(effective_size as i32, |x, y, z| {
+        // Map reduced-resolution coords back to full-resolution chunk coords
+        let fx = x * step;
+        let fy = y * step;
+        let fz = z * step;
+        let (val, mat) = sample(chunk, fx, fy, fz);
+        (val, mat)
+    })
+}
+
+/// Generate a mesh from an octree at reduced resolution for LOD.
+pub fn generate_mesh_from_octree_lod(
+    tree: &OctreeNode<Voxel>,
+    size: usize,
+    lod_step: usize,
+) -> ChunkMesh {
+    assert!(lod_step > 0 && lod_step.is_power_of_two());
+    let effective_size = size / lod_step;
+    let step = lod_step as i32;
+
+    generate_mesh_generic(effective_size as i32, |x, y, z| {
+        let fx = x * step;
+        let fy = y * step;
+        let fz = z * step;
+        sample_octree(tree, size, fx, fy, fz)
+    })
+}
+
+/// Core Surface Nets implementation parameterized over a sampling function.
+///
+/// `grid_size` is the number of cells along each axis.
+/// `sample_fn(x, y, z)` returns (scalar, material) for the given cell corner.
+fn generate_mesh_generic<F>(grid_size: i32, sample_fn: F) -> ChunkMesh
+where
+    F: Fn(i32, i32, i32) -> (f32, MaterialId),
+{
     let corners: [(i32, i32, i32); 8] = [
         (0, 0, 0),
         (1, 0, 0),
@@ -107,16 +185,36 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
         (1, 1, 1),
     ];
 
-    for cz in 0..size {
-        for cy in 0..size {
-            for cx in 0..size {
-                // Sample all 8 corners of this cell
+    let edges: [(usize, usize); 12] = [
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7), // X edges
+        (0, 2),
+        (1, 3),
+        (4, 6),
+        (5, 7), // Y edges
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7), // Z edges
+    ];
+
+    let mut vertex_map: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+
+    // Phase 1: Vertex placement
+    for cz in 0..grid_size {
+        for cy in 0..grid_size {
+            for cx in 0..grid_size {
                 let mut corner_values = [0.0f32; 8];
                 let mut corner_mats = [MaterialId::AIR; 8];
                 let mut solid_count = 0u32;
 
                 for (i, &(dx, dy, dz)) in corners.iter().enumerate() {
-                    let (val, mat) = sample(chunk, cx + dx, cy + dy, cz + dz);
+                    let (val, mat) = sample_fn(cx + dx, cy + dy, cz + dz);
                     corner_values[i] = val;
                     corner_mats[i] = mat;
                     if val > 0.5 {
@@ -124,37 +222,17 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
                     }
                 }
 
-                // Skip cells that are entirely solid or entirely empty
                 if solid_count == 0 || solid_count == 8 {
                     continue;
                 }
 
-                // Place vertex at centroid of edge crossings
                 let mut vertex_pos = Vec3::ZERO;
                 let mut crossing_count = 0u32;
-
-                // Check all 12 edges of the cell for sign changes
-                let edges: [(usize, usize); 12] = [
-                    (0, 1),
-                    (2, 3),
-                    (4, 5),
-                    (6, 7), // X edges
-                    (0, 2),
-                    (1, 3),
-                    (4, 6),
-                    (5, 7), // Y edges
-                    (0, 4),
-                    (1, 5),
-                    (2, 6),
-                    (3, 7), // Z edges
-                ];
 
                 for &(a, b) in &edges {
                     let va = corner_values[a];
                     let vb = corner_values[b];
-                    // Sign change: one is solid, one is air
                     if (va > 0.5) != (vb > 0.5) {
-                        // Interpolate position along the edge
                         let t = (0.5 - va) / (vb - va);
                         let pa = Vec3::new(
                             corners[a].0 as f32,
@@ -182,7 +260,6 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
                     cz as f32 + vertex_pos.z,
                 ];
 
-                // Pick the dominant solid material for coloring
                 let dominant_mat = corner_mats
                     .iter()
                     .copied()
@@ -192,26 +269,24 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
                 let idx = positions.len() as u32;
                 vertex_map.insert((cx, cy, cz), idx);
                 positions.push(world_pos);
-                normals.push([0.0, 1.0, 0.0]); // placeholder, computed later
+                normals.push([0.0, 1.0, 0.0]);
                 colors.push(material_color(dominant_mat));
             }
         }
     }
 
-    // Phase 2: Emit quads for edges shared by 4 surface cells.
-    // For each cell that has a vertex, check the 3 positive-direction edges (X, Y, Z).
-    // Each edge is shared by 4 cells; if all 4 have vertices, emit a quad.
+    // Phase 2: Quad emission
     let mut indices: Vec<u32> = Vec::new();
 
     for (&(cx, cy, cz), &v0) in &vertex_map {
-        // X-edge: shared by cells (cx,cy,cz), (cx,cy-1,cz), (cx,cy,cz-1), (cx,cy-1,cz-1)
+        // X-edge
         if let (Some(&v1), Some(&v2), Some(&v3)) = (
             vertex_map.get(&(cx, cy - 1, cz)),
             vertex_map.get(&(cx, cy, cz - 1)),
             vertex_map.get(&(cx, cy - 1, cz - 1)),
         ) {
-            let (s0, _) = sample(chunk, cx, cy, cz);
-            let (s1, _) = sample(chunk, cx + 1, cy, cz);
+            let (s0, _) = sample_fn(cx, cy, cz);
+            let (s1, _) = sample_fn(cx + 1, cy, cz);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v1, v3, v2);
@@ -221,14 +296,14 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
             }
         }
 
-        // Y-edge: shared by cells (cx,cy,cz), (cx-1,cy,cz), (cx,cy,cz-1), (cx-1,cy,cz-1)
+        // Y-edge
         if let (Some(&v1), Some(&v2), Some(&v3)) = (
             vertex_map.get(&(cx - 1, cy, cz)),
             vertex_map.get(&(cx, cy, cz - 1)),
             vertex_map.get(&(cx - 1, cy, cz - 1)),
         ) {
-            let (s0, _) = sample(chunk, cx, cy, cz);
-            let (s1, _) = sample(chunk, cx, cy + 1, cz);
+            let (s0, _) = sample_fn(cx, cy, cz);
+            let (s1, _) = sample_fn(cx, cy + 1, cz);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v2, v3, v1);
@@ -238,14 +313,14 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
             }
         }
 
-        // Z-edge: shared by cells (cx,cy,cz), (cx-1,cy,cz), (cx,cy-1,cz), (cx-1,cy-1,cz)
+        // Z-edge
         if let (Some(&v1), Some(&v2), Some(&v3)) = (
             vertex_map.get(&(cx - 1, cy, cz)),
             vertex_map.get(&(cx, cy - 1, cz)),
             vertex_map.get(&(cx - 1, cy - 1, cz)),
         ) {
-            let (s0, _) = sample(chunk, cx, cy, cz);
-            let (s1, _) = sample(chunk, cx, cy, cz + 1);
+            let (s0, _) = sample_fn(cx, cy, cz);
+            let (s1, _) = sample_fn(cx, cy, cz + 1);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v1, v3, v2);
@@ -256,7 +331,7 @@ pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
         }
     }
 
-    // Phase 3: Compute normals from triangle faces.
+    // Phase 3: Normals
     compute_normals(&positions, &indices, &mut normals);
 
     ChunkMesh {
@@ -595,6 +670,152 @@ mod tests {
         assert!(
             mesh.triangle_count() > 100,
             "Half-filled should have many triangles"
+        );
+    }
+
+    // --- Octree meshing tests ---
+
+    use super::super::octree::OctreeNode;
+    use super::super::voxel::Voxel;
+    use super::super::voxel_access::flat_to_octree;
+
+    #[test]
+    fn octree_mesh_empty_produces_nothing() {
+        let tree = OctreeNode::new_leaf(Voxel::default());
+        let mesh = generate_mesh_from_octree(&tree, CHUNK_SIZE);
+        assert!(mesh.is_empty());
+    }
+
+    #[test]
+    fn octree_mesh_matches_flat_single_voxel() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        chunk.set_material(16, 16, 16, MaterialId::STONE);
+
+        let flat_mesh = generate_mesh(&chunk);
+        let tree = chunk.to_octree();
+        let octree_mesh = generate_mesh_from_octree(&tree, CHUNK_SIZE);
+
+        assert_eq!(
+            flat_mesh.vertex_count(),
+            octree_mesh.vertex_count(),
+            "Vertex counts should match: flat={}, octree={}",
+            flat_mesh.vertex_count(),
+            octree_mesh.vertex_count(),
+        );
+        assert_eq!(
+            flat_mesh.triangle_count(),
+            octree_mesh.triangle_count(),
+            "Triangle counts should match"
+        );
+    }
+
+    #[test]
+    fn octree_mesh_matches_flat_half_filled() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE / 2 {
+                    chunk.set_material(x, y, z, MaterialId::STONE);
+                }
+            }
+        }
+
+        let flat_mesh = generate_mesh(&chunk);
+        let tree = chunk.to_octree();
+        let octree_mesh = generate_mesh_from_octree(&tree, CHUNK_SIZE);
+
+        assert_eq!(flat_mesh.vertex_count(), octree_mesh.vertex_count());
+        assert_eq!(flat_mesh.triangle_count(), octree_mesh.triangle_count());
+    }
+
+    #[test]
+    fn lod_mesh_has_fewer_vertices() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE / 2 {
+                    chunk.set_material(x, y, z, MaterialId::STONE);
+                }
+            }
+        }
+
+        let full_mesh = generate_mesh(&chunk);
+        let lod_mesh = generate_mesh_lod(&chunk, 2);
+
+        assert!(
+            lod_mesh.vertex_count() < full_mesh.vertex_count(),
+            "LOD mesh should have fewer vertices: lod={}, full={}",
+            lod_mesh.vertex_count(),
+            full_mesh.vertex_count(),
+        );
+        assert!(lod_mesh.vertex_count() > 0, "LOD mesh should not be empty");
+    }
+
+    #[test]
+    fn lod_mesh_from_octree_has_fewer_vertices() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE / 2 {
+                    chunk.set_material(x, y, z, MaterialId::STONE);
+                }
+            }
+        }
+
+        let tree = chunk.to_octree();
+        let full_mesh = generate_mesh_from_octree(&tree, CHUNK_SIZE);
+        let lod_mesh = generate_mesh_from_octree_lod(&tree, CHUNK_SIZE, 4);
+
+        assert!(
+            lod_mesh.vertex_count() < full_mesh.vertex_count(),
+            "LOD octree mesh should have fewer vertices"
+        );
+    }
+
+    #[test]
+    fn lod_mesh_attributes_consistent() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                chunk.set_material(x, 0, z, MaterialId::DIRT);
+            }
+        }
+
+        let mesh = generate_mesh_lod(&chunk, 4);
+        assert_eq!(mesh.positions.len(), mesh.normals.len());
+        assert_eq!(mesh.positions.len(), mesh.colors.len());
+        assert_eq!(mesh.indices.len() % 3, 0);
+        for &idx in &mesh.indices {
+            assert!((idx as usize) < mesh.positions.len());
+        }
+    }
+
+    #[test]
+    fn octree_mesh_fully_solid_has_boundary() {
+        let tree = OctreeNode::new_leaf(Voxel::new(MaterialId::STONE));
+        let mesh = generate_mesh_from_octree(&tree, CHUNK_SIZE);
+        assert!(
+            mesh.vertex_count() > 0,
+            "Fully solid should have boundary vertices"
+        );
+    }
+
+    #[test]
+    fn small_octree_mesh_works() {
+        // Test with a small 4×4×4 octree
+        let size = 4;
+        let mut flat = vec![Voxel::default(); size * size * size];
+        flat[size * size + size + 1] = Voxel::new(MaterialId::STONE);
+        let tree = flat_to_octree(&flat, size);
+
+        let mesh = generate_mesh_from_octree(&tree, size);
+        assert!(
+            mesh.vertex_count() > 0,
+            "Small octree mesh should have vertices"
+        );
+        assert!(
+            mesh.triangle_count() > 0,
+            "Small octree mesh should have triangles"
         );
     }
 }

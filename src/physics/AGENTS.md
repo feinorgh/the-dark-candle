@@ -8,7 +8,8 @@ Gravity, drag, buoyancy, friction, AABB collision, fluid simulation, structural 
 |------|---------|
 | `constants.rs` | SI physical constants: `GRAVITY`, `AIR_DENSITY_SEA_LEVEL`, `ATMOSPHERIC_PRESSURE`, etc. |
 | `gravity.rs` | `PhysicsBody`, `Mass`, `DragProfile` components; `apply_forces()` system (gravity + buoyancy + drag + friction) |
-| `collision.rs` | `Collider` AABB, `aabb_intersects_terrain()`, `resolve_collisions()` |
+| `collision.rs` | `Collider` AABB, `aabb_intersects_terrain()`, `aabb_intersects_octree()`, `resolve_collisions()` |
+| `voxel_bridge.rs` | Octree-compatible wrappers for flat-array physics (fluids, pressure, integrity, heat) |
 | `fluids.rs` | Cellular automata water/lava flow |
 | `integrity.rs` | BFS flood-fill structural support from y=0 anchors |
 | `pressure.rs` | Discrete gas pressure diffusion |
@@ -55,6 +56,21 @@ This prevents read-write conflicts within a single tick and ensures deterministi
 ### Pure Functions
 
 All simulation logic is in pure functions that take `&mut [Voxel]` slices or flat arrays. Bevy systems just call these functions on chunk data. Test with small flat arrays, not full chunks.
+
+### Octree Collision
+
+`aabb_intersects_octree()` provides the same AABB-vs-terrain check as `aabb_intersects_terrain()` but against an `OctreeNode<Voxel>` instead of iterating flat chunk arrays. It traverses the tree recursively, skipping entire empty subtrees for faster broad-phase rejection. Use for chunks that store octree data or for sub-voxel precision collision.
+
+### Voxel Bridge (Physics ↔ Octree)
+
+`voxel_bridge.rs` provides octree-compatible wrappers for all flat-array physics systems:
+- `simulate_fluids_octree()` — fluid CA simulation
+- `diffuse_pressure_octree()` — gas pressure diffusion
+- `find_unsupported_octree()` / `collapse_unsupported_octree()` — structural integrity
+- `diffuse_chunk_octree()` / `diffuse_heat_octree()` — Fourier's law heat transfer
+- `pressure_gradient_octree()` — pressure gradient computation
+
+Pattern: flatten octree → run existing algorithm → rebuild octree. Results are bitwise-identical to flat-array versions. This is the Phase 1 bridge strategy; native octree traversal algorithms are deferred to later phases.
 
 Force helper functions (`gravitational_force`, `buoyancy_force`, `drag_force`, `friction_force`, `terminal_velocity`) are pure and unit-testable without ECS.
 

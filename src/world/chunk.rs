@@ -9,7 +9,9 @@
 
 use bevy::prelude::*;
 
+use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
+use super::voxel_access::{flat_to_octree, octree_to_flat, VoxelAccess};
 
 /// Edge length of a chunk in voxels. 32³ = 32,768 voxels per chunk.
 pub const CHUNK_SIZE: usize = 32;
@@ -181,6 +183,58 @@ impl Chunk {
         for y in 0..h {
             self.set_material(x, y, z, material);
         }
+    }
+
+    // --- Octree integration ---
+
+    /// Build a sparse voxel octree from the current flat voxel data.
+    ///
+    /// Uniform regions (all-air, all-stone) collapse to single leaf nodes,
+    /// saving memory. The returned octree is a snapshot — modifications to
+    /// the chunk afterward are not reflected.
+    pub fn to_octree(&self) -> OctreeNode<Voxel> {
+        flat_to_octree(&self.voxels, CHUNK_SIZE)
+    }
+
+    /// Replace the chunk's voxel data from an octree, expanding it to the
+    /// flat array representation. Marks the chunk as dirty.
+    pub fn load_from_octree(&mut self, octree: &OctreeNode<Voxel>) {
+        self.voxels = octree_to_flat(octree, CHUNK_SIZE);
+        self.dirty = true;
+    }
+
+    /// Clone the flat voxel array. Useful for passing to physics systems
+    /// that expect `Vec<Voxel>` without borrowing the chunk.
+    pub fn flat_snapshot(&self) -> Vec<Voxel> {
+        self.voxels.clone()
+    }
+}
+
+impl VoxelAccess for Chunk {
+    fn get_voxel(&self, x: usize, y: usize, z: usize) -> &Voxel {
+        self.get(x, y, z)
+    }
+
+    fn get_voxel_at_depth(&self, x: usize, y: usize, z: usize, depth: u8) -> &Voxel {
+        let scale = 1usize << depth;
+        self.get(x / scale, y / scale, z / scale)
+    }
+
+    fn set_voxel(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
+        self.set(x, y, z, voxel);
+    }
+
+    fn set_voxel_at_depth(&mut self, x: usize, y: usize, z: usize, depth: u8, voxel: Voxel) {
+        let scale = 1usize << depth;
+        self.set(x / scale, y / scale, z / scale, voxel);
+    }
+
+    fn depth_at(&self, _x: usize, _y: usize, _z: usize) -> u8 {
+        0 // Flat storage is always base resolution.
+    }
+
+    fn size(&self) -> usize {
+        CHUNK_SIZE
     }
 }
 
@@ -410,4 +464,111 @@ mod tests {
         assert_eq!(stored.pressure, 2.5);
         assert_eq!(stored.damage, 0.3);
     }
+
+    // --- Octree integration ---
+
+    #[test]
+    fn to_octree_empty_chunk_is_leaf() {
+        let chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        let octree = chunk.to_octree();
+        assert!(octree.is_leaf());
+        assert!(octree.leaf_value().unwrap().is_air());
+    }
+
+    #[test]
+    fn to_octree_filled_chunk_is_leaf() {
+        let chunk = Chunk::new_filled(ChunkCoord::new(0, 0, 0), MaterialId::STONE);
+        let octree = chunk.to_octree();
+        assert!(octree.is_leaf());
+        assert_eq!(octree.leaf_value().unwrap().material, MaterialId::STONE);
+    }
+
+    #[test]
+    fn to_octree_mixed_chunk_is_branch() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        chunk.set_material(0, 0, 0, MaterialId::STONE);
+        let octree = chunk.to_octree();
+        assert!(octree.is_branch());
+    }
+
+    #[test]
+    fn octree_roundtrip_preserves_data() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        // Create a terrain pattern.
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                chunk.fill_column(x, z, 16, MaterialId::STONE);
+            }
+        }
+        chunk.set_material(5, 20, 5, MaterialId::WATER);
+
+        let octree = chunk.to_octree();
+        let mut restored = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        restored.load_from_octree(&octree);
+
+        for z in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    assert_eq!(
+                        chunk.get(x, y, z),
+                        restored.get(x, y, z),
+                        "Mismatch at ({x}, {y}, {z})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn load_from_octree_marks_dirty() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        chunk.clear_dirty();
+        let octree = OctreeNode::new_leaf(Voxel::new(MaterialId::STONE));
+        chunk.load_from_octree(&octree);
+        assert!(chunk.is_dirty());
+    }
+
+    #[test]
+    fn flat_snapshot_is_independent_copy() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        chunk.set_material(0, 0, 0, MaterialId::STONE);
+        let snap = chunk.flat_snapshot();
+
+        // Modify chunk after snapshot.
+        chunk.set_material(0, 0, 0, MaterialId::AIR);
+
+        // Snapshot should still have stone.
+        assert_eq!(snap[0].material, MaterialId::STONE);
+        assert!(chunk.get(0, 0, 0).is_air());
+    }
+
+    #[test]
+    fn octree_compresses_uniform_regions() {
+        let chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        let octree = chunk.to_octree();
+        // Uniform chunk should collapse to 1 node.
+        assert_eq!(octree.node_count(), 1);
+        assert!(octree.leaf_count() < CHUNK_VOLUME);
+    }
+
+    // --- VoxelAccess trait ---
+
+    #[test]
+    fn chunk_voxel_access_get_and_set() {
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        assert!(chunk.get_voxel(0, 0, 0).is_air());
+
+        chunk.set_voxel(5, 10, 15, Voxel::new(MaterialId::STONE));
+        assert!(chunk.get_voxel(5, 10, 15).is_solid());
+        assert_eq!(chunk.size(), CHUNK_SIZE);
+    }
+
+    #[test]
+    fn chunk_voxel_access_depth_always_zero() {
+        let chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        assert_eq!(chunk.depth_at(0, 0, 0), 0);
+        assert_eq!(chunk.depth_at(31, 31, 31), 0);
+    }
+
+    use super::super::octree::OctreeNode;
 }
