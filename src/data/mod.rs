@@ -294,12 +294,14 @@ impl MaterialRegistry {
     }
 }
 
-/// Configuration for the AMR Navier-Stokes fluid simulation, loaded from
+/// Configuration for fluid simulation systems, loaded from
 /// `assets/data/fluid_config.ron`.
 ///
-/// All values use SI units where applicable.
+/// Contains parameters for both the AMR Navier-Stokes liquid solver and the
+/// LBM gas solver. All values use SI units where applicable.
 #[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
 pub struct FluidConfig {
+    // --- AMR Navier-Stokes (liquids) ---
     /// Maximum Jacobi iterations for the pressure Poisson solver.
     #[serde(default = "default_pressure_iterations")]
     pub pressure_solver_iterations: usize,
@@ -315,6 +317,28 @@ pub struct FluidConfig {
     /// Jacobi iterations for the viscosity diffusion solve.
     #[serde(default = "default_diffusion_iterations")]
     pub diffusion_iterations: usize,
+
+    // --- LBM (gases) ---
+    /// BGK relaxation time τ. Must be > 0.5 for stability.
+    /// Higher values increase effective viscosity (more diffusion).
+    /// Default 0.55 — stable with Smagorinsky sub-grid model.
+    #[serde(default = "default_lbm_tau")]
+    pub lbm_tau: f32,
+
+    /// Smagorinsky constant Cs for sub-grid turbulence model.
+    /// Standard value 0.1 (Smagorinsky 1963, Lilly 1966).
+    /// Set to 0.0 to disable sub-grid model (pure BGK).
+    #[serde(default = "default_lbm_smagorinsky_cs")]
+    pub lbm_smagorinsky_cs: f32,
+
+    /// Number of LBM sub-steps per FixedUpdate tick.
+    /// Each sub-step advances gas dynamics by dt_lattice seconds.
+    #[serde(default = "default_lbm_steps_per_tick")]
+    pub lbm_steps_per_tick: usize,
+
+    /// Whether the LBM gas simulation is active.
+    #[serde(default = "default_lbm_enabled")]
+    pub lbm_enabled: bool,
 }
 
 fn default_pressure_iterations() -> usize {
@@ -329,6 +353,18 @@ fn default_density() -> f32 {
 fn default_diffusion_iterations() -> usize {
     20
 }
+fn default_lbm_tau() -> f32 {
+    0.55
+}
+fn default_lbm_smagorinsky_cs() -> f32 {
+    0.1
+}
+fn default_lbm_steps_per_tick() -> usize {
+    1
+}
+fn default_lbm_enabled() -> bool {
+    true
+}
 
 impl Default for FluidConfig {
     fn default() -> Self {
@@ -337,6 +373,10 @@ impl Default for FluidConfig {
             cfl_max: default_cfl_max(),
             density_default: default_density(),
             diffusion_iterations: default_diffusion_iterations(),
+            lbm_tau: default_lbm_tau(),
+            lbm_smagorinsky_cs: default_lbm_smagorinsky_cs(),
+            lbm_steps_per_tick: default_lbm_steps_per_tick(),
+            lbm_enabled: default_lbm_enabled(),
         }
     }
 }

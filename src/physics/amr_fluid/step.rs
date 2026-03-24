@@ -222,6 +222,7 @@ mod tests {
             diffusion_iterations: 10,
             density_default: 1000.0,
             cfl_max: 1.0,
+            ..Default::default()
         };
 
         fluid_step(&mut grid1, None, &config, 1.0 / 60.0);

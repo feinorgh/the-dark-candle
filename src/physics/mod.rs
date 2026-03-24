@@ -4,6 +4,7 @@ pub mod constants;
 pub mod fluids;
 pub mod gravity;
 pub mod integrity;
+pub mod lbm_gas;
 pub mod pressure;
 pub mod voxel_bridge;
 

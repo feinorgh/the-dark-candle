@@ -3,4 +3,8 @@
     cfl_max: 1.0,
     density_default: 1000.0,
     diffusion_iterations: 20,
+    lbm_tau: 0.55,
+    lbm_smagorinsky_cs: 0.1,
+    lbm_steps_per_tick: 1,
+    lbm_enabled: true,
 )
