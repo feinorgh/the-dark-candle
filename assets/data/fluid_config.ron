@@ -7,4 +7,10 @@
     lbm_smagorinsky_cs: 0.1,
     lbm_steps_per_tick: 1,
     lbm_enabled: true,
+    flip_enabled: true,
+    flip_ratio: 0.97,
+    flip_deposit_velocity: 0.5,
+    flip_max_particles_per_chunk: 4096,
+    flip_substeps: 2,
+    flip_pressure_iterations: 20,
 )

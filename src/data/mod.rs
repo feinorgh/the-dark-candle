@@ -339,6 +339,32 @@ pub struct FluidConfig {
     /// Whether the LBM gas simulation is active.
     #[serde(default = "default_lbm_enabled")]
     pub lbm_enabled: bool,
+
+    // --- FLIP/PIC (particles) ---
+    /// Whether the FLIP/PIC particle simulation is active.
+    #[serde(default = "default_flip_enabled")]
+    pub flip_enabled: bool,
+
+    /// FLIP/PIC blend ratio. 0.0 = pure PIC (stable, diffusive),
+    /// 1.0 = pure FLIP (detail-preserving, noisy). Default 0.97.
+    #[serde(default = "default_flip_ratio")]
+    pub flip_ratio: f32,
+
+    /// Velocity threshold (m/s) below which particles deposit onto surfaces.
+    #[serde(default = "default_flip_deposit_velocity")]
+    pub flip_deposit_velocity: f32,
+
+    /// Maximum particles per chunk (memory budget).
+    #[serde(default = "default_flip_max_particles")]
+    pub flip_max_particles_per_chunk: usize,
+
+    /// Number of FLIP sub-steps per FixedUpdate tick for CFL stability.
+    #[serde(default = "default_flip_substeps")]
+    pub flip_substeps: usize,
+
+    /// Jacobi iterations for the FLIP pressure projection.
+    #[serde(default = "default_flip_pressure_iterations")]
+    pub flip_pressure_iterations: usize,
 }
 
 fn default_pressure_iterations() -> usize {
@@ -365,6 +391,24 @@ fn default_lbm_steps_per_tick() -> usize {
 fn default_lbm_enabled() -> bool {
     true
 }
+fn default_flip_enabled() -> bool {
+    true
+}
+fn default_flip_ratio() -> f32 {
+    0.97
+}
+fn default_flip_deposit_velocity() -> f32 {
+    0.5
+}
+fn default_flip_max_particles() -> usize {
+    4096
+}
+fn default_flip_substeps() -> usize {
+    2
+}
+fn default_flip_pressure_iterations() -> usize {
+    20
+}
 
 impl Default for FluidConfig {
     fn default() -> Self {
@@ -377,6 +421,12 @@ impl Default for FluidConfig {
             lbm_smagorinsky_cs: default_lbm_smagorinsky_cs(),
             lbm_steps_per_tick: default_lbm_steps_per_tick(),
             lbm_enabled: default_lbm_enabled(),
+            flip_enabled: default_flip_enabled(),
+            flip_ratio: default_flip_ratio(),
+            flip_deposit_velocity: default_flip_deposit_velocity(),
+            flip_max_particles_per_chunk: default_flip_max_particles(),
+            flip_substeps: default_flip_substeps(),
+            flip_pressure_iterations: default_flip_pressure_iterations(),
         }
     }
 }

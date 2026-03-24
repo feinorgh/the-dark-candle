@@ -2,6 +2,7 @@
 - **Engine:** Bevy v0.18 (Rust)
 - **OS:** Developed on Gentoo Linux (Wayland), cross-compiled to Windows (`x86_64-pc-windows-gnu`).
 - **Goal:** A modern, cross-platform game relying heavily on data-driven design and procedural generation.
+- **Language:** Rust 1.90 or later
 
 ## ⚠️ CRITICAL: Bevy 0.18 Strict Rules
 AI agents often hallucinate Bevy 0.14 or older code. You MUST adhere to modern Bevy 0.18 API structures:
@@ -12,6 +13,9 @@ AI agents often hallucinate Bevy 0.14 or older code. You MUST adhere to modern B
 4. **WINDOWS:** `Window` resolution now strictly takes unsigned integers `(u32, u32)`, NOT floats.
 5. **STATES (0.18):** `set()` now always triggers `OnEnter`/`OnExit`. Use `set_if_neq()` if you want the old behavior of skipping transitions when the state hasn't changed.
 6. **EVENTS (0.18):** `EntityEvent` is immutable by default. Do not attempt to mutate event data directly without `SetEntityEventTarget`.
+
+## Coding Standard
+Read `docs/RUST_INSTRUCTIONS.md` and follow the guidelines there.
 
 ## Architecture & Data Flow
 This game uses a strict Data-Driven ECS architecture. We use the `bevy_common_assets` crate to load text files into Rust structs.

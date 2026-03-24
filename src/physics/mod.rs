@@ -1,6 +1,7 @@
 pub mod amr_fluid;
 pub mod collision;
 pub mod constants;
+pub mod flip_pic;
 pub mod fluids;
 pub mod gravity;
 pub mod integrity;
