@@ -83,8 +83,8 @@ identity and territory. Reputation from observed actions. Group behaviors
 ## Current State
 
 **All 7 original phases are complete.** The codebase has:
-- 86 source files, ~24,400 lines of Rust
-- 692 passing tests
+- 86 source files, ~24,900 lines of Rust (edition 2024)
+- 715 passing tests
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -98,6 +98,30 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `1e75f32` | D3Q19 LBM gas simulation |
 | `79904af` | FLIP/PIC particle simulation |
 | `e7e180f` | Remove legacy CA fluid simulation |
+
+### LOD / Octree Realism Overhaul (latest)
+
+Upgraded the LOD, meshing, and refinement pipeline from disconnected placeholders
+to an integrated, camera-aware system:
+
+- **LOD hysteresis** — 12% dead-band on `LodConfig` prevents thrashing at
+  distance boundaries. Coarser transitions use standard thresholds; finer
+  transitions require crossing a tighter band.
+- **Screen-space error metric** — `level_for_screen_error()` projects
+  geometric error (in pixels) using FOV + screen height. Selects the coarsest
+  LOD whose pixel error stays below a configurable threshold (default 2.0 px).
+- **MaterialColorMap resource** — registry-backed color map with hardcoded
+  fallback. All mesh generation paths now accept `Option<&MaterialColorMap>`,
+  replacing duplicate color tables.
+- **LOD-aware meshing** — `ChunkLod` component tracks per-chunk LOD level.
+  `mesh_dirty_chunks` queries the camera, computes LOD with hysteresis, and
+  calls `generate_mesh_lod` with stride = 2^level. Remeshes only on LOD change.
+- **Refinement wired up** — `build_refined_octree` now uses `RefinementAnalysis`:
+  candidate cells (surface crossings, material boundaries, gradients) are pinned
+  at leaf resolution via `tree.set()`, preventing collapse of feature-rich regions.
+- **LOD transitions** — `LodTransition` component with Hermite smoothstep
+  opacity fade (0.4 s). `tick_lod_transitions` system drives alpha blending
+  during LOD switches.
 
 ---
 
@@ -117,8 +141,15 @@ when started.
 ### Performance & Scaling
 - **Chunk-parallel simulation** — run physics per-chunk on thread pool
 - **GPU compute shaders** — offload P2G/G2P, LBM streaming, heat diffusion
-- **LOD for distant chunks** — skip full simulation, use simplified models
 - **Profiling & budgeting** — establish per-frame time budgets for each system
+- **Populate MaterialColorMap from MaterialRegistry** — wire the asset-loaded
+  material registry into the color map at startup instead of relying on fallbacks
+- **Screen-space error as default LOD strategy** — integrate with camera FOV
+  query; currently the distance+hysteresis path is used at runtime
+- **Sub-voxel refinement** — enable `SubdivisionConfig.max_depth > 0` to
+  interpolate below the 1 m voxel grid at surface crossings and material
+  boundaries, using the existing `upsample_voxels` / trilinear interpolation
+  pipeline
 
 ### Gameplay & Content
 - **Player interaction** — mining, placing, crafting, inventory
@@ -146,6 +177,8 @@ when started.
 8. **Utility AI** — more emergent than behavior trees, scales with complex needs.
 9. **Self-contained physics models** — AMR, LBM, FLIP each have their own
    types/step/plugin/octree_bridge. Couple through voxel data, not shared state.
+10. **Rust edition 2024** — enables `let` chains, `gen` keyword reservation,
+   and other modern Rust features. Minimum Rust version ≥ 1.85.
 
 ---
 

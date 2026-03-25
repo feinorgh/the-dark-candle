@@ -2,7 +2,7 @@
 - **Engine:** Bevy v0.18 (Rust)
 - **OS:** Developed on Gentoo Linux (Wayland), cross-compiled to Windows (`x86_64-pc-windows-gnu`).
 - **Goal:** A modern, cross-platform game relying heavily on data-driven design and procedural generation.
-- **Language:** Rust 1.90 or later
+- **Language:** Rust 1.85 or later (edition 2024)
 
 ## ⚠️ CRITICAL: Bevy 0.18 Strict Rules
 AI agents often hallucinate Bevy 0.14 or older code. You MUST adhere to modern Bevy 0.18 API structures:
@@ -26,7 +26,7 @@ This game uses a strict Data-Driven ECS architecture. We use the `bevy_common_as
 ### Example: How to Add a New Entity Type
 If tasked with creating a new entity (like an Item or Enemy):
 1. Define the Rust struct in `src/`.
-2. Register the loader in `main.rs`: `app.add_plugins(RonAssetPlugin::<YourStruct>::new(&["your_suffix.ron"]))`
+2. Register the loader in the appropriate plugin (typically `DataPlugin` in `src/data/mod.rs`): `app.add_plugins(RonAssetPlugin::<YourStruct>::new(&["your_suffix.ron"]))`
 3. Generate the actual data file in `assets/data/name.your_suffix.ron`.
 4. Write a system that listens for the asset load via `Res<Assets<YourStruct>>` and spawns the entity using Bevy 0.18 component tuples.
 

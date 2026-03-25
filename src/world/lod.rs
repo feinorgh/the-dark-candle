@@ -9,10 +9,75 @@
 
 #![allow(dead_code)]
 
-use super::chunk::{ChunkCoord, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, ChunkCoord};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
 use bevy::prelude::*;
+use std::collections::HashMap;
+
+/// Hardcoded RGBA fallback colors for materials.
+/// Used when no `MaterialRegistry` is loaded.
+fn material_color_fallback(mat: MaterialId) -> [f32; 4] {
+    match mat.0 {
+        0 => [0.0, 0.0, 0.0, 0.0],    // Air (invisible)
+        1 => [0.5, 0.5, 0.5, 1.0],    // Stone (gray)
+        2 => [0.45, 0.30, 0.15, 1.0], // Dirt (brown)
+        3 => [0.2, 0.4, 0.8, 0.8],    // Water (blue, semi-transparent)
+        4 => [0.2, 0.6, 0.1, 1.0],    // Grass (green)
+        5 => [0.7, 0.55, 0.1, 1.0],   // Iron (yellowish)
+        6 => [0.4, 0.25, 0.1, 1.0],   // Wood (dark brown)
+        7 => [0.85, 0.8, 0.55, 1.0],  // Sand (tan)
+        8 => [0.7, 0.85, 1.0, 0.9],   // Ice (pale blue)
+        9 => [0.9, 0.9, 0.95, 0.3],   // Steam (faint white)
+        10 => [1.0, 0.3, 0.0, 1.0],   // Lava (orange-red)
+        11 => [0.3, 0.3, 0.3, 1.0],   // Ash (dark gray)
+        _ => [0.8, 0.0, 0.8, 1.0],    // Unknown (magenta)
+    }
+}
+
+/// Lookup table mapping `MaterialId` → RGBA color.
+///
+/// Built from the `MaterialRegistry` at startup. Falls back to hardcoded
+/// defaults for materials not found in the registry.
+#[derive(Resource, Debug, Clone)]
+pub struct MaterialColorMap {
+    colors: HashMap<u16, [f32; 4]>,
+}
+
+impl Default for MaterialColorMap {
+    fn default() -> Self {
+        Self::from_defaults()
+    }
+}
+
+impl MaterialColorMap {
+    /// Build a color map from hardcoded fallback colors.
+    pub fn from_defaults() -> Self {
+        let mut colors = HashMap::new();
+        for id in 0..=11u16 {
+            colors.insert(id, material_color_fallback(MaterialId(id)));
+        }
+        Self { colors }
+    }
+
+    /// Insert or overwrite the color for a material.
+    pub fn insert(&mut self, id: MaterialId, color: [f32; 4]) {
+        self.colors.insert(id.0, color);
+    }
+
+    /// Insert from an RGB array (alpha = 1.0 for solids, 0.8 for water, 0.3 for steam).
+    pub fn insert_rgb(&mut self, id: MaterialId, rgb: [f32; 3], alpha: f32) {
+        self.colors.insert(id.0, [rgb[0], rgb[1], rgb[2], alpha]);
+    }
+
+    /// Look up the RGBA color for a material, falling back to the hardcoded table.
+    pub fn get(&self, id: MaterialId) -> [f32; 4] {
+        self.colors
+            .get(&id.0)
+            .copied()
+            .unwrap_or_else(|| material_color_fallback(id))
+    }
+}
 
 /// Summary data for a coarsened LOD node.
 ///
@@ -64,7 +129,7 @@ impl LodLevel {
     }
 }
 
-/// Configuration for LOD distance thresholds.
+/// Configuration for LOD distance thresholds, hysteresis, and screen-space error.
 #[derive(Resource, Debug, Clone)]
 pub struct LodConfig {
     /// Maximum LOD levels (0 = full resolution only).
@@ -73,6 +138,13 @@ pub struct LodConfig {
     /// `thresholds[0]` = distance beyond which L0→L1, etc.
     /// If fewer thresholds than max_level, remaining levels use extrapolation.
     pub thresholds: Vec<f32>,
+    /// Hysteresis fraction (0.0–1.0). When transitioning back to a finer LOD,
+    /// the distance must drop below `threshold * (1 - hysteresis)` to prevent
+    /// thrashing at threshold boundaries.
+    pub hysteresis: f32,
+    /// Maximum screen-space error in pixels before a coarser LOD is acceptable.
+    /// Used by `level_for_screen_error()`. Set to 0.0 to disable screen-space LOD.
+    pub screen_error_threshold: f32,
 }
 
 impl Default for LodConfig {
@@ -80,6 +152,8 @@ impl Default for LodConfig {
         Self {
             max_level: 4,
             thresholds: vec![128.0, 256.0, 512.0, 1024.0],
+            hysteresis: 0.12,
+            screen_error_threshold: 2.0,
         }
     }
 }
@@ -94,6 +168,78 @@ impl LodConfig {
         }
         LodLevel(self.max_level)
     }
+
+    /// Determine the LOD level with hysteresis to prevent thrashing.
+    ///
+    /// When moving to a *coarser* level (farther away), the standard threshold
+    /// applies. When returning to a *finer* level (closer), the distance must
+    /// drop below `threshold * (1 - hysteresis)` before the transition occurs.
+    pub fn level_for_distance_with_hysteresis(&self, distance: f32, current: LodLevel) -> LodLevel {
+        let raw = self.level_for_distance(distance);
+
+        if raw.0 >= current.0 {
+            // Same or coarser — use standard thresholds (no hysteresis needed).
+            return raw;
+        }
+
+        // Going finer — require crossing the hysteresis band.
+        let mut level = current.0;
+        while level > 0 {
+            let idx = (level - 1) as usize;
+            if idx < self.thresholds.len() {
+                let retreat_threshold = self.thresholds[idx] * (1.0 - self.hysteresis);
+                if distance < retreat_threshold {
+                    level -= 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        LodLevel(level)
+    }
+
+    /// Determine LOD level based on projected screen-space error.
+    ///
+    /// Computes how many pixels a single voxel at each LOD level would occupy
+    /// at the given distance. Returns the coarsest level whose voxel projection
+    /// still exceeds `screen_error_threshold` pixels.
+    ///
+    /// # Arguments
+    /// * `distance` — Camera distance to chunk center (meters).
+    /// * `fov_y` — Vertical field of view (radians).
+    /// * `screen_height` — Viewport height in pixels.
+    pub fn level_for_screen_error(
+        &self,
+        distance: f32,
+        fov_y: f32,
+        screen_height: f32,
+    ) -> LodLevel {
+        if distance <= 0.0 || self.screen_error_threshold <= 0.0 {
+            return LodLevel(0);
+        }
+
+        let half_fov_tan = (fov_y * 0.5).tan();
+        if half_fov_tan <= 0.0 {
+            return LodLevel(0);
+        }
+        let pixel_scale = screen_height / (2.0 * half_fov_tan);
+
+        // Find the coarsest LOD whose geometric error (in pixels) stays
+        // below the threshold. Level 0 has zero error (full resolution).
+        let mut level = 0u8;
+        for l in 1..=self.max_level {
+            let geo_error = (1u32 << l) as f32;
+            let screen_err = (geo_error / distance) * pixel_scale;
+            if screen_err <= self.screen_error_threshold {
+                level = l;
+            } else {
+                break;
+            }
+        }
+        LodLevel(level)
+    }
 }
 
 /// Compute the LOD level for a chunk based on its distance from the camera.
@@ -101,6 +247,18 @@ pub fn chunk_lod_level(chunk_coord: &ChunkCoord, camera_pos: Vec3, config: &LodC
     let chunk_center = chunk_coord.world_center();
     let distance = (chunk_center - camera_pos).length();
     config.level_for_distance(distance)
+}
+
+/// Compute the LOD level for a chunk using hysteresis-aware distance check.
+pub fn chunk_lod_level_with_hysteresis(
+    chunk_coord: &ChunkCoord,
+    camera_pos: Vec3,
+    current: LodLevel,
+    config: &LodConfig,
+) -> LodLevel {
+    let chunk_center = chunk_coord.world_center();
+    let distance = (chunk_center - camera_pos).length();
+    config.level_for_distance_with_hysteresis(distance, current)
 }
 
 /// Compute LOD summary data from a flat voxel array.
@@ -114,10 +272,8 @@ pub fn summarize_voxels(voxels: &[Voxel], size: usize) -> LodSummary {
     }
 
     let mut solid_count = 0usize;
-    let mut material_counts: std::collections::HashMap<MaterialId, usize> =
-        std::collections::HashMap::new();
+    let mut material_counts: HashMap<MaterialId, usize> = HashMap::new();
     let mut has_surface = false;
-
     let idx = |x: usize, y: usize, z: usize| z * size * size + y * size + x;
 
     for z in 0..size {
@@ -170,9 +326,7 @@ pub fn summarize_voxels(voxels: &[Voxel], size: usize) -> LodSummary {
 
     let solidity = solid_count as f32 / total as f32;
 
-    // Placeholder average color — real colors come from MaterialData registry.
-    // For now, use a simple material-based heuristic.
-    let average_color = material_base_color(dominant_material);
+    let average_color = material_base_color(dominant_material, None);
 
     LodSummary {
         dominant_material,
@@ -184,7 +338,7 @@ pub fn summarize_voxels(voxels: &[Voxel], size: usize) -> LodSummary {
 
 /// Simple material color lookup for LOD rendering.
 /// In production, this should read from the MaterialData registry.
-fn material_base_color(mat: MaterialId) -> [f32; 3] {
+fn material_base_color_fallback(mat: MaterialId) -> [f32; 3] {
     match mat.0 {
         0 => [0.0, 0.0, 0.0],    // Air (invisible)
         1 => [0.5, 0.5, 0.5],    // Stone (gray)
@@ -199,12 +353,21 @@ fn material_base_color(mat: MaterialId) -> [f32; 3] {
     }
 }
 
+/// Resolve a material's base color, preferring the registry when available.
+pub fn material_base_color(mat: MaterialId, color_map: Option<&MaterialColorMap>) -> [f32; 3] {
+    if let Some(map) = color_map {
+        let rgba = map.get(mat);
+        [rgba[0], rgba[1], rgba[2]]
+    } else {
+        material_base_color_fallback(mat)
+    }
+}
+
 /// Summarize an octree region for LOD representation.
 pub fn summarize_octree(octree: &OctreeNode<Voxel>, size: usize) -> LodSummary {
     let mut solid_count = 0usize;
     let mut total_count = 0usize;
-    let mut material_counts: std::collections::HashMap<MaterialId, usize> =
-        std::collections::HashMap::new();
+    let mut material_counts: HashMap<MaterialId, usize> = HashMap::new();
 
     octree.for_each_leaf(0, 0, 0, size, &mut |_, _, _, leaf_size, voxel| {
         let cells = leaf_size * leaf_size * leaf_size;
@@ -230,7 +393,7 @@ pub fn summarize_octree(octree: &OctreeNode<Voxel>, size: usize) -> LodSummary {
     LodSummary {
         dominant_material,
         solidity,
-        average_color: material_base_color(dominant_material),
+        average_color: material_base_color(dominant_material, None),
         has_surface: solidity > 0.0 && solidity < 1.0,
     }
 }
@@ -271,6 +434,7 @@ mod tests {
         let config = LodConfig {
             max_level: 2,
             thresholds: vec![100.0, 200.0],
+            ..Default::default()
         };
         // At exactly the threshold, moves to next level.
         assert_eq!(config.level_for_distance(100.0), LodLevel(1));
@@ -354,5 +518,112 @@ mod tests {
         );
         assert!((flat_summary.solidity - octree_summary.solidity).abs() < 0.001);
         assert_eq!(flat_summary.has_surface, octree_summary.has_surface);
+    }
+
+    // --- Hysteresis tests ---
+
+    #[test]
+    fn hysteresis_prevents_thrashing_at_boundary() {
+        let config = LodConfig::default(); // threshold[0] = 128, hysteresis = 0.12
+        let retreat = 128.0 * (1.0 - config.hysteresis); // ~112.6m
+
+        // Moving away: at 130m we transition L0 → L1.
+        let level = config.level_for_distance_with_hysteresis(130.0, LodLevel(0));
+        assert_eq!(level, LodLevel(1));
+
+        // Moving back: at 120m (above retreat threshold) we stay at L1.
+        let level = config.level_for_distance_with_hysteresis(120.0, LodLevel(1));
+        assert_eq!(level, LodLevel(1));
+
+        // Moving back further: below retreat threshold → back to L0.
+        let level = config.level_for_distance_with_hysteresis(retreat - 1.0, LodLevel(1));
+        assert_eq!(level, LodLevel(0));
+    }
+
+    #[test]
+    fn hysteresis_allows_coarser_transitions_immediately() {
+        let config = LodConfig::default();
+
+        // Going coarser never requires hysteresis.
+        let level = config.level_for_distance_with_hysteresis(300.0, LodLevel(0));
+        assert_eq!(level, LodLevel(2));
+    }
+
+    #[test]
+    fn hysteresis_same_level_stays() {
+        let config = LodConfig::default();
+        let level = config.level_for_distance_with_hysteresis(50.0, LodLevel(0));
+        assert_eq!(level, LodLevel(0));
+    }
+
+    // --- Screen-space error tests ---
+
+    #[test]
+    fn screen_error_close_distance_is_level_0() {
+        let config = LodConfig::default();
+        let fov_y = std::f32::consts::FRAC_PI_2; // 90° FOV
+        let level = config.level_for_screen_error(10.0, fov_y, 1080.0);
+        assert_eq!(level, LodLevel(0));
+    }
+
+    #[test]
+    fn screen_error_far_distance_increases_level() {
+        let config = LodConfig::default();
+        let fov_y = std::f32::consts::FRAC_PI_2;
+        let near_level = config.level_for_screen_error(50.0, fov_y, 1080.0);
+        let far_level = config.level_for_screen_error(5000.0, fov_y, 1080.0);
+        assert!(
+            far_level.0 >= near_level.0,
+            "Far distance should use same or coarser LOD"
+        );
+    }
+
+    #[test]
+    fn screen_error_higher_resolution_keeps_finer_lod() {
+        let config = LodConfig::default();
+        let fov_y = std::f32::consts::FRAC_PI_2;
+        let level_720 = config.level_for_screen_error(500.0, fov_y, 720.0);
+        let level_4k = config.level_for_screen_error(500.0, fov_y, 2160.0);
+        assert!(
+            level_4k.0 <= level_720.0,
+            "Higher screen resolution should use finer or equal LOD"
+        );
+    }
+
+    #[test]
+    fn screen_error_zero_distance_is_level_0() {
+        let config = LodConfig::default();
+        let level = config.level_for_screen_error(0.0, 1.0, 1080.0);
+        assert_eq!(level, LodLevel(0));
+    }
+
+    // --- MaterialColorMap tests ---
+
+    #[test]
+    fn color_map_defaults_match_fallback() {
+        let map = MaterialColorMap::from_defaults();
+        assert_eq!(
+            map.get(MaterialId::STONE),
+            material_color_fallback(MaterialId::STONE)
+        );
+        assert_eq!(
+            map.get(MaterialId::WATER),
+            material_color_fallback(MaterialId::WATER)
+        );
+    }
+
+    #[test]
+    fn color_map_custom_overrides_fallback() {
+        let mut map = MaterialColorMap::from_defaults();
+        let custom = [0.1, 0.2, 0.3, 1.0];
+        map.insert(MaterialId::STONE, custom);
+        assert_eq!(map.get(MaterialId::STONE), custom);
+    }
+
+    #[test]
+    fn color_map_unknown_returns_magenta() {
+        let map = MaterialColorMap::from_defaults();
+        let unknown = map.get(MaterialId(999));
+        assert_eq!(unknown, [0.8, 0.0, 0.8, 1.0]);
     }
 }

@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 
-use super::chunk::{Chunk, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, Chunk};
 use super::octree::OctreeNode;
 use super::voxel::Voxel;
 
@@ -210,28 +210,64 @@ pub fn analyze_voxels(
 /// Build a refined octree from flat chunk data, subdividing only at cells
 /// identified by the analysis.
 ///
-/// Cells in `analysis.candidates` are stored at leaf level (size 1).
-/// All other regions remain as coarse leaves (maximally collapsed).
+/// Cells in `analysis.candidates` are kept at leaf resolution (size 1),
+/// preventing them from being collapsed into coarser regions. For surface
+/// crossings, surrounding voxels within the 2×2×2 neighborhood are also
+/// preserved at full resolution to keep interpolation accurate at boundaries.
+///
+/// This ensures the octree compresses aggressively in uniform interiors
+/// while maintaining detail where the analysis detected features.
 pub fn build_refined_octree(
     voxels: &[Voxel],
     size: usize,
-    _analysis: &RefinementAnalysis,
+    analysis: &RefinementAnalysis,
 ) -> OctreeNode<Voxel> {
     use super::voxel_access::flat_to_octree;
 
-    // Start with a fully collapsed octree.
     let mut tree = flat_to_octree(voxels, size);
 
-    // The flat_to_octree already builds the optimal tree with per-cell
-    // resolution where needed and collapsed leaves where uniform. No
-    // additional subdivision is needed at base resolution — the octree
-    // accurately represents the flat data.
+    // For each candidate, ensure the voxel and its neighbors are stored at
+    // leaf-level resolution (target_size = 1). This prevents try_collapse from
+    // merging features into a uniform region.
     //
-    // In the future when sub-voxel subdivision is enabled (depth > 0),
-    // this function will subdivide candidate cells further based on
-    // interpolated sub-cell data.
+    // Surface crossings and material boundaries pin a 2×2×2 neighborhood so
+    // that the Surface Nets algorithm sees all relevant corners. Gradient
+    // candidates only pin the cell itself.
+    let idx = |x: usize, y: usize, z: usize| -> usize { z * size * size + y * size + x };
 
-    // Run a final collapse pass to ensure maximum compression.
+    for &(cx, cy, cz, reason) in &analysis.candidates {
+        let radius: i32 = match reason {
+            RefinementReason::SurfaceCrossing | RefinementReason::MaterialBoundary => 1,
+            _ => 0,
+        };
+
+        for dz in -radius..=radius {
+            for dy in -radius..=radius {
+                for dx in -radius..=radius {
+                    let nx = cx as i32 + dx;
+                    let ny = cy as i32 + dy;
+                    let nz = cz as i32 + dz;
+
+                    if nx < 0
+                        || ny < 0
+                        || nz < 0
+                        || nx >= size as i32
+                        || ny >= size as i32
+                        || nz >= size as i32
+                    {
+                        continue;
+                    }
+
+                    let (ux, uy, uz) = (nx as usize, ny as usize, nz as usize);
+                    let v = voxels[idx(ux, uy, uz)];
+                    // Re-set the voxel at target_size=1 to force a leaf node.
+                    tree.set(ux, uy, uz, size, 1, v);
+                }
+            }
+        }
+    }
+
+    // Final collapse pass: regions that weren't pinned may still merge.
     tree.collapse_recursive();
 
     tree
@@ -315,10 +351,12 @@ mod tests {
         let analysis = analyze_chunk(&chunk, &default_config());
         assert!(analysis.surface_crossings > 0);
         // Every cell at y=15 (stone) and y=16 (air) along the surface should be a candidate.
-        assert!(analysis
-            .candidates
-            .iter()
-            .any(|&(_, _, _, r)| r == RefinementReason::SurfaceCrossing));
+        assert!(
+            analysis
+                .candidates
+                .iter()
+                .any(|&(_, _, _, r)| r == RefinementReason::SurfaceCrossing)
+        );
     }
 
     #[test]

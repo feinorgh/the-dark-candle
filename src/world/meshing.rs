@@ -15,7 +15,8 @@ use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use super::chunk::{Chunk, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, Chunk};
+use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hysteresis};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
 
@@ -42,7 +43,9 @@ impl ChunkMesh {
 }
 
 /// Map a material ID to an RGBA color for rendering.
-fn material_color(mat: MaterialId) -> [f32; 4] {
+///
+/// Hardcoded fallback used when no `MaterialColorMap` is available.
+fn material_color_fallback(mat: MaterialId) -> [f32; 4] {
     match mat.0 {
         0 => [0.0, 0.0, 0.0, 0.0],    // air (shouldn't appear)
         1 => [0.5, 0.5, 0.5, 1.0],    // stone: grey
@@ -58,6 +61,13 @@ fn material_color(mat: MaterialId) -> [f32; 4] {
         11 => [0.3, 0.3, 0.3, 1.0],   // ash: dark grey
         _ => [0.8, 0.0, 0.8, 1.0],    // unknown: magenta
     }
+}
+
+/// Resolve a material's RGBA color, preferring the registry-backed color map.
+fn material_color(mat: MaterialId, color_map: Option<&MaterialColorMap>) -> [f32; 4] {
+    color_map
+        .map(|m| m.get(mat))
+        .unwrap_or_else(|| material_color_fallback(mat))
 }
 
 /// Sample the scalar field: 1.0 for solid, 0.0 for air.
@@ -85,7 +95,16 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId) {
 
 /// Generate a mesh from a chunk's voxel data using the Surface Nets algorithm.
 pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
-    generate_mesh_generic(CHUNK_SIZE as i32, |x, y, z| sample(chunk, x, y, z))
+    generate_mesh_with_colors(chunk, None)
+}
+
+/// Generate a mesh from a chunk, using the color map for material colors.
+pub fn generate_mesh_with_colors(chunk: &Chunk, color_map: Option<&MaterialColorMap>) -> ChunkMesh {
+    generate_mesh_generic(
+        CHUNK_SIZE as i32,
+        |x, y, z| sample(chunk, x, y, z),
+        |mat| material_color(mat, color_map),
+    )
 }
 
 /// Sample the scalar field from an octree at a given cell coordinate and size.
@@ -125,7 +144,20 @@ fn sample_octree(
 ///
 /// `size` is the grid dimension (e.g. CHUNK_SIZE = 32).
 pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> ChunkMesh {
-    generate_mesh_generic(size as i32, |x, y, z| sample_octree(tree, size, x, y, z))
+    generate_mesh_from_octree_with_colors(tree, size, None)
+}
+
+/// Generate a mesh from an octree volume, using the color map for materials.
+pub fn generate_mesh_from_octree_with_colors(
+    tree: &OctreeNode<Voxel>,
+    size: usize,
+    color_map: Option<&MaterialColorMap>,
+) -> ChunkMesh {
+    generate_mesh_generic(
+        size as i32,
+        |x, y, z| sample_octree(tree, size, x, y, z),
+        |mat| material_color(mat, color_map),
+    )
 }
 
 /// Generate a mesh at reduced resolution for LOD.
@@ -134,18 +166,29 @@ pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> Chunk
 /// 4 = quarter (8³), etc. The output mesh covers the same world-space volume
 /// but with fewer vertices and triangles.
 pub fn generate_mesh_lod(chunk: &Chunk, lod_step: usize) -> ChunkMesh {
+    generate_mesh_lod_with_colors(chunk, lod_step, None)
+}
+
+/// Generate a mesh at reduced resolution for LOD, using the color map.
+pub fn generate_mesh_lod_with_colors(
+    chunk: &Chunk,
+    lod_step: usize,
+    color_map: Option<&MaterialColorMap>,
+) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = CHUNK_SIZE / lod_step;
     let step = lod_step as i32;
 
-    generate_mesh_generic(effective_size as i32, |x, y, z| {
-        // Map reduced-resolution coords back to full-resolution chunk coords
-        let fx = x * step;
-        let fy = y * step;
-        let fz = z * step;
-        let (val, mat) = sample(chunk, fx, fy, fz);
-        (val, mat)
-    })
+    generate_mesh_generic(
+        effective_size as i32,
+        |x, y, z| {
+            let fx = x * step;
+            let fy = y * step;
+            let fz = z * step;
+            sample(chunk, fx, fy, fz)
+        },
+        |mat| material_color(mat, color_map),
+    )
 }
 
 /// Generate a mesh from an octree at reduced resolution for LOD.
@@ -154,25 +197,41 @@ pub fn generate_mesh_from_octree_lod(
     size: usize,
     lod_step: usize,
 ) -> ChunkMesh {
+    generate_mesh_from_octree_lod_with_colors(tree, size, lod_step, None)
+}
+
+/// Generate a mesh from an octree at reduced resolution, using the color map.
+pub fn generate_mesh_from_octree_lod_with_colors(
+    tree: &OctreeNode<Voxel>,
+    size: usize,
+    lod_step: usize,
+    color_map: Option<&MaterialColorMap>,
+) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = size / lod_step;
     let step = lod_step as i32;
 
-    generate_mesh_generic(effective_size as i32, |x, y, z| {
-        let fx = x * step;
-        let fy = y * step;
-        let fz = z * step;
-        sample_octree(tree, size, fx, fy, fz)
-    })
+    generate_mesh_generic(
+        effective_size as i32,
+        |x, y, z| {
+            let fx = x * step;
+            let fy = y * step;
+            let fz = z * step;
+            sample_octree(tree, size, fx, fy, fz)
+        },
+        |mat| material_color(mat, color_map),
+    )
 }
 
-/// Core Surface Nets implementation parameterized over a sampling function.
+/// Core Surface Nets implementation parameterized over sampling and color functions.
 ///
 /// `grid_size` is the number of cells along each axis.
 /// `sample_fn(x, y, z)` returns (scalar, material) for the given cell corner.
-fn generate_mesh_generic<F>(grid_size: i32, sample_fn: F) -> ChunkMesh
+/// `color_fn(mat)` returns the RGBA color for a material ID.
+fn generate_mesh_generic<F, C>(grid_size: i32, sample_fn: F, color_fn: C) -> ChunkMesh
 where
     F: Fn(i32, i32, i32) -> (f32, MaterialId),
+    C: Fn(MaterialId) -> [f32; 4],
 {
     let corners: [(i32, i32, i32); 8] = [
         (0, 0, 0),
@@ -270,7 +329,7 @@ where
                 vertex_map.insert((cx, cy, cz), idx);
                 positions.push(world_pos);
                 normals.push([0.0, 1.0, 0.0]);
-                colors.push(material_color(dominant_mat));
+                colors.push(color_fn(dominant_mat));
             }
         }
     }
@@ -410,72 +469,207 @@ pub fn chunk_mesh_to_bevy_mesh(chunk_mesh: &ChunkMesh) -> Mesh {
 #[derive(Component)]
 pub struct ChunkMeshMarker;
 
-/// System: generates or updates meshes for dirty chunks.
+/// Tracks the current LOD level assigned to a chunk.
+///
+/// Used by the meshing system to determine mesh stride and detect LOD changes.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ChunkLod(pub LodLevel);
+
+/// Active LOD transition state for smooth blending.
+///
+/// While present, the chunk fades between its old and new LOD meshes.
+/// `factor` advances from 0.0 (old LOD) to 1.0 (new LOD fully visible).
+#[derive(Component, Debug, Clone)]
+pub struct LodTransition {
+    /// LOD level before the transition.
+    pub previous_level: LodLevel,
+    /// Blend factor in [0.0, 1.0]. 1.0 = transition complete.
+    pub factor: f32,
+}
+
+/// Duration of an LOD transition in seconds.
+const LOD_TRANSITION_DURATION: f32 = 0.4;
+
+/// Compute the mesh stride for a given LOD level.
+/// L0 = 1 (full 32³), L1 = 2 (16³), L2 = 4 (8³), etc.
+fn lod_step(level: LodLevel) -> usize {
+    let step = 1usize << level.0;
+    step.min(CHUNK_SIZE / 2) // Don't go below 2³
+}
+
+/// System: generates or updates meshes for dirty chunks, respecting LOD levels.
+///
+/// Queries the camera position to compute per-chunk LOD. Chunks are meshed at
+/// reduced resolution when distant. LOD transitions trigger remeshing with a
+/// smooth opacity fade via `LodTransition`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn mesh_dirty_chunks(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut chunk_q: Query<(Entity, &mut Chunk, Option<&Mesh3d>), Without<ChunkMeshMarker>>,
-    mut remesh_q: Query<(Entity, &mut Chunk, &Mesh3d), With<ChunkMeshMarker>>,
+    lod_config: Option<Res<LodConfig>>,
+    color_map: Option<Res<MaterialColorMap>>,
+    camera_q: Query<&Transform, With<Camera3d>>,
+    mut chunk_q: Query<
+        (
+            Entity,
+            &mut Chunk,
+            &super::chunk::ChunkCoord,
+            Option<&Mesh3d>,
+            Option<&ChunkLod>,
+        ),
+        Without<ChunkMeshMarker>,
+    >,
+    mut remesh_q: Query<
+        (
+            Entity,
+            &mut Chunk,
+            &super::chunk::ChunkCoord,
+            &Mesh3d,
+            Option<&ChunkLod>,
+        ),
+        With<ChunkMeshMarker>,
+    >,
 ) {
+    let default_config = LodConfig::default();
+    let config = lod_config.as_deref().unwrap_or(&default_config);
+    let colors = color_map.as_deref();
+    let camera_pos = camera_q
+        .iter()
+        .next()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
+
     // Default material for chunk meshes (vertex colored)
     let chunk_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        // We use vertex colors, so set the base to white and let colors multiply
         ..default()
     });
 
     // Initial mesh generation for new chunks without a mesh
-    for (entity, mut chunk, existing_mesh) in chunk_q.iter_mut() {
-        if !chunk.is_dirty() {
+    for (entity, mut chunk, coord, existing_mesh, current_lod) in chunk_q.iter_mut() {
+        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
+        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
+        let lod_changed = current_lod.is_some() && new_level != current_level;
+
+        if !chunk.is_dirty() && !lod_changed {
             continue;
         }
 
-        let chunk_mesh = generate_mesh(&chunk);
+        let step = lod_step(new_level);
+        let chunk_mesh = if step <= 1 {
+            generate_mesh_with_colors(&chunk, colors)
+        } else {
+            generate_mesh_lod_with_colors(&chunk, step, colors)
+        };
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
+            commands.entity(entity).insert(ChunkLod(new_level));
             continue;
         }
 
         let bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
         let mesh_handle = meshes.add(bevy_mesh);
 
-        if existing_mesh.is_some() {
-            // Already has a mesh — just update the handle
-            commands
-                .entity(entity)
-                .insert(Mesh3d(mesh_handle))
-                .insert(ChunkMeshMarker);
-        } else {
-            commands
-                .entity(entity)
-                .insert(Mesh3d(mesh_handle))
-                .insert(MeshMaterial3d(chunk_material.clone()))
-                .insert(ChunkMeshMarker);
+        let mut cmds = commands.entity(entity);
+        cmds.insert(Mesh3d(mesh_handle))
+            .insert(ChunkLod(new_level))
+            .insert(ChunkMeshMarker);
+
+        if existing_mesh.is_none() {
+            cmds.insert(MeshMaterial3d(chunk_material.clone()));
+        }
+
+        if lod_changed {
+            cmds.insert(LodTransition {
+                previous_level: current_level,
+                factor: 0.0,
+            });
         }
     }
 
-    // Remesh already-meshed chunks that got dirty again
-    for (entity, mut chunk, _mesh) in remesh_q.iter_mut() {
-        if !chunk.is_dirty() {
+    // Remesh already-meshed chunks that got dirty or changed LOD
+    for (entity, mut chunk, coord, _mesh, current_lod) in remesh_q.iter_mut() {
+        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
+        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
+        let lod_changed = new_level != current_level;
+
+        if !chunk.is_dirty() && !lod_changed {
             continue;
         }
 
-        let chunk_mesh = generate_mesh(&chunk);
+        let step = lod_step(new_level);
+        let chunk_mesh = if step <= 1 {
+            generate_mesh_with_colors(&chunk, colors)
+        } else {
+            generate_mesh_lod_with_colors(&chunk, step, colors)
+        };
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
-            // Remove the mesh if chunk is now empty
             commands
                 .entity(entity)
                 .remove::<Mesh3d>()
                 .remove::<MeshMaterial3d<StandardMaterial>>()
-                .remove::<ChunkMeshMarker>();
+                .remove::<ChunkMeshMarker>()
+                .insert(ChunkLod(new_level));
         } else {
             let bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
             let mesh_handle = meshes.add(bevy_mesh);
-            commands.entity(entity).insert(Mesh3d(mesh_handle));
+            let mut cmds = commands.entity(entity);
+            cmds.insert(Mesh3d(mesh_handle)).insert(ChunkLod(new_level));
+
+            if lod_changed {
+                cmds.insert(LodTransition {
+                    previous_level: current_level,
+                    factor: 0.0,
+                });
+            }
+        }
+    }
+}
+
+/// System: advances LOD transitions and applies opacity fade.
+///
+/// Each frame, `factor` is advanced toward 1.0. During the transition,
+/// the chunk's `StandardMaterial` alpha is scaled by the blend factor
+/// using a Hermite smoothstep for visual smoothness. When the transition
+/// completes, full opacity is restored and the component is removed.
+pub fn tick_lod_transitions(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut query: Query<(
+        Entity,
+        &mut LodTransition,
+        Option<&MeshMaterial3d<StandardMaterial>>,
+    )>,
+) {
+    let dt = time.delta_secs();
+
+    for (entity, mut transition, mat_handle) in query.iter_mut() {
+        transition.factor += dt / LOD_TRANSITION_DURATION;
+
+        if transition.factor >= 1.0 {
+            // Transition complete — restore full opacity and clean up.
+            if let Some(mat_h) = mat_handle
+                && let Some(mat) = materials.get_mut(&mat_h.0)
+            {
+                mat.base_color = Color::WHITE;
+                mat.alpha_mode = AlphaMode::Opaque;
+            }
+            commands.entity(entity).remove::<LodTransition>();
+        } else {
+            // Hermite smoothstep for perceptually smooth fade.
+            let t = transition.factor;
+            let alpha = t * t * (3.0 - 2.0 * t);
+            if let Some(mat_h) = mat_handle
+                && let Some(mat) = materials.get_mut(&mat_h.0)
+            {
+                mat.base_color = Color::srgba(1.0, 1.0, 1.0, alpha);
+                mat.alpha_mode = AlphaMode::Blend;
+            }
         }
     }
 }
@@ -485,7 +679,10 @@ pub struct MeshingPlugin;
 
 impl Plugin for MeshingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, mesh_dirty_chunks.in_set(super::WorldSet::Meshing));
+        app.add_systems(
+            Update,
+            (mesh_dirty_chunks, tick_lod_transitions).in_set(super::WorldSet::Meshing),
+        );
     }
 }
 
@@ -596,17 +793,17 @@ mod tests {
 
     #[test]
     fn material_color_returns_correct_colors() {
-        let stone = material_color(MaterialId::STONE);
+        let stone = material_color(MaterialId::STONE, None);
         assert_eq!(stone[3], 1.0); // opaque
 
-        let water = material_color(MaterialId::WATER);
+        let water = material_color(MaterialId::WATER, None);
         assert!(water[3] < 1.0); // semi-transparent
 
-        let air = material_color(MaterialId::AIR);
+        let air = material_color(MaterialId::AIR, None);
         assert_eq!(air[3], 0.0); // invisible
 
         // Unknown material should be magenta
-        let unknown = material_color(MaterialId(999));
+        let unknown = material_color(MaterialId(999), None);
         assert_eq!(unknown, [0.8, 0.0, 0.8, 1.0]);
     }
 

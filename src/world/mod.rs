@@ -30,6 +30,8 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.configure_sets(Update, WorldSet::Meshing.after(WorldSet::ChunkManagement))
+            .insert_resource(lod::LodConfig::default())
+            .insert_resource(lod::MaterialColorMap::from_defaults())
             .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)
             .add_plugins(RefinementPlugin)
