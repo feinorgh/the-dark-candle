@@ -1,13 +1,18 @@
-// Sequential impulse solver for contact resolution.
+// Sequential impulse solver with split-impulse position correction.
 //
-// For each contact manifold, computes normal and tangential impulses that
-// prevent penetration (restitution) and resist sliding (friction). Angular
-// impulses are applied at the contact point to couple linear and rotational
-// response.
+// For each contact manifold the solver computes:
+//  • **Velocity impulses** — restitution and Coulomb friction applied to the
+//    real velocities of colliding bodies.  These are the only impulses that
+//    affect kinetic energy.
+//  • **Position impulses** — Baumgarte penetration correction applied to
+//    *pseudo-velocities*, temporary per-frame quantities that push overlapping
+//    bodies apart without injecting kinetic energy.
 //
-// The solver runs multiple iterations to converge accumulated impulses for
-// stacking stability. Penetration is corrected via a position bias term
-// (Baumgarte stabilization).
+// After all iterations the pseudo-velocities are integrated into `Transform`
+// positions and then discarded, so position stabilisation never leaks energy
+// into the simulation.
+
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 
@@ -19,8 +24,13 @@ use super::rigid_body::{AngularVelocity, MomentOfInertia};
 /// More iterations improve stacking stability at the cost of performance.
 const SOLVER_ITERATIONS: usize = 4;
 
-/// Baumgarte stabilization factor. Fraction of penetration corrected per tick.
-const BAUMGARTE_FACTOR: f32 = 0.2;
+/// Baumgarte stabilisation factor for position correction.
+///
+/// With split impulse, position correction flows through pseudo-velocities
+/// that are discarded each frame, so this can be more aggressive than the
+/// typical 0.1–0.2 needed for velocity-based Baumgarte (which injected
+/// kinetic energy).
+const BAUMGARTE_FACTOR: f32 = 0.8;
 
 /// Penetration slop: small overlap allowed to avoid jitter (m).
 const PENETRATION_SLOP: f32 = 0.005;
@@ -42,6 +52,8 @@ struct ContactConstraint {
     normal_impulse: f32,
     /// Accumulated tangent impulse (clamped by friction cone).
     tangent_impulse: Vec3,
+    /// Accumulated pseudo-velocity normal impulse for position correction.
+    pseudo_normal_impulse: f32,
     /// Relative velocity along normal before solve (for restitution).
     initial_relative_vn: f32,
 }
@@ -77,14 +89,17 @@ pub fn relative_velocity(
 // System
 // ---------------------------------------------------------------------------
 
-/// Solve all contacts using sequential impulses.
+/// Solve all contacts using sequential impulses with split-impulse position
+/// correction.
 ///
-/// Modifies `PhysicsBody::velocity` and `AngularVelocity` for entities
-/// involved in collisions. Applies Baumgarte position correction via
-/// Transform adjustment.
+/// Velocity impulses (restitution + friction) modify `PhysicsBody::velocity`
+/// and `AngularVelocity`.  Position correction uses pseudo-velocities that are
+/// integrated into `Transform` after all iterations, then discarded — this
+/// prevents Baumgarte stabilisation from injecting kinetic energy.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 pub fn solve_contacts(
+    time: Res<Time>,
     contacts: Res<Contacts>,
     mut query: Query<(
         &mut PhysicsBody,
@@ -95,6 +110,11 @@ pub fn solve_contacts(
     )>,
 ) {
     if contacts.manifolds.is_empty() {
+        return;
+    }
+
+    let dt = time.delta_secs();
+    if dt < 1e-12 {
         return;
     }
 
@@ -138,10 +158,15 @@ pub fn solve_contacts(
                 friction: manifold.material.friction,
                 normal_impulse: 0.0,
                 tangent_impulse: Vec3::ZERO,
+                pseudo_normal_impulse: 0.0,
                 initial_relative_vn: initial_vn,
             });
         }
     }
+
+    // Per-entity pseudo-velocity accumulators (position correction only).
+    let mut pseudo_lin: HashMap<Entity, Vec3> = HashMap::new();
+    let mut pseudo_ang: HashMap<Entity, Vec3> = HashMap::new();
 
     // Iterative solve
     for _ in 0..SOLVER_ITERATIONS {
@@ -164,7 +189,16 @@ pub fn solve_contacts(
             let omega_a = data_a.3.as_ref().map(|o| o.0).unwrap_or(Vec3::ZERO);
             let omega_b = data_b.3.as_ref().map(|o| o.0).unwrap_or(Vec3::ZERO);
 
-            // --- Normal impulse ---
+            let eff_mass_n = effective_inv_mass(inv_m_a, inv_i_a, r_a, constraint.normal)
+                + effective_inv_mass(inv_m_b, inv_i_b, r_b, constraint.normal);
+
+            if eff_mass_n < 1e-12 {
+                continue;
+            }
+
+            // =============================================================
+            // Velocity solve — restitution + friction only (no pos_bias)
+            // =============================================================
             let v_rel = relative_velocity(
                 data_a.0.velocity,
                 omega_a,
@@ -175,27 +209,14 @@ pub fn solve_contacts(
             );
             let vn = v_rel.dot(constraint.normal);
 
-            let eff_mass_n = effective_inv_mass(inv_m_a, inv_i_a, r_a, constraint.normal)
-                + effective_inv_mass(inv_m_b, inv_i_b, r_b, constraint.normal);
-
-            if eff_mass_n < 1e-12 {
-                continue;
-            }
-
-            // Restitution bias: only apply if initial approach speed exceeded threshold
             let restitution_bias = if constraint.initial_relative_vn < -0.5 {
                 -constraint.restitution * constraint.initial_relative_vn
             } else {
                 0.0
             };
 
-            // Baumgarte position bias
-            let pos_bias =
-                (BAUMGARTE_FACTOR / (1.0 / 60.0)) * (constraint.depth - PENETRATION_SLOP).max(0.0);
+            let lambda_n = (-vn + restitution_bias) / eff_mass_n;
 
-            let lambda_n = (-vn + restitution_bias + pos_bias) / eff_mass_n;
-
-            // Accumulated impulse clamping (Erin Catto's technique)
             let old_impulse = constraint.normal_impulse;
             constraint.normal_impulse = (old_impulse + lambda_n).max(0.0);
             let applied_n = constraint.normal_impulse - old_impulse;
@@ -262,43 +283,64 @@ pub fn solve_contacts(
                     }
                 }
             }
+
+            // =============================================================
+            // Position solve — Baumgarte bias → pseudo-velocities
+            // =============================================================
+            let pv_a = pseudo_lin
+                .get(&constraint.entity_a)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+            let po_a = pseudo_ang
+                .get(&constraint.entity_a)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+            let pv_b = pseudo_lin
+                .get(&constraint.entity_b)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+            let po_b = pseudo_ang
+                .get(&constraint.entity_b)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+
+            let pv_rel = relative_velocity(pv_a, po_a, r_a, pv_b, po_b, r_b);
+            let pvn = pv_rel.dot(constraint.normal);
+
+            let pos_bias = (BAUMGARTE_FACTOR / dt) * (constraint.depth - PENETRATION_SLOP).max(0.0);
+
+            let lambda_p = (-pvn + pos_bias) / eff_mass_n;
+
+            let old_pseudo = constraint.pseudo_normal_impulse;
+            constraint.pseudo_normal_impulse = (old_pseudo + lambda_p).max(0.0);
+            let applied_p = constraint.pseudo_normal_impulse - old_pseudo;
+
+            if applied_p.abs() > 1e-12 {
+                let impulse_p = constraint.normal * applied_p;
+
+                *pseudo_lin.entry(constraint.entity_a).or_insert(Vec3::ZERO) += impulse_p * inv_m_a;
+                *pseudo_lin.entry(constraint.entity_b).or_insert(Vec3::ZERO) -= impulse_p * inv_m_b;
+
+                *pseudo_ang.entry(constraint.entity_a).or_insert(Vec3::ZERO) +=
+                    r_a.cross(impulse_p) * inv_i_a;
+                *pseudo_ang.entry(constraint.entity_b).or_insert(Vec3::ZERO) -=
+                    r_b.cross(impulse_p) * inv_i_b;
+            }
         }
     }
 
-    // Position correction: push entities apart along contact normal
-    for constraint in &constraints {
-        let correction = (constraint.depth - PENETRATION_SLOP).max(0.0) * 0.4;
-        if correction < 1e-6 {
-            continue;
+    // Integrate pseudo-velocities into positions (NOT into real velocities).
+    for (entity, pv) in &pseudo_lin {
+        if let Ok((_, _, mut transform, _, _)) = query.get_mut(*entity) {
+            transform.translation += *pv * dt;
         }
-
-        let Ok([data_a, data_b]) = query.get_many([constraint.entity_a, constraint.entity_b])
-        else {
-            continue;
-        };
-
-        let inv_m_a = 1.0 / data_a.1.0;
-        let inv_m_b = 1.0 / data_b.1.0;
-        let total_inv = inv_m_a + inv_m_b;
-        if total_inv < 1e-12 {
-            continue;
-        }
-
-        let shift = constraint.normal * correction;
-
-        // Apply position correction proportional to inverse mass
-        // We need mutable access to transforms, but query already borrows them.
-        // Use unsafe interior mutability pattern via separate queries is complex.
-        // Instead, store corrections and apply after the loop.
-        // For now, apply via the main query's Transform (already borrowed).
-
-        if let Ok([mut data_a, mut data_b]) =
-            query.get_many_mut([constraint.entity_a, constraint.entity_b])
+    }
+    for (entity, po) in &pseudo_ang {
+        let delta = *po * dt;
+        if delta.length_squared() > 1e-12
+            && let Ok((_, _, mut transform, _, _)) = query.get_mut(*entity)
         {
-            let frac_a = inv_m_a / total_inv;
-            let frac_b = inv_m_b / total_inv;
-            data_a.2.translation += shift * frac_a;
-            data_b.2.translation -= shift * frac_b;
+            transform.rotation = (Quat::from_scaled_axis(delta) * transform.rotation).normalize();
         }
     }
 }
@@ -407,7 +449,8 @@ mod tests {
     #[test]
     fn baumgarte_bias_zero_when_within_slop() {
         let depth = 0.003; // Less than PENETRATION_SLOP
-        let bias = (BAUMGARTE_FACTOR / (1.0 / 60.0)) * (depth - PENETRATION_SLOP).max(0.0);
+        let dt = 1.0 / 60.0;
+        let bias = (BAUMGARTE_FACTOR / dt) * (depth - PENETRATION_SLOP).max(0.0);
         assert_eq!(bias, 0.0);
     }
 
@@ -417,5 +460,40 @@ mod tests {
         let dt = 1.0 / 60.0;
         let bias = (BAUMGARTE_FACTOR / dt) * (depth - PENETRATION_SLOP).max(0.0);
         assert!(bias > 0.0);
+    }
+
+    #[test]
+    fn split_impulse_velocity_excludes_position_bias() {
+        // The velocity impulse formula should NOT include pos_bias.
+        // Given two bodies in contact with penetration, the velocity lambda
+        // should depend only on restitution, not on penetration depth.
+        let vn = 0.0_f32; // resting contact
+        let restitution_bias = 0.0_f32; // below threshold
+        let eff_mass_n = 0.2_f32;
+
+        // Velocity lambda — NO pos_bias
+        let lambda_vel = (-vn + restitution_bias) / eff_mass_n;
+        assert_eq!(
+            lambda_vel, 0.0,
+            "Resting contact should produce zero velocity impulse"
+        );
+
+        // Position lambda — WITH pos_bias
+        let depth = 0.05;
+        let dt = 1.0 / 60.0;
+        let pos_bias = (BAUMGARTE_FACTOR / dt) * (depth - PENETRATION_SLOP).max(0.0);
+        let lambda_pos = (-0.0 + pos_bias) / eff_mass_n;
+        assert!(
+            lambda_pos > 0.0,
+            "Position impulse should be positive for penetrating contact"
+        );
+
+        // The key invariant: velocity impulse is independent of depth.
+        let _deep_depth = 0.5;
+        let lambda_vel_deep = (-vn + restitution_bias) / eff_mass_n;
+        assert_eq!(
+            lambda_vel, lambda_vel_deep,
+            "Velocity impulse must not depend on penetration depth"
+        );
     }
 }

@@ -503,9 +503,14 @@ fn three_bouncing_balls() {
     );
     let energy_delta_pct = (final_energy / initial_energy - 1.0) * 100.0;
     eprintln!("    Energy: {initial_energy:.0} J → {final_energy:.0} J ({energy_delta_pct:+.1}%)",);
-    if final_energy > initial_energy {
-        eprintln!("    Note: Baumgarte stabilization injects energy at deep penetrations",);
-    }
+
+    // With split-impulse, position correction no longer injects kinetic energy.
+    // Energy should only decrease (restitution < 1, friction, drag).  Allow a
+    // small tolerance for floating-point accumulation.
+    assert!(
+        final_energy <= initial_energy * 1.05,
+        "Energy should not increase significantly: {initial_energy:.0} J → {final_energy:.0} J ({energy_delta_pct:+.1}%)",
+    );
     eprintln!(
         "    Final positions: [{:.2}, {:.2}, {:.2}], [{:.2}, {:.2}, {:.2}], [{:.2}, {:.2}, {:.2}]",
         final_balls[0].pos.x,
