@@ -7,10 +7,10 @@
 
 use serde::Deserialize;
 
-use the_dark_candle::chemistry::reactions::{check_reaction, ReactionData};
+use the_dark_candle::chemistry::reactions::{ReactionData, check_reaction};
 use the_dark_candle::data::MaterialRegistry;
 use the_dark_candle::physics::gravity::{GRAVITY, VELOCITY_SAFETY_CAP};
-use the_dark_candle::world::chunk::{Chunk, ChunkCoord, CHUNK_VOLUME};
+use the_dark_candle::world::chunk::{CHUNK_VOLUME, Chunk, ChunkCoord};
 use the_dark_candle::world::terrain::{TerrainConfig, TerrainGenerator};
 use the_dark_candle::world::voxel::MaterialId;
 
@@ -199,22 +199,22 @@ fn run_terrain(s: &TerrainScenario) -> Result<(), String> {
         }
     }
 
-    if let Some(min_frac) = s.expect_solid_fraction_gt {
-        if solid_fraction <= min_frac {
-            return Err(format!(
-                "{}: expected solid fraction > {min_frac}, got {solid_fraction:.4}",
-                s.description
-            ));
-        }
+    if let Some(min_frac) = s.expect_solid_fraction_gt
+        && solid_fraction <= min_frac
+    {
+        return Err(format!(
+            "{}: expected solid fraction > {min_frac}, got {solid_fraction:.4}",
+            s.description
+        ));
     }
 
-    if let Some(max_frac) = s.expect_solid_fraction_lt {
-        if solid_fraction >= max_frac {
-            return Err(format!(
-                "{}: expected solid fraction < {max_frac}, got {solid_fraction:.4}",
-                s.description
-            ));
-        }
+    if let Some(max_frac) = s.expect_solid_fraction_lt
+        && solid_fraction >= max_frac
+    {
+        return Err(format!(
+            "{}: expected solid fraction < {max_frac}, got {solid_fraction:.4}",
+            s.description
+        ));
     }
 
     Ok(())

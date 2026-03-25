@@ -111,10 +111,10 @@ impl FactionRegistry {
     /// Add a creature to a faction.
     pub fn join_faction(&mut self, creature: CreatureId, faction_id: FactionId) {
         // Remove from old faction
-        if let Some(old_id) = self.creature_faction.get(&creature).copied() {
-            if let Some(old) = self.factions.get_mut(&old_id) {
-                old.remove_member(creature);
-            }
+        if let Some(old_id) = self.creature_faction.get(&creature).copied()
+            && let Some(old) = self.factions.get_mut(&old_id)
+        {
+            old.remove_member(creature);
         }
         if let Some(faction) = self.factions.get_mut(&faction_id) {
             faction.add_member(creature);
@@ -124,20 +124,16 @@ impl FactionRegistry {
 
     /// Remove a creature from its faction.
     pub fn leave_faction(&mut self, creature: CreatureId) {
-        if let Some(faction_id) = self.creature_faction.remove(&creature) {
-            if let Some(faction) = self.factions.get_mut(&faction_id) {
-                faction.remove_member(creature);
-            }
+        if let Some(faction_id) = self.creature_faction.remove(&creature)
+            && let Some(faction) = self.factions.get_mut(&faction_id)
+        {
+            faction.remove_member(creature);
         }
     }
 
     /// Canonical key for a faction pair.
     fn pair_key(a: FactionId, b: FactionId) -> (FactionId, FactionId) {
-        if a.0 <= b.0 {
-            (a, b)
-        } else {
-            (b, a)
-        }
+        if a.0 <= b.0 { (a, b) } else { (b, a) }
     }
 
     /// Get standing between two factions.

@@ -76,11 +76,7 @@ fn trilinear_velocity(grid: &FluidGrid, fx: f32, fy: f32, fz: f32) -> [f32; 3] {
     // Sample 8 corners, treating non-fluid cells as zero velocity.
     let sample = |x: usize, y: usize, z: usize| -> [f32; 3] {
         let c = grid.get(x, y, z);
-        if c.is_fluid() {
-            c.velocity
-        } else {
-            [0.0; 3]
-        }
+        if c.is_fluid() { c.velocity } else { [0.0; 3] }
     };
 
     let c000 = sample(x0, y0, z0);

@@ -651,8 +651,10 @@ mod tests {
         let vt_air = terminal_velocity(mass, 1.225, cd, area);
         let vt_water = terminal_velocity(mass, 1000.0, cd, area);
 
-        assert!(vt_air > vt_water * 5.0,
-            "Terminal velocity in air ({vt_air:.1}) should be much higher than in water ({vt_water:.1})");
+        assert!(
+            vt_air > vt_water * 5.0,
+            "Terminal velocity in air ({vt_air:.1}) should be much higher than in water ({vt_water:.1})"
+        );
     }
 
     #[test]

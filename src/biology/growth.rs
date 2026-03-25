@@ -78,10 +78,10 @@ pub fn tick_growth(growth: &mut Growth) -> bool {
     }
 
     // Death from old age
-    if let Some(lifespan) = growth.lifespan {
-        if growth.age >= lifespan {
-            return true;
-        }
+    if let Some(lifespan) = growth.lifespan
+        && growth.age >= lifespan
+    {
+        return true;
     }
 
     false

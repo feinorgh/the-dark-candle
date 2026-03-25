@@ -174,7 +174,7 @@ mod tests {
 
         // Pipeline ran without panicking; particles may still be airborne.
         let _ = changed; // may be 0 or more
-                         // Particles should still exist (they are in-bounds and in air).
+        // Particles should still exist (they are in-bounds and in air).
         assert!(!particles.is_empty());
     }
 

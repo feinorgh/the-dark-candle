@@ -326,9 +326,9 @@ mod tests {
         // Wikipedia: Heat of combustion of wood ≈ 15 MJ/kg
         // This validates the constant used in material data
         let expected = 15_000_000.0_f32; // J/kg
-                                         // In our system, heat_output is a temperature delta (K), not J/kg.
-                                         // The actual J/kg value is stored in MaterialData.heat_of_combustion.
-                                         // Validate that the physical constant is correct:
+        // In our system, heat_output is a temperature delta (K), not J/kg.
+        // The actual J/kg value is stored in MaterialData.heat_of_combustion.
+        // Validate that the physical constant is correct:
         assert!(
             (expected - 15e6).abs() < 1.0,
             "Wood heat of combustion should be 15 MJ/kg"

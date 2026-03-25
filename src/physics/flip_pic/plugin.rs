@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use super::step;
 use super::types::{AccumulationGrid, ParticleBuffer};
 use crate::data::FluidConfig;
-use crate::world::chunk::{Chunk, ChunkCoord, CHUNK_SIZE};
+use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
 use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
@@ -159,10 +159,10 @@ fn cleanup_empty_buffers(
             return true;
         }
         // Check if the chunk still has emitting surfaces.
-        if let Some(entity) = chunk_map.get(coord) {
-            if let Ok(chunk) = chunks.get(entity) {
-                return has_emitting_surfaces(chunk);
-            }
+        if let Some(entity) = chunk_map.get(coord)
+            && let Ok(chunk) = chunks.get(entity)
+        {
+            return has_emitting_surfaces(chunk);
         }
         false
     });

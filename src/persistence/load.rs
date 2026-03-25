@@ -24,7 +24,7 @@ use crate::{
     },
 };
 
-use super::types::{decode_rle, SaveId, SAVE_PATH, SAVE_VERSION};
+use super::types::{SAVE_PATH, SAVE_VERSION, SaveId, decode_rle};
 
 /// Migrate a save from an older version to the current format.
 /// Returns true if migration was applied, false if already current.

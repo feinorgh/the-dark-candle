@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn octree_to_flat_roundtrip() {
         let mut voxels = vec![air(); 64]; // 4×4×4
-                                          // Set a few cells.
+        // Set a few cells.
         voxels[0] = stone();
         voxels[63] = stone();
         voxels[32] = Voxel::new(MaterialId::WATER);

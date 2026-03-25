@@ -96,15 +96,15 @@ pub fn score_actions(needs: &Needs, ctx: &ActionContext) -> Vec<ScoredAction> {
     }
 
     // Attack: for hostile creatures when prey is available
-    if ctx.is_hostile {
-        if let Some(target) = ctx.nearest_prey {
-            // Hostile creatures attack when hungry or when prey is near
-            let aggression = needs.hunger * 0.8 + 0.2;
-            scored.push(ScoredAction {
-                action: Action::Attack { target },
-                score: aggression,
-            });
-        }
+    if ctx.is_hostile
+        && let Some(target) = ctx.nearest_prey
+    {
+        // Hostile creatures attack when hungry or when prey is near
+        let aggression = needs.hunger * 0.8 + 0.2;
+        scored.push(ScoredAction {
+            action: Action::Attack { target },
+            score: aggression,
+        });
     }
 
     scored
@@ -279,9 +279,11 @@ mod tests {
             ..Default::default()
         };
         let scored = score_actions(&needs, &ctx);
-        assert!(!scored
-            .iter()
-            .any(|s| matches!(s.action, Action::Attack { .. })));
+        assert!(
+            !scored
+                .iter()
+                .any(|s| matches!(s.action, Action::Attack { .. }))
+        );
     }
 
     #[test]

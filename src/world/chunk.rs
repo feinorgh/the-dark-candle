@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
-use super::voxel_access::{flat_to_octree, octree_to_flat, VoxelAccess};
+use super::voxel_access::{VoxelAccess, flat_to_octree, octree_to_flat};
 
 /// Edge length of a chunk in voxels. 32³ = 32,768 voxels per chunk.
 pub const CHUNK_SIZE: usize = 32;

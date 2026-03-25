@@ -144,13 +144,12 @@ impl<T: Clone + PartialEq> OctreeNode<T> {
             false
         };
 
-        if should_collapse {
-            if let OctreeNode::Branch(children) = self {
-                if let OctreeNode::Leaf(v) = &children[0] {
-                    *self = OctreeNode::Leaf(v.clone());
-                    return true;
-                }
-            }
+        if should_collapse
+            && let OctreeNode::Branch(children) = self
+            && let OctreeNode::Leaf(v) = &children[0]
+        {
+            *self = OctreeNode::Leaf(v.clone());
+            return true;
         }
         false
     }

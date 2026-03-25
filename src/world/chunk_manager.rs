@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use super::chunk::{Chunk, ChunkCoord, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
 use super::terrain::{TerrainConfig, TerrainGenerator};
 use crate::camera::FpsCamera;
 
@@ -119,10 +119,10 @@ pub fn update_chunks(
     // Despawn chunks no longer in range
     let loaded: Vec<ChunkCoord> = chunk_map.coords().copied().collect();
     for coord in loaded {
-        if !desired.contains(&coord) {
-            if let Some(entity) = chunk_map.remove(&coord) {
-                commands.entity(entity).despawn();
-            }
+        if !desired.contains(&coord)
+            && let Some(entity) = chunk_map.remove(&coord)
+        {
+            commands.entity(entity).despawn();
         }
     }
 

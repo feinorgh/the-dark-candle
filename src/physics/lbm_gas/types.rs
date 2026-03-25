@@ -232,10 +232,10 @@ fn classify_voxel(voxel: &Voxel, registry: Option<&MaterialRegistry>) -> LbmCell
 
 /// Check if a material is a gas (participates in LBM).
 fn is_gas_material(mat: MaterialId, registry: Option<&MaterialRegistry>) -> bool {
-    if let Some(reg) = registry {
-        if let Some(data) = reg.get(mat) {
-            return data.default_phase == crate::data::Phase::Gas;
-        }
+    if let Some(reg) = registry
+        && let Some(data) = reg.get(mat)
+    {
+        return data.default_phase == crate::data::Phase::Gas;
     }
     // Hardcoded fallback: air (0) and steam (9)
     mat == MaterialId::AIR || mat == MaterialId::STEAM
@@ -243,10 +243,10 @@ fn is_gas_material(mat: MaterialId, registry: Option<&MaterialRegistry>) -> bool
 
 /// Check if a material is a liquid (wall from gas perspective).
 fn is_liquid_material(mat: MaterialId, registry: Option<&MaterialRegistry>) -> bool {
-    if let Some(reg) = registry {
-        if let Some(data) = reg.get(mat) {
-            return data.default_phase == crate::data::Phase::Liquid;
-        }
+    if let Some(reg) = registry
+        && let Some(data) = reg.get(mat)
+    {
+        return data.default_phase == crate::data::Phase::Liquid;
     }
     // Hardcoded fallback: water (3) and lava (10)
     mat == MaterialId::WATER || mat == MaterialId::LAVA

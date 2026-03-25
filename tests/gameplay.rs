@@ -10,8 +10,8 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
-use the_dark_candle::physics::gravity::{PhysicsBody, VELOCITY_SAFETY_CAP};
 use the_dark_candle::physics::PhysicsPlugin;
+use the_dark_candle::physics::gravity::{PhysicsBody, VELOCITY_SAFETY_CAP};
 use the_dark_candle::world::chunk_manager::ChunkMap;
 
 /// Build a minimal physics app with no display and deterministic time steps.

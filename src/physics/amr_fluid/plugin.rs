@@ -119,10 +119,10 @@ fn amr_fluid_step(
 
         step::fluid_step(grid, None, &config.0, dt);
 
-        if let Some(entity) = chunk_map.get(&coord) {
-            if let Ok(mut chunk) = chunks.get_mut(entity) {
-                sync::sync_to_chunk(grid, &mut chunk);
-            }
+        if let Some(entity) = chunk_map.get(&coord)
+            && let Ok(mut chunk) = chunks.get_mut(entity)
+        {
+            sync::sync_to_chunk(grid, &mut chunk);
         }
     }
 

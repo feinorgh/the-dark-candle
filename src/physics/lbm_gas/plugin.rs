@@ -133,10 +133,10 @@ fn lbm_gas_step(
 
         step::lbm_step_n(grid, &config.0, gravity_lattice, rho_ambient, n_steps);
 
-        if let Some(entity) = chunk_map.get(&coord) {
-            if let Ok(mut chunk) = chunks.get_mut(entity) {
-                sync::sync_to_chunk(grid, &mut chunk);
-            }
+        if let Some(entity) = chunk_map.get(&coord)
+            && let Ok(mut chunk) = chunks.get_mut(entity)
+        {
+            sync::sync_to_chunk(grid, &mut chunk);
         }
     }
 

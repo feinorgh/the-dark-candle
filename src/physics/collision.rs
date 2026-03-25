@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use crate::world::chunk::{Chunk, ChunkCoord, CHUNK_SIZE};
+use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
 use crate::world::chunk_manager::ChunkMap;
 
 /// Axis-aligned bounding box collider, centered on the entity's Transform.

@@ -173,10 +173,10 @@ pub fn find_path(
         }
 
         // Skip if we've already found a cheaper way here
-        if let Some(&best_g) = g_costs.get(&current.pos) {
-            if current.g_cost > best_g {
-                continue;
-            }
+        if let Some(&best_g) = g_costs.get(&current.pos)
+            && current.g_cost > best_g
+        {
+            continue;
         }
 
         let [cx, cy, cz] = current.pos;
@@ -346,7 +346,7 @@ mod tests {
     fn straight_line_on_flat_ground() {
         let mut grid = TestGrid::new(16);
         grid.fill_layer(0, MaterialId::STONE); // floor at y=0
-                                               // Walk from (1,1,1) to (5,1,1) — all standing on stone floor at y=0, air at y=1
+        // Walk from (1,1,1) to (5,1,1) — all standing on stone floor at y=0, air at y=1
         let config = PathConfig::default();
         let path = find_path(&grid, [1, 1, 1], [5, 1, 1], &config);
         assert!(path.is_some());

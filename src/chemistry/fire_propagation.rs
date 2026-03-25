@@ -13,7 +13,7 @@
 #![allow(dead_code)]
 
 use crate::chemistry::heat::diffuse_chunk;
-use crate::chemistry::reactions::{check_reaction, ReactionData};
+use crate::chemistry::reactions::{ReactionData, check_reaction};
 use crate::chemistry::state_transitions::apply_transitions;
 use crate::data::MaterialRegistry;
 use crate::world::voxel::{MaterialId, Voxel};

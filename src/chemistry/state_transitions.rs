@@ -37,40 +37,36 @@ pub fn check_transition(voxel: &Voxel, registry: &MaterialRegistry) -> Transitio
     match data.default_phase {
         crate::data::Phase::Solid => {
             // Solid → liquid when above melting point
-            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.melted_into) {
-                if temp > mp {
-                    if let Some(target) = registry.resolve_name(target_name) {
-                        return TransitionResult::TransformTo(target);
-                    }
-                }
+            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.melted_into)
+                && temp > mp
+                && let Some(target) = registry.resolve_name(target_name)
+            {
+                return TransitionResult::TransformTo(target);
             }
         }
         crate::data::Phase::Liquid => {
             // Liquid → gas when above boiling point
-            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.boiled_into) {
-                if temp > bp {
-                    if let Some(target) = registry.resolve_name(target_name) {
-                        return TransitionResult::TransformTo(target);
-                    }
-                }
+            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.boiled_into)
+                && temp > bp
+                && let Some(target) = registry.resolve_name(target_name)
+            {
+                return TransitionResult::TransformTo(target);
             }
             // Liquid → solid when below melting point (freezing)
-            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.frozen_into) {
-                if temp < mp {
-                    if let Some(target) = registry.resolve_name(target_name) {
-                        return TransitionResult::TransformTo(target);
-                    }
-                }
+            if let (Some(mp), Some(target_name)) = (data.melting_point, &data.frozen_into)
+                && temp < mp
+                && let Some(target) = registry.resolve_name(target_name)
+            {
+                return TransitionResult::TransformTo(target);
             }
         }
         crate::data::Phase::Gas => {
             // Gas → liquid when below boiling point (condensation)
-            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.condensed_into) {
-                if temp < bp {
-                    if let Some(target) = registry.resolve_name(target_name) {
-                        return TransitionResult::TransformTo(target);
-                    }
-                }
+            if let (Some(bp), Some(target_name)) = (data.boiling_point, &data.condensed_into)
+                && temp < bp
+                && let Some(target) = registry.resolve_name(target_name)
+            {
+                return TransitionResult::TransformTo(target);
             }
         }
     }

@@ -153,19 +153,19 @@ pub fn remove_gas(grid: &mut LbmGrid, x: usize, y: usize, z: usize) {
 }
 
 fn is_gas_material(mat: MaterialId, registry: Option<&MaterialRegistry>) -> bool {
-    if let Some(reg) = registry {
-        if let Some(data) = reg.get(mat) {
-            return data.default_phase == crate::data::Phase::Gas;
-        }
+    if let Some(reg) = registry
+        && let Some(data) = reg.get(mat)
+    {
+        return data.default_phase == crate::data::Phase::Gas;
     }
     mat == MaterialId::AIR || mat == MaterialId::STEAM
 }
 
 fn is_liquid_material(mat: MaterialId, registry: Option<&MaterialRegistry>) -> bool {
-    if let Some(reg) = registry {
-        if let Some(data) = reg.get(mat) {
-            return data.default_phase == crate::data::Phase::Liquid;
-        }
+    if let Some(reg) = registry
+        && let Some(data) = reg.get(mat)
+    {
+        return data.default_phase == crate::data::Phase::Liquid;
     }
     mat == MaterialId::WATER || mat == MaterialId::LAVA
 }
