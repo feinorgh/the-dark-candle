@@ -18,6 +18,7 @@ use crate::world::chunk_manager::ChunkMap;
 use crate::world::collision::ground_height_at;
 
 use super::constants;
+use super::shapes::PhysicsMaterial;
 
 /// Gravity acceleration in m/s² — re-exported from `constants` for convenience.
 /// Source: NIST CODATA — exactly 9.80665 m/s².
@@ -134,8 +135,9 @@ impl PhysicsBody {
 }
 
 /// Default ground friction coefficient (dimensionless).
-/// Approximate for rubber-on-concrete; tunable per-surface in the future.
-const GROUND_FRICTION: f32 = 0.6;
+/// Fallback for entities without a `PhysicsMaterial` component.
+/// Approximate for rubber-on-concrete; per-surface values are preferred.
+const DEFAULT_GROUND_FRICTION: f32 = 0.6;
 
 /// Apply forces to all entities with a `PhysicsBody`.
 ///
@@ -144,7 +146,11 @@ const GROUND_FRICTION: f32 = 0.6;
 /// naturally.  Entities with only `PhysicsBody` fall back to simple gravity
 /// acceleration with a hard safety cap.
 ///
+/// Ground friction uses the entity's `PhysicsMaterial` if present, otherwise
+/// falls back to `DEFAULT_GROUND_FRICTION`.
+///
 /// Also resolves ground collision against the voxel terrain.
+#[allow(clippy::type_complexity)]
 pub fn apply_forces(
     time: Res<Time>,
     chunk_map: Res<ChunkMap>,
@@ -154,6 +160,7 @@ pub fn apply_forces(
         &mut Transform,
         Option<&Mass>,
         Option<&DragProfile>,
+        Option<&PhysicsMaterial>,
     )>,
 ) {
     let dt = time.delta_secs();
@@ -165,12 +172,16 @@ pub fn apply_forces(
     // (air vs. water vs. lava). For now, assume air at sea level everywhere.
     let medium_density = constants::AIR_DENSITY_SEA_LEVEL;
 
-    for (mut body, mut transform, mass, drag_profile) in &mut bodies {
+    for (mut body, mut transform, mass, drag_profile, phys_mat) in &mut bodies {
         if body.gravity_scale == 0.0 {
             // Apply velocity but no gravity (e.g. floating items)
             transform.translation += body.velocity * dt;
             continue;
         }
+
+        let ground_friction = phys_mat
+            .map(|m| m.friction)
+            .unwrap_or(DEFAULT_GROUND_FRICTION);
 
         match (mass, drag_profile) {
             // Full force model
@@ -204,7 +215,7 @@ pub fn apply_forces(
                     if body.grounded {
                         let normal_force = f_gravity - f_buoyancy;
                         if normal_force > 0.0 {
-                            decel_xz += friction_force(GROUND_FRICTION, normal_force);
+                            decel_xz += friction_force(ground_friction, normal_force);
                         }
                     }
 
