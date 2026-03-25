@@ -125,12 +125,19 @@ pub fn solve_contacts(
         for contact in &manifold.contacts {
             // Compute initial relative velocity along normal
             let initial_vn = {
-                let Ok((body_a, _, tf_a, omega_a, _)) = query.get(manifold.entity_a) else {
+                let Ok((body_a, mass_a, tf_a, omega_a, _)) = query.get(manifold.entity_a) else {
                     continue;
                 };
-                let Ok((body_b, _, tf_b, omega_b, _)) = query.get(manifold.entity_b) else {
+                let Ok((body_b, mass_b, tf_b, omega_b, _)) = query.get(manifold.entity_b) else {
                     continue;
                 };
+
+                // Skip contacts between two effectively-static bodies
+                // (e.g. overlapping wall AABBs).  No meaningful response is
+                // possible and attempting one would waste solver budget.
+                if mass_a.0 > 1e8 && mass_b.0 > 1e8 {
+                    continue;
+                }
 
                 let r_a = contact.point - tf_a.translation;
                 let r_b = contact.point - tf_b.translation;

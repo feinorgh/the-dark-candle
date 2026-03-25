@@ -276,22 +276,20 @@ fn three_bouncing_balls() {
 
     // --- Spawn container walls (6 slabs forming a sealed box) ---
     //
-    // IMPORTANT: walls must NOT overlap each other. Overlapping static
-    // AABBs cause the solver to push them apart, making them drift.
-    // Floor/ceiling span the full X and Z range; side walls fit between
-    // them in Y; front/back walls also fit between floor and ceiling.
-    // Adjacent walls touch at edges (overlap = 0 on at least one axis)
-    // so `aabb_vs_aabb` returns `None` for every wall pair.
+    // Each wall extends beyond the container edges by WALL_HALF so that all
+    // 12 edges and 8 corners are covered — no gaps a ball could slip through.
+    // The resulting wall-wall overlap is safe because the solver skips
+    // contacts between two effectively-static bodies (mass > 1e8).
     let cx = (CX_MIN + CX_MAX) / 2.0;
     let cy = (CY_MIN + CY_MAX) / 2.0;
     let cz = (CZ_MIN + CZ_MAX) / 2.0;
-    let hx = (CX_MAX - CX_MIN) / 2.0; // half-width of container
-    let hy = (CY_MAX - CY_MIN) / 2.0; // half-height of container
-    let hz = (CZ_MAX - CZ_MIN) / 2.0; // half-depth of container
+    let hx = (CX_MAX - CX_MIN) / 2.0 + WALL_HALF; // extends past side walls
+    let hy = (CY_MAX - CY_MIN) / 2.0 + WALL_HALF; // extends past floor/ceiling
+    let hz = (CZ_MAX - CZ_MIN) / 2.0 + WALL_HALF; // extends past front/back
 
     {
         let world = app.world_mut();
-        // Floor / ceiling (span full X and Z)
+        // Floor / ceiling (full X+Z coverage including corners)
         spawn_wall(
             world,
             Vec3::new(cx, CY_MIN - WALL_HALF, cz),
@@ -302,7 +300,7 @@ fn three_bouncing_balls() {
             Vec3::new(cx, CY_MAX + WALL_HALF, cz),
             Vec3::new(hx, WALL_HALF, hz),
         );
-        // Left / right (span Y between floor and ceiling, full Z)
+        // Left / right (full Y+Z coverage including corners)
         spawn_wall(
             world,
             Vec3::new(CX_MIN - WALL_HALF, cy, cz),
@@ -313,7 +311,7 @@ fn three_bouncing_balls() {
             Vec3::new(CX_MAX + WALL_HALF, cy, cz),
             Vec3::new(WALL_HALF, hy, hz),
         );
-        // Front / back (span X and Y between floor/ceiling, no side overlap)
+        // Front / back (full X+Y coverage including corners)
         spawn_wall(
             world,
             Vec3::new(cx, cy, CZ_MIN - WALL_HALF),
