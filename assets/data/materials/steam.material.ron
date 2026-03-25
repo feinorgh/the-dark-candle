@@ -21,4 +21,7 @@ MaterialData(
     heat_of_combustion: None,
     molar_mass: Some(0.018015),
     condensed_into: Some("Water"),
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
 )

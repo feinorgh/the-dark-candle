@@ -20,4 +20,9 @@ MaterialData(
     youngs_modulus: None,
     heat_of_combustion: None,
     molar_mass: None,
+    // No liquid ash material — transition disabled
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
 )

@@ -20,4 +20,9 @@ MaterialData(
     youngs_modulus: Some(200000000000.0),
     heat_of_combustion: None,
     molar_mass: Some(0.055845),
+    // No liquid/gas iron materials yet — transitions disabled
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
 )

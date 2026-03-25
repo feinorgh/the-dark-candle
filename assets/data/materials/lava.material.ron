@@ -21,4 +21,8 @@ MaterialData(
     heat_of_combustion: None,
     molar_mass: None,
     frozen_into: Some("Stone"),
+    // No gaseous rock material
+    melted_into: None,
+    boiled_into: None,
+    condensed_into: None,
 )

@@ -84,7 +84,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 **All 7 original phases are complete.** The codebase has:
 - 86 source files, ~24,900 lines of Rust (edition 2024)
-- 715 passing tests
+- 742 passing tests
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -98,6 +98,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `1e75f32` | D3Q19 LBM gas simulation |
 | `79904af` | FLIP/PIC particle simulation |
 | `e7e180f` | Remove legacy CA fluid simulation |
+| `e420fb8` | Simulation test framework + water freezing scenario |
 
 ### LOD / Octree Realism Overhaul (latest)
 
@@ -662,7 +663,8 @@ not yet planned in detail — each will get a session plan when started.
 - **Cross-model fluid coupling** — AMR ↔ LBM mass/heat exchange at liquid-gas
   interfaces; FLIP particles entering/leaving LBM gas fields
 - **Plugin activation** — wire AmrFluidPlugin, LbmGasPlugin, FlipPicPlugin into
-  PhysicsPlugin::build() for runtime use (currently test-only)
+  PhysicsPlugin::build() for runtime use (currently test-only). Physics are also
+  validated by the [simulation test framework](simulation-test-system.md).
 
 ### Performance & Scaling
 - **Chunk-parallel simulation** — run physics per-chunk on thread pool

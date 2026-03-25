@@ -22,4 +22,6 @@ MaterialData(
     molar_mass: Some(0.018015),
     frozen_into: Some("Ice"),
     boiled_into: Some("Steam"),
+    melted_into: None,
+    condensed_into: None,
 )

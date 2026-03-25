@@ -66,4 +66,16 @@ All physical properties in this project use the **International System of Units 
 When asked to provide build or run commands, use the following:
 - **Run (Fast execution):** `cargo run --features bevy/dynamic_linking` (or `cargo run --release` for testing performance).
 - **Build for Windows:** `cargo build --target x86_64-pc-windows-gnu --release`
+- **Test:** `cargo test` (all tests), `cargo test --test simulations` (simulation scenarios only)
 - *Note:* We use the `lld` linker on Gentoo for fast compile times.
+
+## Simulation Test Framework
+Physics and chemistry are validated by **headless simulation scenarios** defined as `.simulation.ron` files in `tests/cases/simulation/`. These run via `cargo test --test simulations`.
+
+### Key Points for AI Agents
+- Scenarios define a voxel grid, material regions, tick parameters, and assertions on physical outcomes.
+- The tick loop runs: heat diffusion → chemical reactions → state transitions → pressure → boundary conditions.
+- **Do not hardcode physics outcomes.** Assertions verify emergent behavior (e.g. water freezes when cooled, reactions produce expected products).
+- Available geometry types: `Fill`, `Shell`, `Layer`, `Sphere`, `Cylinder`, `EveryNth`, `Checkerboard`, `RandomHeightmap`.
+- Available assertions: `MaterialCountEq`, `MaterialCountGt`, `MaterialAbsent`, `RegionAvgTempGt`, `RegionAvgTempLt`, `TotalReactionsGt`, `NoReactions`, and more.
+- Full documentation: [`docs/simulation-test-system.md`](docs/simulation-test-system.md).

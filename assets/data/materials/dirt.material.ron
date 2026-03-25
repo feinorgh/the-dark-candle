@@ -20,4 +20,9 @@ MaterialData(
     youngs_modulus: Some(50000000.0),
     heat_of_combustion: None,
     molar_mass: None,
+    // No liquid dirt material — transition disabled
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
 )
