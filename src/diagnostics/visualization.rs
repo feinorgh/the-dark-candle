@@ -373,7 +373,7 @@ fn render_perspective(
                     absorption_fn,
                 ) {
                     Some(_opaque_hit) => [0.0, 0.0, 0.0], // Opaque blocker
-                    None => [1.0, 1.0, 1.0],               // Clear sky
+                    None => [1.0, 1.0, 1.0],              // Clear sky
                 };
 
                 let diffuse_r = n_dot_l * light.intensity * shadow_rgb[0];
@@ -387,12 +387,9 @@ fn render_perspective(
 
                 let bg = sky_color(dir, light_dir);
 
-                let r =
-                    (base.0[0] as f32 * (light.ambient + diffuse_r * light_col.0)).min(255.0);
-                let g =
-                    (base.0[1] as f32 * (light.ambient + diffuse_g * light_col.1)).min(255.0);
-                let b =
-                    (base.0[2] as f32 * (light.ambient + diffuse_b * light_col.2)).min(255.0);
+                let r = (base.0[0] as f32 * (light.ambient + diffuse_r * light_col.0)).min(255.0);
+                let g = (base.0[1] as f32 * (light.ambient + diffuse_g * light_col.1)).min(255.0);
+                let b = (base.0[2] as f32 * (light.ambient + diffuse_b * light_col.2)).min(255.0);
 
                 Rgb([
                     (r * (1.0 - fog) + bg.0[0] as f32 * fog) as u8,

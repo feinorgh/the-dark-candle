@@ -203,7 +203,13 @@ impl Plugin for LightingPlugin {
             .add_systems(Startup, spawn_lights)
             .add_systems(
                 Update,
-                (advance_time, update_sun, update_ambient, update_chunk_light_maps).chain(),
+                (
+                    advance_time,
+                    update_sun,
+                    update_ambient,
+                    update_chunk_light_maps,
+                )
+                    .chain(),
             );
     }
 }

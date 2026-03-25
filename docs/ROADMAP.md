@@ -83,8 +83,8 @@ identity and territory. Reputation from observed actions. Group behaviors
 ## Current State
 
 **All 7 original phases are complete.** The codebase has:
-- 90+ source files, ~26,000 lines of Rust (edition 2024)
-- 761 passing tests
+- 100+ source files, ~34,000 lines of Rust (edition 2024)
+- 911+ passing tests (lib) + 14 integration + 3 simulation + 5 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -126,6 +126,39 @@ to an integrated, camera-aware system:
 - **LOD transitions** — `LodTransition` component with Hermite smoothstep
   opacity fade (0.4 s). `tick_lod_transitions` system drives alpha blending
   during LOD switches.
+
+### Phase 9b–9d: Chemistry Runtime & Visual Rendering
+
+Wired the simulation tick loop (heat → reactions → transitions → pressure) into
+Bevy's `FixedUpdate` schedule, enabling live chemistry in gameplay. Added visual
+rendering features for thermal and atmospheric effects.
+
+| Commit | Description |
+|--------|-------------|
+| `a5f69ee` | Phase 9c: thermal glow with incandescence colors + bloom |
+| `942f788` | Phase 9d: time-of-day lighting with sun cycle |
+| `2c2809b` | Visual rendering tests (4 MP4 videos via ffmpeg) |
+| `feeca84` | DDA perspective raymarcher with Lambertian shading + shadow rays |
+
+### Phase 11 Tier 1: Optics & Light Phenomena (✅ complete)
+
+Physically-based light transport through the voxel world: material optical
+properties, atmospheric scattering, per-channel absorption, and per-voxel
+sunlight propagation.
+
+| Commit | Description |
+|--------|-------------|
+| `a43b717` | Material optical properties + speed_of_light + glass.material.ron |
+| `559d334` | Rayleigh scattering sky model (wavelength-dependent 1/λ⁴, 10 tests) |
+| `db0a3f8` | Shared arbitrary DDA raymarcher + refactor (13 tests) |
+| `83f8318` | Beer-Lambert RGB absorption through transparent voxels |
+| `f504290` | Per-voxel sunlight propagation — ChunkLightMap (9 tests) |
+| `e9f1dbc` | Visual test: colored shadows through water/glass columns |
+
+**New modules:** `src/lighting/light_map.rs`, `src/lighting/sky.rs`
+**New material:** `glass.material.ron` (id=12, n=1.52, transparent)
+**New fields on `MaterialData`:** `refractive_index`, `reflectivity`, `absorption_rgb`
+**New constant:** `SPEED_OF_LIGHT = 299_792_458.0 m/s`
 
 ---
 
@@ -1044,43 +1077,48 @@ Physically-based light transport through the voxel world, enabling glass optics,
 underwater caustics, atmospheric color, and material-dependent visual effects.
 Builds on the radiative transfer ray-cast infrastructure from Phase 9a.
 
+**Tier 1 — Foundation & Sky (✅ complete):**
+
+- **Material optical properties** — `refractive_index: Option<f32>`,
+  `reflectivity: Option<f32>`, `absorption_rgb: Option<[f32; 3]>` on
+  `MaterialData`. Updated 8 material files + new glass.material.ron
+- **Rayleigh scattering** — `src/lighting/sky.rs`: wavelength-dependent 1/λ⁴
+  scattering with RGB β_R coefficients, optical depth integration (16 view + 8
+  light samples), Reinhard tone mapping. Produces blue sky, red/orange sunsets
+- **Arbitrary DDA raymarcher** — `src/world/raycast.rs`: `dda_march_ray()`,
+  `dda_march_ray_attenuated()` (per-channel RGB Beer-Lambert), surface normal
+  estimation, shadow testing. Shared infrastructure for rendering + physics
+- **Beer-Lambert RGB absorption** — transparent materials attenuate light per
+  channel: I = I₀ × e^(−α × d). Water absorbs red (blue tint underwater),
+  glass nearly neutral. `MaterialData::light_absorption_rgb()` fallback chain
+- **Per-voxel sunlight** — `ChunkLightMap` component stores RGB transmittance
+  per voxel. Column-based top-down propagation with Beer-Lambert for transparent
+  media. Integrated into meshing pipeline via `apply_light_map()`
+- **Speed of light constant** — `SPEED_OF_LIGHT = 299_792_458.0 m/s` in
+  `constants.rs` + `universal_constants.ron`
+
+**Tier 2 — Refraction & Reflection (planned):**
+
 - **Refraction (Snell's law)** — light bends at material boundaries proportional
-  to the ratio of refractive indices: n₁ sin θ₁ = n₂ sin θ₂. New `MaterialData`
-  field: `refractive_index: Option<f32>` (dimensionless; air ≈ 1.0003,
-  water = 1.33, glass = 1.52, diamond = 2.42). Enables lensing through glass
-  blocks, underwater distortion, mirage effects from hot air (gradient in n due
-  to temperature-dependent density)
+  to the ratio of refractive indices: n₁ sin θ₁ = n₂ sin θ₂. Enables lensing
+  through glass blocks, underwater distortion, mirage effects from hot air
+  (gradient in n due to temperature-dependent density)
 - **Reflection (Fresnel equations)** — partial reflection at every interface;
   reflectance depends on angle and refractive index ratio. At glancing angles
   even water becomes mirror-like (total internal reflection above the critical
-  angle). New field: `reflectivity: Option<f32>` (0–1, for metals where Fresnel
-  is insufficient)
-- **Absorption & extinction (Beer-Lambert law)** — light intensity decays
-  exponentially through a medium: I = I₀ × e^(−α × d), where α is the
-  absorption coefficient (m⁻¹) and d is path length. Colored glass, murky water,
-  fog, and smoke all derive from this. Transparent materials use
-  `absorption_coefficient` per RGB channel for wavelength-dependent color
-  filtering
-- **Rayleigh scattering** — short wavelengths scatter more in atmosphere
-  (∝ 1/λ⁴). Produces blue sky, red sunsets, purple twilight. Implemented as
-  post-process sky-dome shader driven by sun angle and atmospheric density from
-  Phase 9
+  angle)
+
+**Tier 3 — Advanced Phenomena (planned):**
+
 - **Mie scattering** — forward-peaked scattering by particles comparable to
   wavelength (water droplets, dust, ash). Produces halos around sun/moon, white
   clouds, fog glow. Coupled to LBM humidity/particulate density
 - **Caustics** — focused light patterns from refraction through curved surfaces
   (underwater ripple patterns, light through glass bottles). Approximate via
   photon mapping or screen-space caustic estimation
-- **Shadows & light propagation** — per-voxel light level from sun + point
-  sources, attenuated by opaque/translucent voxels. Extend the existing
-  DirectionalLight with a voxel-aware shadow system (shadow maps or ray-traced
-  voxel shadows)
 - **Dispersion** — wavelength-dependent refractive index separates white light
   into spectral components (prisms, rainbows). Model via 3-channel (RGB)
   refraction with slightly different n per channel
-
-New universal constants needed: `speed_of_light: f64 = 299_792_458.0` m/s
-(already needed for nuclear physics).
 
 Design constraint: all optical parameters derive from `MaterialData`.
 No per-material shader hacks — a single physically-based light transport model
@@ -1233,12 +1271,12 @@ These systems build on each other in a natural progression. The recommended
 integration order follows the dependency chain:
 
 ```
-Phase 2 (Materials ✅) ──→ Phase 9a: Radiative Heat Transfer
+Phase 2 (Materials ✅) ──→ Phase 9a: Radiative Heat Transfer ✅
 Phase 3 (Temperature ✅)─┘      │
-                                ├──→ Phase 9b: Solar Optics (with Phase 9)
+                                ├──→ Phase 9b–9d: Chemistry Runtime + Visual ✅
 Phase 8 (Spherical Planet) ─────┘
 Phase 9 (Atmosphere) ───────────┐
-                                ├──→ Phase 11: Optics & Light Phenomena
+                                ├──→ Phase 11: Optics (Tier 1 ✅, Tier 2–3 planned)
 Phase 10 (Buildings) ───────────┘
                                 ├──→ Phase 12: Electricity & Magnetism
                                 └──→ Phase 13: Nuclear Physics & Radiation
@@ -1246,12 +1284,12 @@ Phase 10 (Buildings) ───────────┘
 
 Material property extensions accumulate across phases:
 - Phase 9a adds: `absorption_coefficient`, `albedo`
-- Phase 11 adds: `refractive_index`, `reflectivity`, `transmissivity`
+- Phase 11 adds: `refractive_index`, `reflectivity`, `absorption_rgb` (**Tier 1 ✅**)
 - Phase 12 adds: `electrical_conductivity`, `magnetic_permeability`
 - Phase 13 adds: `atomic_number`, `mass_attenuation_coeff`, `radioactive`
 
 Universal constants can be added to `universal_constants.ron` proactively:
-`speed_of_light`, `planck_constant`, `boltzmann_constant`, `elementary_charge`,
+`speed_of_light` (**✅**), `planck_constant`, `boltzmann_constant`, `elementary_charge`,
 `vacuum_permittivity`, `vacuum_permeability`, `avogadro`.
 
 ### Simulation Video Demos

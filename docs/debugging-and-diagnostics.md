@@ -12,6 +12,7 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Dump ECS state (in-game) | Press **F11** | `diagnostics/<timestamp>.dump.ron` |
 | Capture screenshot | Press **F12** | `screenshots/<timestamp>.png` |
 | Produce simulation video | Add `emit_video` to `.simulation.ron` | MP4 video or PNG frames |
+| Run visual rendering tests | `cargo test --test visual_rendering` | MP4 videos in `test_output/` |
 | Enable verbose logging | `RUST_LOG=info cargo run --features bevy/dynamic_linking` | Bevy + game logs on stderr |
 | Enable debug logging | `RUST_LOG=debug,bevy=info cargo run --features bevy/dynamic_linking` | Game debug logs without Bevy noise |
 | See test stderr output | `cargo test -- --nocapture` | Prints `eprintln!` messages from tests |
@@ -481,3 +482,24 @@ These are useful when manually debugging visual or physics issues:
 **Camera starts at** `(0, 100, 0)` looking toward `(10, 95, 10)`. Gravity pulls it down to the terrain surface.
 
 **Fly mode** (press G) disables gravity and sets movement speed to 20 m/s, useful for inspecting terrain from above or navigating to a specific chunk quickly.
+
+## 9. Visual Rendering Tests
+
+Integration tests in `tests/visual_rendering.rs` produce MP4 videos for visual evaluation of rendering features. These use a headless software raymarcher (not the GPU pipeline) with the shared DDA raycast module.
+
+**Run all visual tests:**
+```bash
+cargo test --test visual_rendering -- --nocapture
+```
+
+**Output directory:** `test_output/` (created automatically)
+
+| Test | Output | What it shows |
+|------|--------|---------------|
+| `incandescence_video` | `incandescence.mp4` | Thermal glow colors (800 K → 6000 K) |
+| `voxel_grid_video` | `voxel_grid.mp4` | Colored material grid with Lambertian shading |
+| `time_of_day_video` | `time_of_day.mp4` | Sun cycle with Rayleigh scattering sky |
+| `daynight_terrain_video` | `daynight_terrain.mp4` | Terrain with day/night lighting changes |
+| `optics_colored_shadows_video` | `optics_colored_shadows.mp4` | Beer-Lambert absorption through water/glass columns |
+
+Each test renders frames via `render_perspective()` from `src/diagnostics/visualization.rs`, then encodes to MP4 via ffmpeg. The videos are meant for human visual inspection — there are no automated pixel-level assertions.

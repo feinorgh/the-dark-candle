@@ -22,6 +22,7 @@ This game uses a strict Data-Driven ECS architecture. We use the `bevy_common_as
 1. **No Hardcoded Data:** Enemy stats, weapon damage, and level properties must be loaded from `.ron` (Rusty Object Notation) files.
 2. **Data Structs:** Data containers must derive `serde::Deserialize`, `bevy::asset::Asset`, and `bevy::reflect::TypePath`.
 3. **File Locations:** All `.ron` files go in the `assets/data/` directory.
+4. **Key modules:** `src/world/` (chunks, meshing, raycast), `src/chemistry/` (heat, reactions, transitions), `src/physics/` (rigid body, gravity, collision), `src/lighting/` (sun cycle, light maps, sky scattering), `src/data/` (material/reaction RON loading), `src/diagnostics/` (ECS dump, screenshots, visualization).
 
 ### Example: How to Add a New Entity Type
 If tasked with creating a new entity (like an Item or Enemy):
@@ -61,6 +62,9 @@ All physical properties in this project use the **International System of Units 
 | Specific heat capacity | J/(kg·K) | Cₚ | Water = 4186 |
 | Viscosity | Pascal-seconds | Pa·s | Water = 1.0e-3 |
 | Density | kg/m³ | ρ | Water = 1000 |
+| Refractive index | dimensionless | n | Water = 1.33, glass = 1.52 |
+| Absorption coeff. | m⁻¹ | α | Water red channel = 0.45 |
+| Speed of light | m/s | c | 299 792 458 |
 
 ## Terminal Commands
 When asked to provide build or run commands, use the following:

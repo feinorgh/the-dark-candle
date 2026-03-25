@@ -711,9 +711,8 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(
-            &chunk, octree, step, colors, thermal_vision, light_map,
-        );
+        let chunk_mesh =
+            generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision, light_map);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
@@ -754,9 +753,8 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(
-            &chunk, octree, step, colors, thermal_vision, light_map,
-        );
+        let chunk_mesh =
+            generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision, light_map);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {

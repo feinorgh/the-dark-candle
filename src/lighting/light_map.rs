@@ -157,11 +157,7 @@ pub fn propagate_sunlight_from_registry(
 ///
 /// For each vertex, looks up the nearest voxel's light level in the light map
 /// and modulates the vertex color (RGB only, alpha preserved).
-pub fn apply_light_map(
-    positions: &[[f32; 3]],
-    colors: &mut [[f32; 4]],
-    light_map: &ChunkLightMap,
-) {
+pub fn apply_light_map(positions: &[[f32; 3]], colors: &mut [[f32; 4]], light_map: &ChunkLightMap) {
     for (i, color) in colors.iter_mut().enumerate() {
         let [px, py, pz] = positions[i];
         let light = light_map.get_clamped(px as i32, py as i32, pz as i32);
@@ -261,10 +257,7 @@ mod tests {
 
         // Top water (y=3) gets full light
         let top = map.get(1, 3, 1);
-        assert!(
-            top[0] > 0.99,
-            "Top water should be fully lit: {top:?}"
-        );
+        assert!(top[0] > 0.99, "Top water should be fully lit: {top:?}");
 
         // Below 3 meters of water: T = exp(-α * 3)
         let bottom = map.get(1, 0, 1);
@@ -370,13 +363,12 @@ mod tests {
             "Green should be full: {}",
             colors[0][1]
         );
-        assert!(
-            colors[0][2] < 0.01,
-            "Blue should be zero: {}",
-            colors[0][2]
-        );
+        assert!(colors[0][2] < 0.01, "Blue should be zero: {}", colors[0][2]);
         // Alpha preserved
-        assert!((colors[0][3] - 1.0).abs() < 0.001, "Alpha should be preserved");
+        assert!(
+            (colors[0][3] - 1.0).abs() < 0.001,
+            "Alpha should be preserved"
+        );
     }
 
     #[test]
