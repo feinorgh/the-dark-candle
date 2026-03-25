@@ -244,6 +244,438 @@ pub fn is_surface_voxel(voxels: &[Voxel], size: usize, x: usize, y: usize, z: us
     false
 }
 
+// ---------------------------------------------------------------------------
+// Arbitrary-direction DDA raymarcher (Amanatides & Woo)
+// ---------------------------------------------------------------------------
+
+/// Result of a DDA ray march through a voxel grid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DdaHit {
+    pub x: usize,
+    pub y: usize,
+    pub z: usize,
+    /// Which axis the ray crossed to enter this voxel (0=X, 1=Y, 2=Z).
+    pub face_axis: usize,
+    /// Sign of the face normal along `face_axis` (+1.0 or −1.0).
+    pub face_sign: f32,
+    /// Distance from ray origin to the hit point.
+    pub t: f32,
+}
+
+impl DdaHit {
+    /// Face normal as `[f32; 3]`.
+    pub fn face_normal(&self) -> [f32; 3] {
+        let mut n = [0.0_f32; 3];
+        n[self.face_axis] = self.face_sign;
+        n
+    }
+}
+
+/// DDA ray march result with per-channel RGB transmittance (Beer-Lambert).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DdaAttenuatedHit {
+    pub hit: DdaHit,
+    /// Per-channel transmittance `[R, G, B]` through intervening media.
+    pub transmittance: [f32; 3],
+}
+
+/// March an arbitrary ray through a flat `size³` voxel grid using the
+/// Amanatides & Woo DDA algorithm.
+///
+/// `origin` and `dir` are in world-space coordinates where one voxel = one
+/// unit. The grid occupies `[0, size)³`. Handles rays originating outside the
+/// grid by advancing to the AABB entry point.
+///
+/// Returns the first non-air voxel hit, or `None` if the ray misses or
+/// exceeds `max_dist`.
+pub fn dda_march_ray(
+    voxels: &[Voxel],
+    size: usize,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+) -> Option<DdaHit> {
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    if len < 1e-10 {
+        return None;
+    }
+    let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+    let fs = size as f32;
+
+    let (t_enter, t_exit) = ray_aabb(origin, dir, fs);
+    if t_enter >= t_exit || t_exit < 0.0 {
+        return None;
+    }
+
+    let t_start = t_enter.max(0.0) + 0.001;
+    let pos = [
+        origin[0] + dir[0] * t_start,
+        origin[1] + dir[1] * t_start,
+        origin[2] + dir[2] * t_start,
+    ];
+
+    let bound = size as i32;
+    let mut ix = (pos[0].floor() as i32).clamp(0, bound - 1);
+    let mut iy = (pos[1].floor() as i32).clamp(0, bound - 1);
+    let mut iz = (pos[2].floor() as i32).clamp(0, bound - 1);
+
+    let step_x: i32 = if dir[0] >= 0.0 { 1 } else { -1 };
+    let step_y: i32 = if dir[1] >= 0.0 { 1 } else { -1 };
+    let step_z: i32 = if dir[2] >= 0.0 { 1 } else { -1 };
+
+    let dt_x = if dir[0].abs() > 1e-10 {
+        (1.0 / dir[0]).abs()
+    } else {
+        f32::MAX
+    };
+    let dt_y = if dir[1].abs() > 1e-10 {
+        (1.0 / dir[1]).abs()
+    } else {
+        f32::MAX
+    };
+    let dt_z = if dir[2].abs() > 1e-10 {
+        (1.0 / dir[2]).abs()
+    } else {
+        f32::MAX
+    };
+
+    let mut t_max_x = if dir[0] >= 0.0 {
+        ((ix + 1) as f32 - pos[0]) * dt_x
+    } else {
+        (pos[0] - ix as f32) * dt_x
+    };
+    let mut t_max_y = if dir[1] >= 0.0 {
+        ((iy + 1) as f32 - pos[1]) * dt_y
+    } else {
+        (pos[1] - iy as f32) * dt_y
+    };
+    let mut t_max_z = if dir[2] >= 0.0 {
+        ((iz + 1) as f32 - pos[2]) * dt_z
+    } else {
+        (pos[2] - iz as f32) * dt_z
+    };
+
+    let mut t_total = t_start;
+    let mut last_axis = 1_usize;
+    let max_steps = size * 3;
+
+    for _ in 0..max_steps {
+        if ix < 0 || iy < 0 || iz < 0 {
+            return None;
+        }
+        let (ux, uy, uz) = (ix as usize, iy as usize, iz as usize);
+        if ux >= size || uy >= size || uz >= size {
+            return None;
+        }
+
+        let idx = uz * size * size + uy * size + ux;
+        if !voxels[idx].material.is_air() {
+            return Some(DdaHit {
+                x: ux,
+                y: uy,
+                z: uz,
+                face_axis: last_axis,
+                face_sign: match last_axis {
+                    0 => -step_x as f32,
+                    1 => -step_y as f32,
+                    _ => -step_z as f32,
+                },
+                t: t_total,
+            });
+        }
+
+        // Advance (Amanatides & Woo step).
+        if t_max_x < t_max_y {
+            if t_max_x < t_max_z {
+                t_total = t_start + t_max_x;
+                t_max_x += dt_x;
+                ix += step_x;
+                last_axis = 0;
+            } else {
+                t_total = t_start + t_max_z;
+                t_max_z += dt_z;
+                iz += step_z;
+                last_axis = 2;
+            }
+        } else if t_max_y < t_max_z {
+            t_total = t_start + t_max_y;
+            t_max_y += dt_y;
+            iy += step_y;
+            last_axis = 1;
+        } else {
+            t_total = t_start + t_max_z;
+            t_max_z += dt_z;
+            iz += step_z;
+            last_axis = 2;
+        }
+
+        if t_total - t_start > max_dist {
+            return None;
+        }
+    }
+
+    None
+}
+
+/// March a ray with per-channel RGB Beer-Lambert attenuation.
+///
+/// `get_absorption_rgb` returns per-channel absorption coefficients for a
+/// material: `Some([α_r, α_g, α_b])` for transparent/semi-transparent,
+/// `None` for opaque (terminates the ray).
+///
+/// Returns the first opaque hit plus per-channel transmittance through any
+/// intervening media.
+pub fn dda_march_ray_attenuated<F>(
+    voxels: &[Voxel],
+    size: usize,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+    get_absorption_rgb: F,
+) -> Option<DdaAttenuatedHit>
+where
+    F: Fn(MaterialId) -> Option<[f32; 3]>,
+{
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    if len < 1e-10 {
+        return None;
+    }
+    let dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+    let fs = size as f32;
+
+    let (t_enter, t_exit) = ray_aabb(origin, dir, fs);
+    if t_enter >= t_exit || t_exit < 0.0 {
+        return None;
+    }
+
+    let t_start = t_enter.max(0.0) + 0.001;
+    let pos = [
+        origin[0] + dir[0] * t_start,
+        origin[1] + dir[1] * t_start,
+        origin[2] + dir[2] * t_start,
+    ];
+
+    let bound = size as i32;
+    let mut ix = (pos[0].floor() as i32).clamp(0, bound - 1);
+    let mut iy = (pos[1].floor() as i32).clamp(0, bound - 1);
+    let mut iz = (pos[2].floor() as i32).clamp(0, bound - 1);
+
+    let step_x: i32 = if dir[0] >= 0.0 { 1 } else { -1 };
+    let step_y: i32 = if dir[1] >= 0.0 { 1 } else { -1 };
+    let step_z: i32 = if dir[2] >= 0.0 { 1 } else { -1 };
+
+    let dt_x = if dir[0].abs() > 1e-10 {
+        (1.0 / dir[0]).abs()
+    } else {
+        f32::MAX
+    };
+    let dt_y = if dir[1].abs() > 1e-10 {
+        (1.0 / dir[1]).abs()
+    } else {
+        f32::MAX
+    };
+    let dt_z = if dir[2].abs() > 1e-10 {
+        (1.0 / dir[2]).abs()
+    } else {
+        f32::MAX
+    };
+
+    let mut t_max_x = if dir[0] >= 0.0 {
+        ((ix + 1) as f32 - pos[0]) * dt_x
+    } else {
+        (pos[0] - ix as f32) * dt_x
+    };
+    let mut t_max_y = if dir[1] >= 0.0 {
+        ((iy + 1) as f32 - pos[1]) * dt_y
+    } else {
+        (pos[1] - iy as f32) * dt_y
+    };
+    let mut t_max_z = if dir[2] >= 0.0 {
+        ((iz + 1) as f32 - pos[2]) * dt_z
+    } else {
+        (pos[2] - iz as f32) * dt_z
+    };
+
+    let mut t_total = t_start;
+    let mut last_axis = 1_usize;
+    let max_steps = size * 3;
+    let mut optical_depth = [0.0_f32; 3];
+    let mut prev_t = t_start;
+
+    for _ in 0..max_steps {
+        if ix < 0 || iy < 0 || iz < 0 {
+            return None;
+        }
+        let (ux, uy, uz) = (ix as usize, iy as usize, iz as usize);
+        if ux >= size || uy >= size || uz >= size {
+            return None;
+        }
+
+        let idx = uz * size * size + uy * size + ux;
+        let mat = voxels[idx].material;
+
+        match get_absorption_rgb(mat) {
+            Some(alpha_rgb) => {
+                // Distance through this voxel (approximate — DDA step length).
+                let step_len = t_total - prev_t;
+                let d = step_len.max(0.5); // minimum half-voxel
+                optical_depth[0] += alpha_rgb[0] * d;
+                optical_depth[1] += alpha_rgb[1] * d;
+                optical_depth[2] += alpha_rgb[2] * d;
+
+                // Early exit if fully absorbed on all channels.
+                let max_od = optical_depth[0].max(optical_depth[1]).max(optical_depth[2]);
+                if (-max_od).exp() < MIN_TRANSMITTANCE {
+                    return None;
+                }
+            }
+            None => {
+                // Opaque hit.
+                return Some(DdaAttenuatedHit {
+                    hit: DdaHit {
+                        x: ux,
+                        y: uy,
+                        z: uz,
+                        face_axis: last_axis,
+                        face_sign: match last_axis {
+                            0 => -step_x as f32,
+                            1 => -step_y as f32,
+                            _ => -step_z as f32,
+                        },
+                        t: t_total,
+                    },
+                    transmittance: [
+                        (-optical_depth[0]).exp(),
+                        (-optical_depth[1]).exp(),
+                        (-optical_depth[2]).exp(),
+                    ],
+                });
+            }
+        }
+
+        prev_t = t_total;
+
+        // Advance (Amanatides & Woo step).
+        if t_max_x < t_max_y {
+            if t_max_x < t_max_z {
+                t_total = t_start + t_max_x;
+                t_max_x += dt_x;
+                ix += step_x;
+                last_axis = 0;
+            } else {
+                t_total = t_start + t_max_z;
+                t_max_z += dt_z;
+                iz += step_z;
+                last_axis = 2;
+            }
+        } else if t_max_y < t_max_z {
+            t_total = t_start + t_max_y;
+            t_max_y += dt_y;
+            iy += step_y;
+            last_axis = 1;
+        } else {
+            t_total = t_start + t_max_z;
+            t_max_z += dt_z;
+            iz += step_z;
+            last_axis = 2;
+        }
+
+        if t_total - t_start > max_dist {
+            return None;
+        }
+    }
+
+    None
+}
+
+/// Ray-AABB intersection for a grid bounding box `[0, size]³`.
+/// Returns `(t_near, t_far)`.
+fn ray_aabb(origin: [f32; 3], dir: [f32; 3], size: f32) -> (f32, f32) {
+    let inv = [
+        if dir[0].abs() > 1e-10 {
+            1.0 / dir[0]
+        } else {
+            f32::MAX.copysign(dir[0])
+        },
+        if dir[1].abs() > 1e-10 {
+            1.0 / dir[1]
+        } else {
+            f32::MAX.copysign(dir[1])
+        },
+        if dir[2].abs() > 1e-10 {
+            1.0 / dir[2]
+        } else {
+            f32::MAX.copysign(dir[2])
+        },
+    ];
+
+    let t0x = -origin[0] * inv[0];
+    let t1x = (size - origin[0]) * inv[0];
+    let t0y = -origin[1] * inv[1];
+    let t1y = (size - origin[1]) * inv[1];
+    let t0z = -origin[2] * inv[2];
+    let t1z = (size - origin[2]) * inv[2];
+
+    let t_near = t0x.min(t1x).max(t0y.min(t1y)).max(t0z.min(t1z));
+    let t_far = t0x.max(t1x).min(t0y.max(t1y)).min(t0z.max(t1z));
+    (t_near, t_far)
+}
+
+/// Estimate surface normal from the voxel grid via central differences
+/// of the "solidity" field (0 = air, 1 = solid).
+pub fn estimate_surface_normal(
+    voxels: &[Voxel],
+    size: usize,
+    x: usize,
+    y: usize,
+    z: usize,
+) -> [f32; 3] {
+    let s = |px: i32, py: i32, pz: i32| -> f32 {
+        if px < 0 || py < 0 || pz < 0 {
+            return 0.0;
+        }
+        let (ux, uy, uz) = (px as usize, py as usize, pz as usize);
+        if ux >= size || uy >= size || uz >= size {
+            return 0.0;
+        }
+        let idx = uz * size * size + uy * size + ux;
+        if voxels[idx].material.is_air() {
+            0.0
+        } else {
+            1.0
+        }
+    };
+
+    let (ix, iy, iz) = (x as i32, y as i32, z as i32);
+    let nx = s(ix - 1, iy, iz) - s(ix + 1, iy, iz);
+    let ny = s(ix, iy - 1, iz) - s(ix, iy + 1, iz);
+    let nz = s(ix, iy, iz - 1) - s(ix, iy, iz + 1);
+
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len < 1e-10 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [nx / len, ny / len, nz / len]
+    }
+}
+
+/// Check if a point is in shadow (any opaque voxel between it and the light).
+pub fn is_shadowed(voxels: &[Voxel], size: usize, pos: [f32; 3], to_light: [f32; 3]) -> bool {
+    // Offset slightly to avoid self-intersection.
+    let len =
+        (to_light[0] * to_light[0] + to_light[1] * to_light[1] + to_light[2] * to_light[2]).sqrt();
+    if len < 1e-10 {
+        return false;
+    }
+    let dir = [to_light[0] / len, to_light[1] / len, to_light[2] / len];
+    let origin = [
+        pos[0] + dir[0] * 0.5,
+        pos[1] + dir[1] * 0.5,
+        pos[2] + dir[2] * 0.5,
+    ];
+    dda_march_ray(voxels, size, origin, dir, size as f32 * 2.0).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,6 +951,157 @@ mod tests {
             (result.transmittance - expected).abs() < 1e-5,
             "transmittance {:.6} should be {expected:.6}",
             result.transmittance
+        );
+    }
+
+    // --- Arbitrary DDA raymarcher tests ---
+
+    #[test]
+    fn dda_ray_hits_adjacent_solid() {
+        let mut grid = make_grid(8);
+        set_solid(&mut grid, 8, 5, 4, 4);
+        let hit = dda_march_ray(&grid, 8, [4.5, 4.5, 4.5], [1.0, 0.0, 0.0], 10.0);
+        let hit = hit.expect("should hit solid at (5,4,4)");
+        assert_eq!((hit.x, hit.y, hit.z), (5, 4, 4));
+        assert_eq!(hit.face_axis, 0, "face should be X axis");
+        assert!(hit.face_sign < 0.0, "face should point toward -X");
+    }
+
+    #[test]
+    fn dda_ray_diagonal_hit() {
+        let mut grid = make_grid(16);
+        set_solid(&mut grid, 16, 8, 8, 4);
+        let hit = dda_march_ray(&grid, 16, [4.5, 4.5, 4.5], [1.0, 1.0, 0.0], 20.0);
+        let hit = hit.expect("should hit solid diagonally");
+        assert_eq!((hit.x, hit.y, hit.z), (8, 8, 4));
+    }
+
+    #[test]
+    fn dda_ray_from_outside_grid() {
+        let mut grid = make_grid(8);
+        set_solid(&mut grid, 8, 0, 4, 4);
+        let hit = dda_march_ray(&grid, 8, [-5.0, 4.5, 4.5], [1.0, 0.0, 0.0], 20.0);
+        let hit = hit.expect("should hit solid entering from outside");
+        assert_eq!((hit.x, hit.y, hit.z), (0, 4, 4));
+    }
+
+    #[test]
+    fn dda_ray_misses_grid() {
+        let grid = make_grid(8);
+        let hit = dda_march_ray(&grid, 8, [4.5, 4.5, 4.5], [0.0, 1.0, 0.0], 20.0);
+        assert!(hit.is_none(), "should find nothing in empty grid");
+    }
+
+    #[test]
+    fn dda_ray_max_dist_limit() {
+        let mut grid = make_grid(32);
+        set_solid(&mut grid, 32, 20, 4, 4);
+        let hit = dda_march_ray(&grid, 32, [4.5, 4.5, 4.5], [1.0, 0.0, 0.0], 5.0);
+        assert!(hit.is_none(), "target beyond max_dist should not be found");
+    }
+
+    #[test]
+    fn dda_face_normal_correctness() {
+        let hit = DdaHit {
+            x: 5,
+            y: 4,
+            z: 4,
+            face_axis: 0,
+            face_sign: -1.0,
+            t: 1.0,
+        };
+        assert_eq!(hit.face_normal(), [-1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn dda_attenuated_through_air_full_transmittance() {
+        let mut grid = make_grid(8);
+        set_solid(&mut grid, 8, 6, 4, 4);
+        let absorption = |mat: MaterialId| -> Option<[f32; 3]> {
+            if mat.is_air() { Some([0.0; 3]) } else { None }
+        };
+        let result =
+            dda_march_ray_attenuated(&grid, 8, [4.5, 4.5, 4.5], [1.0, 0.0, 0.0], 10.0, absorption);
+        let result = result.expect("should hit stone");
+        assert_eq!(result.hit.x, 6);
+        for ch in 0..3 {
+            assert!(
+                (result.transmittance[ch] - 1.0).abs() < 0.01,
+                "air should have full transmittance on channel {ch}"
+            );
+        }
+    }
+
+    #[test]
+    fn dda_attenuated_colored_absorption() {
+        let mut grid = make_grid(10);
+        // 2 voxels of water (x=5,6), stone target at x=7
+        for x in 5..=6 {
+            set_material(&mut grid, 10, x, 4, 4, MaterialId::WATER);
+        }
+        set_material(&mut grid, 10, 7, 4, 4, MaterialId::STONE);
+
+        // Water absorbs red more than blue (like real water).
+        let absorption = |mat: MaterialId| -> Option<[f32; 3]> {
+            if mat.is_air() {
+                Some([0.0; 3])
+            } else if mat == MaterialId::WATER {
+                Some([0.5, 0.1, 0.05]) // Red absorbed most
+            } else {
+                None
+            }
+        };
+
+        let result = dda_march_ray_attenuated(
+            &grid,
+            10,
+            [4.5, 4.5, 4.5],
+            [1.0, 0.0, 0.0],
+            15.0,
+            absorption,
+        );
+        let result = result.expect("should hit stone through water");
+        assert_eq!(result.hit.x, 7);
+        // Blue should be most transmitted, red least.
+        assert!(
+            result.transmittance[2] > result.transmittance[0],
+            "Blue transmittance ({}) should exceed red ({})",
+            result.transmittance[2],
+            result.transmittance[0]
+        );
+    }
+
+    #[test]
+    fn is_shadowed_detects_blocker() {
+        let mut grid = make_grid(16);
+        set_solid(&mut grid, 16, 8, 10, 8); // blocker above
+        assert!(
+            is_shadowed(&grid, 16, [8.5, 5.5, 8.5], [0.0, 1.0, 0.0]),
+            "voxel above should cast shadow"
+        );
+    }
+
+    #[test]
+    fn is_shadowed_open_sky() {
+        let grid = make_grid(16);
+        assert!(
+            !is_shadowed(&grid, 16, [8.5, 5.5, 8.5], [0.0, 1.0, 0.0]),
+            "empty grid should not shadow"
+        );
+    }
+
+    #[test]
+    fn estimate_surface_normal_top_face() {
+        let mut grid = make_grid(8);
+        // Solid block at (4,4,4) with air above → normal should point up.
+        set_solid(&mut grid, 8, 4, 4, 4);
+        let n = estimate_surface_normal(&grid, 8, 4, 4, 4);
+        // Y component should be dominant (pointing up from isolated cube).
+        // All faces exposed, so normal averages to something; check it's nonzero.
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        assert!(
+            (len - 1.0).abs() < 0.01,
+            "Normal should be unit length, got {len}"
         );
     }
 }

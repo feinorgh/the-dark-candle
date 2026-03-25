@@ -190,7 +190,7 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
 
 /// Index into a flat `size³` voxel array.
 fn idx(x: usize, y: usize, z: usize, size: usize) -> usize {
-    x + z * size + y * size * size
+    z * size * size + y * size + x
 }
 
 // ---------------------------------------------------------------------------
@@ -247,218 +247,6 @@ impl Vec3 {
     }
 }
 
-/// Result of a DDA ray-voxel intersection.
-struct DdaHit {
-    /// Voxel coordinates of the hit.
-    x: usize,
-    y: usize,
-    z: usize,
-    /// Which axis the ray entered through (0=X, 1=Y, 2=Z).
-    face_axis: usize,
-    /// Sign of the entry direction along face_axis (+1 or -1).
-    face_sign: f32,
-    /// Distance from ray origin to the hit.
-    t: f32,
-}
-
-/// DDA (Digital Differential Analyzer) raymarcher through a voxel grid.
-/// Returns the first non-air voxel hit, or `None` if the ray exits the grid.
-fn dda_march(
-    origin: Vec3,
-    dir: Vec3,
-    voxels: &[Voxel],
-    size: usize,
-    max_dist: f32,
-) -> Option<DdaHit> {
-    let dir = dir.normalized();
-    let fs = size as f32;
-
-    // Advance ray to grid AABB entry if starting outside.
-    let (t_enter, t_exit) = ray_aabb(origin, dir, fs);
-    if t_enter >= t_exit || t_exit < 0.0 {
-        return None;
-    }
-
-    let t_start = t_enter.max(0.0) + 0.001;
-    let pos = origin.add(dir.scale(t_start));
-
-    // Current voxel coordinates (clamped into grid).
-    let mut ix = (pos.x.floor() as i32).clamp(0, size as i32 - 1);
-    let mut iy = (pos.y.floor() as i32).clamp(0, size as i32 - 1);
-    let mut iz = (pos.z.floor() as i32).clamp(0, size as i32 - 1);
-
-    // Step direction (+1 or -1) along each axis.
-    let step_x: i32 = if dir.x >= 0.0 { 1 } else { -1 };
-    let step_y: i32 = if dir.y >= 0.0 { 1 } else { -1 };
-    let step_z: i32 = if dir.z >= 0.0 { 1 } else { -1 };
-
-    // Distance along ray to cross one full voxel on each axis.
-    let dt_x = if dir.x.abs() > 1e-10 {
-        (1.0 / dir.x).abs()
-    } else {
-        f32::MAX
-    };
-    let dt_y = if dir.y.abs() > 1e-10 {
-        (1.0 / dir.y).abs()
-    } else {
-        f32::MAX
-    };
-    let dt_z = if dir.z.abs() > 1e-10 {
-        (1.0 / dir.z).abs()
-    } else {
-        f32::MAX
-    };
-
-    // Distance to the next voxel boundary on each axis.
-    let mut t_max_x = if dir.x >= 0.0 {
-        ((ix + 1) as f32 - pos.x) * dt_x
-    } else {
-        (pos.x - ix as f32) * dt_x
-    };
-    let mut t_max_y = if dir.y >= 0.0 {
-        ((iy + 1) as f32 - pos.y) * dt_y
-    } else {
-        (pos.y - iy as f32) * dt_y
-    };
-    let mut t_max_z = if dir.z >= 0.0 {
-        ((iz + 1) as f32 - pos.z) * dt_z
-    } else {
-        (pos.z - iz as f32) * dt_z
-    };
-
-    let mut t_total = t_start;
-    let mut last_axis = 1_usize; // Y by default
-
-    let max_steps = (size * 3) as u32;
-    for _ in 0..max_steps {
-        // Check bounds
-        if ix < 0 || iy < 0 || iz < 0 {
-            return None;
-        }
-        let ux = ix as usize;
-        let uy = iy as usize;
-        let uz = iz as usize;
-        if ux >= size || uy >= size || uz >= size {
-            return None;
-        }
-
-        // Hit test
-        let voxel = &voxels[idx(ux, uy, uz, size)];
-        if !voxel.material.is_air() {
-            return Some(DdaHit {
-                x: ux,
-                y: uy,
-                z: uz,
-                face_axis: last_axis,
-                face_sign: match last_axis {
-                    0 => -step_x as f32,
-                    1 => -step_y as f32,
-                    _ => -step_z as f32,
-                },
-                t: t_total,
-            });
-        }
-
-        // Advance to next voxel boundary (Amanatides & Woo).
-        if t_max_x < t_max_y {
-            if t_max_x < t_max_z {
-                t_total = t_start + t_max_x;
-                t_max_x += dt_x;
-                ix += step_x;
-                last_axis = 0;
-            } else {
-                t_total = t_start + t_max_z;
-                t_max_z += dt_z;
-                iz += step_z;
-                last_axis = 2;
-            }
-        } else if t_max_y < t_max_z {
-            t_total = t_start + t_max_y;
-            t_max_y += dt_y;
-            iy += step_y;
-            last_axis = 1;
-        } else {
-            t_total = t_start + t_max_z;
-            t_max_z += dt_z;
-            iz += step_z;
-            last_axis = 2;
-        }
-
-        if t_total - t_start > max_dist {
-            return None;
-        }
-    }
-
-    None
-}
-
-/// Ray-AABB intersection for the grid bounding box [0, size]³.
-fn ray_aabb(origin: Vec3, dir: Vec3, size: f32) -> (f32, f32) {
-    let inv = Vec3::new(
-        if dir.x.abs() > 1e-10 {
-            1.0 / dir.x
-        } else {
-            f32::MAX.copysign(dir.x)
-        },
-        if dir.y.abs() > 1e-10 {
-            1.0 / dir.y
-        } else {
-            f32::MAX.copysign(dir.y)
-        },
-        if dir.z.abs() > 1e-10 {
-            1.0 / dir.z
-        } else {
-            f32::MAX.copysign(dir.z)
-        },
-    );
-
-    let t0x = (0.0 - origin.x) * inv.x;
-    let t1x = (size - origin.x) * inv.x;
-    let t0y = (0.0 - origin.y) * inv.y;
-    let t1y = (size - origin.y) * inv.y;
-    let t0z = (0.0 - origin.z) * inv.z;
-    let t1z = (size - origin.z) * inv.z;
-
-    let t_near = t0x.min(t1x).max(t0y.min(t1y)).max(t0z.min(t1z));
-    let t_far = t0x.max(t1x).min(t0y.max(t1y)).min(t0z.max(t1z));
-    (t_near, t_far)
-}
-
-/// Estimate surface normal from the voxel grid via central differences.
-/// Returns the gradient of the "solidity" field (0=air, 1=solid).
-fn estimate_normal(x: usize, y: usize, z: usize, voxels: &[Voxel], size: usize) -> Vec3 {
-    let s = |px: i32, py: i32, pz: i32| -> f32 {
-        if px < 0 || py < 0 || pz < 0 {
-            return 0.0;
-        }
-        let (ux, uy, uz) = (px as usize, py as usize, pz as usize);
-        if ux >= size || uy >= size || uz >= size {
-            return 0.0;
-        }
-        if voxels[idx(ux, uy, uz, size)].material.is_air() {
-            0.0
-        } else {
-            1.0
-        }
-    };
-
-    let (ix, iy, iz) = (x as i32, y as i32, z as i32);
-    let nx = s(ix - 1, iy, iz) - s(ix + 1, iy, iz);
-    let ny = s(ix, iy - 1, iz) - s(ix, iy + 1, iz);
-    let nz = s(ix, iy, iz - 1) - s(ix, iy, iz + 1);
-
-    Vec3::new(nx, ny, nz).normalized()
-}
-
-/// Check if a point is in shadow by marching toward the light.
-fn is_shadowed(pos: Vec3, light_dir: Vec3, voxels: &[Voxel], size: usize) -> bool {
-    // March from hit point toward the light (opposite of light direction).
-    let to_light = light_dir.scale(-1.0);
-    // Offset origin slightly to avoid self-intersection.
-    let origin = pos.add(to_light.scale(0.5));
-    dda_march(origin, to_light, voxels, size, size as f32 * 2.0).is_some()
-}
-
 /// Compute the sky/background color via Rayleigh scattering.
 fn sky_color(ray_dir: Vec3, light_dir: Vec3) -> Rgb<u8> {
     use crate::lighting::sky;
@@ -512,6 +300,8 @@ fn render_perspective(
     cam: &PerspectiveCamera,
     light: &SceneLight,
 ) -> RgbImage {
+    use crate::world::raycast;
+
     let mut img = RgbImage::new(cam.width, cam.height);
 
     // Camera basis vectors
@@ -530,47 +320,43 @@ fn render_perspective(
     let light_col = (light.color.0, light.color.1, light.color.2);
     let max_march = (size as f32) * 3.0;
 
+    let eye = [cam.eye.x, cam.eye.y, cam.eye.z];
+    let to_light = [-light_dir.x, -light_dir.y, -light_dir.z];
+
     for py in 0..cam.height {
         for px in 0..cam.width {
-            // Normalized device coordinates [-1, 1]
             let u = (2.0 * px as f32 / cam.width as f32 - 1.0) * half_w;
             let v = (1.0 - 2.0 * py as f32 / cam.height as f32) * half_h;
 
-            // Ray direction
             let dir = forward.add(right.scale(u)).add(up.scale(v)).normalized();
+            let dir_arr = [dir.x, dir.y, dir.z];
 
-            // March the ray
-            let pixel = if let Some(hit) = dda_march(cam.eye, dir, voxels, size, max_march) {
+            let pixel = if let Some(hit) =
+                raycast::dda_march_ray(voxels, size, eye, dir_arr, max_march)
+            {
                 let voxel = &voxels[idx(hit.x, hit.y, hit.z, size)];
                 let base = voxel_color(voxel, registry, color_mode);
 
-                // Surface normal from face axis or gradient estimate.
-                let normal = if hit.face_axis == 0 {
-                    Vec3::new(hit.face_sign, 0.0, 0.0)
-                } else if hit.face_axis == 1 {
-                    Vec3::new(0.0, hit.face_sign, 0.0)
-                } else {
-                    Vec3::new(0.0, 0.0, hit.face_sign)
-                };
+                // Face normal from DDA hit.
+                let face_n = hit.face_normal();
+                let face_v = Vec3::new(face_n[0], face_n[1], face_n[2]);
 
-                // Smooth the normal using gradient for non-flat surfaces.
-                let grad = estimate_normal(hit.x, hit.y, hit.z, voxels, size);
-                let blended = normal.scale(0.5).add(grad.scale(0.5)).normalized();
+                // Smooth normal via gradient estimate.
+                let grad_n = raycast::estimate_surface_normal(voxels, size, hit.x, hit.y, hit.z);
+                let grad_v = Vec3::new(grad_n[0], grad_n[1], grad_n[2]);
+                let blended = face_v.scale(0.5).add(grad_v.scale(0.5)).normalized();
 
-                // Lambertian diffuse: max(0, -light_dir · normal)
+                // Lambertian diffuse.
                 let n_dot_l = blended.dot(light_dir.scale(-1.0)).max(0.0);
 
-                // Shadow test
-                let hit_pos = Vec3::new(hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5);
-                let in_shadow = is_shadowed(hit_pos, light_dir, voxels, size);
-
+                // Shadow test.
+                let hit_pos = [hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5];
+                let in_shadow = raycast::is_shadowed(voxels, size, hit_pos, to_light);
                 let shadow_factor = if in_shadow { 0.0 } else { 1.0 };
 
-                // Final lighting: ambient uses neutral white, directional uses
-                // the light color so dawn/dusk warmth only tints direct light.
                 let diffuse = n_dot_l * light.intensity * shadow_factor;
 
-                // Depth fog (gentle fade toward background at far distances)
+                // Depth fog.
                 let fog_start = size as f32 * 0.5;
                 let fog_end = size as f32 * 2.5;
                 let fog = ((hit.t - fog_start) / (fog_end - fog_start)).clamp(0.0, 1.0);
@@ -845,16 +631,20 @@ mod tests {
     }
 
     // ----- DDA raymarcher tests -----
+    // These tests verify the shared raycast::dda_march_ray works
+    // correctly from the visualization context.
 
     #[test]
     fn dda_hits_solid_voxel_straight_down() {
+        use crate::world::raycast;
+
         let size = 8;
         let mut grid = make_grid(size);
         grid[idx(4, 2, 4, size)].material = MaterialId::STONE;
 
-        let origin = Vec3::new(4.5, 7.5, 4.5);
-        let dir = Vec3::new(0.0, -1.0, 0.0);
-        let hit = dda_march(origin, dir, &grid, size, 100.0);
+        let origin = [4.5, 7.5, 4.5];
+        let dir = [0.0, -1.0, 0.0];
+        let hit = raycast::dda_march_ray(&grid, size, origin, dir, 100.0);
 
         assert!(hit.is_some(), "should hit stone voxel");
         let h = hit.unwrap();
@@ -864,15 +654,19 @@ mod tests {
 
     #[test]
     fn dda_misses_empty_grid() {
+        use crate::world::raycast;
+
         let size = 8;
         let grid = make_grid(size); // all air
-        let origin = Vec3::new(4.5, 7.5, 4.5);
-        let dir = Vec3::new(0.0, -1.0, 0.0);
-        assert!(dda_march(origin, dir, &grid, size, 100.0).is_none());
+        let origin = [4.5, 7.5, 4.5];
+        let dir = [0.0, -1.0, 0.0];
+        assert!(raycast::dda_march_ray(&grid, size, origin, dir, 100.0).is_none());
     }
 
     #[test]
     fn dda_hits_from_outside_grid() {
+        use crate::world::raycast;
+
         let size = 8;
         let mut grid = make_grid(size);
         // Fill y=0 plane with stone
@@ -883,21 +677,23 @@ mod tests {
         }
 
         // Ray from above and outside the grid, angled in
-        let origin = Vec3::new(4.0, 12.0, 4.0);
-        let dir = Vec3::new(0.0, -1.0, 0.0);
-        let hit = dda_march(origin, dir, &grid, size, 100.0);
+        let origin = [4.0, 12.0, 4.0];
+        let dir = [0.0, -1.0, 0.0];
+        let hit = raycast::dda_march_ray(&grid, size, origin, dir, 100.0);
         assert!(hit.is_some(), "should enter grid and hit ground");
     }
 
     #[test]
     fn dda_diagonal_hit() {
+        use crate::world::raycast;
+
         let size = 8;
         let mut grid = make_grid(size);
         grid[idx(6, 0, 6, size)].material = MaterialId::STONE;
 
-        let origin = Vec3::new(0.5, 4.0, 0.5);
-        let dir = Vec3::new(1.0, -0.6, 1.0);
-        let hit = dda_march(origin, dir, &grid, size, 100.0);
+        let origin = [0.5, 4.0, 0.5];
+        let dir = [1.0, -0.6, 1.0];
+        let hit = raycast::dda_march_ray(&grid, size, origin, dir, 100.0);
         assert!(hit.is_some(), "diagonal ray should find stone");
         let h = hit.unwrap();
         assert_eq!((h.x, h.y, h.z), (6, 0, 6));
@@ -905,27 +701,31 @@ mod tests {
 
     #[test]
     fn shadow_ray_detects_occlusion() {
+        use crate::world::raycast;
+
         let size = 8;
         let mut grid = make_grid(size);
         // Overhanging block at (4, 5, 4)
         grid[idx(4, 5, 4, size)].material = MaterialId::STONE;
 
-        let below = Vec3::new(4.5, 3.5, 4.5);
-        let light_from_above = Vec3::new(0.0, -1.0, 0.0);
+        let below = [4.5, 3.5, 4.5];
+        let to_light = [0.0, 1.0, 0.0];
         assert!(
-            is_shadowed(below, light_from_above, &grid, size),
+            raycast::is_shadowed(&grid, size, below, to_light),
             "point below overhang should be in shadow"
         );
     }
 
     #[test]
     fn shadow_ray_clear_when_no_blocker() {
+        use crate::world::raycast;
+
         let size = 8;
         let grid = make_grid(size); // all air
-        let pos = Vec3::new(4.5, 3.5, 4.5);
-        let light_from_above = Vec3::new(0.0, -1.0, 0.0);
+        let pos = [4.5, 3.5, 4.5];
+        let to_light = [0.0, 1.0, 0.0];
         assert!(
-            !is_shadowed(pos, light_from_above, &grid, size),
+            !raycast::is_shadowed(&grid, size, pos, to_light),
             "no blocker = no shadow"
         );
     }
