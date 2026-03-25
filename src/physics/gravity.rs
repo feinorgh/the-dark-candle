@@ -7,6 +7,11 @@
 // forces.  Entities without those components fall back to simple gravity +
 // safety-cap behavior.
 //
+// Supports two modes:
+//   **Flat**: fixed -Y gravity (legacy).
+//   **Spherical**: radial gravity toward planet center with centrifugal
+//     pseudo-force from planetary rotation.
+//
 // Runs on `FixedUpdate` for deterministic simulation.
 
 #![allow(dead_code)]
@@ -15,7 +20,8 @@ use bevy::prelude::*;
 
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::ChunkMap;
-use crate::world::collision::ground_height_at;
+use crate::world::collision::{ground_height_at, ground_height_radial};
+use crate::world::planet::PlanetConfig;
 
 use super::constants;
 use super::shapes::PhysicsMaterial;
@@ -141,6 +147,10 @@ const DEFAULT_GROUND_FRICTION: f32 = 0.6;
 
 /// Apply forces to all entities with a `PhysicsBody`.
 ///
+/// In **flat** mode, gravity is fixed -Y.  In **spherical** mode, gravity
+/// points toward the planet center with inverse-square falloff and centrifugal
+/// correction from planetary rotation.
+///
 /// Entities that also have `Mass` + `DragProfile` receive the full force model
 /// (gravity, buoyancy, drag, ground friction) and terminal velocity emerges
 /// naturally.  Entities with only `PhysicsBody` fall back to simple gravity
@@ -155,6 +165,7 @@ pub fn apply_forces(
     time: Res<Time>,
     chunk_map: Res<ChunkMap>,
     chunks: Query<&Chunk>,
+    planet: Res<PlanetConfig>,
     mut bodies: Query<(
         &mut PhysicsBody,
         &mut Transform,
@@ -172,6 +183,8 @@ pub fn apply_forces(
     // (air vs. water vs. lava). For now, assume air at sea level everywhere.
     let medium_density = constants::AIR_DENSITY_SEA_LEVEL;
 
+    let is_spherical = planet.is_spherical();
+
     for (mut body, mut transform, mass, drag_profile, phys_mat) in &mut bodies {
         if body.gravity_scale == 0.0 {
             // Apply velocity but no gravity (e.g. floating items)
@@ -183,56 +196,79 @@ pub fn apply_forces(
             .map(|m| m.friction)
             .unwrap_or(DEFAULT_GROUND_FRICTION);
 
+        // Compute local "down" direction and gravity magnitude.
+        let (local_down, gravity_mag) = if is_spherical {
+            let pos = transform.translation.as_dvec3();
+            let g_vec = planet.gravity_at(pos);
+            let mag = g_vec.length() as f32;
+            let down = if mag > 1e-10 {
+                g_vec.as_vec3() / mag
+            } else {
+                Vec3::NEG_Y
+            };
+            (down, mag)
+        } else {
+            (Vec3::NEG_Y, GRAVITY)
+        };
+
+        let local_up = -local_down;
+
         match (mass, drag_profile) {
             // Full force model
             (Some(m), Some(dp)) => {
                 let mass_kg = m.0;
 
-                // --- Vertical forces ---
-                let f_gravity = gravitational_force(mass_kg) * body.gravity_scale;
+                // Decompose velocity into "along gravity" and "lateral" components.
+                let v_down_mag = body.velocity.dot(local_down);
+                let v_lateral = body.velocity - local_down * v_down_mag;
+
+                // --- Forces along gravity axis ---
+                let f_gravity = mass_kg * gravity_mag * body.gravity_scale;
                 let f_buoyancy = buoyancy_force(medium_density, dp.volume);
 
-                let speed_y = body.velocity.y.abs();
-                let drag_y = drag_force(medium_density, speed_y, dp.coefficient, dp.area);
-                // Drag opposes velocity direction
-                let f_drag_y = if body.velocity.y > 0.0 {
-                    -drag_y
+                let speed_down = v_down_mag.abs();
+                let drag_down = drag_force(medium_density, speed_down, dp.coefficient, dp.area);
+                // Drag opposes velocity direction along gravity axis
+                let f_drag_down = if v_down_mag > 0.0 {
+                    -drag_down // Moving downward → drag pushes upward (negative in down-axis)
                 } else {
-                    drag_y
+                    drag_down // Moving upward → drag pushes downward
                 };
 
-                let net_force_y = -f_gravity + f_buoyancy + f_drag_y;
-                body.velocity.y += (net_force_y / mass_kg) * dt;
+                // Net force along gravity: gravity pulls down, buoyancy pushes up, drag opposes
+                // Convention: positive = in local_down direction
+                let net_f_down = f_gravity - f_buoyancy + f_drag_down;
+                let accel_down = net_f_down / mass_kg;
+                // Apply acceleration: positive accel_down → velocity in local_down direction
+                body.velocity += local_down * accel_down * dt;
 
-                // --- Horizontal forces (drag + optional ground friction) ---
-                let horiz = Vec3::new(body.velocity.x, 0.0, body.velocity.z);
-                let speed_xz = horiz.length();
-                if speed_xz > 1e-6 {
-                    let dir_xz = horiz / speed_xz;
-                    let mut decel_xz =
-                        drag_force(medium_density, speed_xz, dp.coefficient, dp.area);
+                // --- Lateral forces (drag + optional ground friction) ---
+                let speed_lat = v_lateral.length();
+                if speed_lat > 1e-6 {
+                    let dir_lat = v_lateral / speed_lat;
+                    let mut decel_lat =
+                        drag_force(medium_density, speed_lat, dp.coefficient, dp.area);
 
                     if body.grounded {
                         let normal_force = f_gravity - f_buoyancy;
                         if normal_force > 0.0 {
-                            decel_xz += friction_force(ground_friction, normal_force);
+                            decel_lat += friction_force(ground_friction, normal_force);
                         }
                     }
 
-                    let decel_mag = (decel_xz / mass_kg) * dt;
-                    if decel_mag >= speed_xz {
-                        body.velocity.x = 0.0;
-                        body.velocity.z = 0.0;
+                    let decel_mag = (decel_lat / mass_kg) * dt;
+                    if decel_mag >= speed_lat {
+                        // Remove lateral velocity entirely
+                        body.velocity -= v_lateral;
                     } else {
-                        let brake = dir_xz * decel_mag;
-                        body.velocity.x -= brake.x;
-                        body.velocity.z -= brake.z;
+                        body.velocity -= dir_lat * decel_mag;
                     }
                 }
             }
             // Fallback: simple gravity + safety cap (no Mass/DragProfile)
             _ => {
-                body.velocity.y -= GRAVITY * body.gravity_scale * dt;
+                let gs = body.gravity_scale;
+                body.velocity += local_down * gravity_mag * gs * dt;
             }
         }
 
@@ -246,7 +282,28 @@ pub fn apply_forces(
         transform.translation += body.velocity * dt;
 
         // Ground collision
-        if let Some(ground_y) = ground_height_at(
+        if is_spherical {
+            if let Some(ground_r) = ground_height_radial(transform.translation, &chunk_map, &chunks)
+            {
+                let entity_r = transform.translation.length();
+                let feet_r = entity_r - body.foot_offset;
+                if feet_r <= ground_r {
+                    // Push entity outward to stand on surface
+                    let surface_normal = local_up;
+                    let correction = ground_r + body.foot_offset - entity_r;
+                    transform.translation += surface_normal * correction;
+
+                    // Zero the velocity component toward the surface
+                    let v_toward_ground = body.velocity.dot(local_down);
+                    if v_toward_ground > 0.0 {
+                        body.velocity -= local_down * v_toward_ground;
+                    }
+                    body.grounded = true;
+                } else {
+                    body.grounded = false;
+                }
+            }
+        } else if let Some(ground_y) = ground_height_at(
             transform.translation.x,
             transform.translation.z,
             &chunk_map,

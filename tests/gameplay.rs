@@ -13,6 +13,7 @@ use bevy::time::TimeUpdateStrategy;
 use the_dark_candle::physics::PhysicsPlugin;
 use the_dark_candle::physics::gravity::{PhysicsBody, VELOCITY_SAFETY_CAP};
 use the_dark_candle::world::chunk_manager::ChunkMap;
+use the_dark_candle::world::planet::PlanetConfig;
 
 /// Build a minimal physics app with no display and deterministic time steps.
 fn physics_app() -> App {
@@ -21,6 +22,7 @@ fn physics_app() -> App {
         .add_plugins(AssetPlugin::default())
         .add_plugins(PhysicsPlugin)
         .init_resource::<ChunkMap>()
+        .insert_resource(PlanetConfig::default())
         // Each call to app.update() advances virtual time by exactly 1/60 s.
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / 60.0,

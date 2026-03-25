@@ -86,7 +86,10 @@ pub fn save_game(
     info!("Saving game to {}…", SAVE_PATH);
 
     // --- Terrain ---------------------------------------------------------
-    let tc = terrain_gen.0.config();
+    let tc = terrain_gen
+        .0
+        .config()
+        .expect("save/load only supports flat terrain mode for now");
     let terrain = TerrainConfigSave {
         seed: tc.seed,
         sea_level: tc.sea_level,

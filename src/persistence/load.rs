@@ -20,7 +20,7 @@ use crate::{
     world::{
         chunk::{Chunk, ChunkCoord},
         chunk_manager::{ChunkMap, TerrainGeneratorRes},
-        terrain::{TerrainConfig, TerrainGenerator},
+        terrain::{TerrainConfig, TerrainGenerator, UnifiedTerrainGenerator},
     },
 };
 
@@ -121,7 +121,7 @@ pub fn load_game(
 
     // --- Restore terrain generator ---------------------------------------
     let tc = &save.terrain;
-    terrain_gen.0 = TerrainGenerator::new(TerrainConfig {
+    terrain_gen.0 = UnifiedTerrainGenerator::Flat(TerrainGenerator::new(TerrainConfig {
         seed: tc.seed,
         sea_level: tc.sea_level,
         height_scale: tc.height_scale,
@@ -130,7 +130,7 @@ pub fn load_game(
         cave_freq: tc.cave_freq,
         cave_threshold: tc.cave_threshold,
         soil_depth: tc.soil_depth,
-    });
+    }));
 
     // --- Restore chunks --------------------------------------------------
     for cs in &save.chunks {

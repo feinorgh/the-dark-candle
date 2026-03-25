@@ -81,9 +81,18 @@ pub struct WorldConstants {
     /// Air density at sea level (kg/m³). Earth: 1.225.
     pub air_density_sea_level: f32,
     /// Sea-level Y coordinate in voxel world (voxels above y=0).
+    /// Used in flat terrain mode. For spherical mode, use `sea_level_radius`.
     pub sea_level_y: f32,
     /// Voxel edge length (m). Defines spatial scale.
     pub voxel_size: f32,
+    /// Sea-level radius in meters from planet center (spherical mode).
+    /// Defaults to `sea_level_y` for backward compatibility.
+    #[serde(default = "default_sea_level_radius")]
+    pub sea_level_radius: f32,
+}
+
+fn default_sea_level_radius() -> f32 {
+    32_000.0
 }
 
 impl Default for WorldConstants {
@@ -96,6 +105,7 @@ impl Default for WorldConstants {
             air_density_sea_level: 1.225,
             sea_level_y: 64.0,
             voxel_size: 1.0,
+            sea_level_radius: 32_000.0,
         }
     }
 }

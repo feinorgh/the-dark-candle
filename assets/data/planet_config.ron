@@ -1,0 +1,45 @@
+// Default planet configuration — 32 km radius, Earth-like.
+//
+// Spherical terrain mode: planet centered at origin, surface features from
+// noise sampled in spherical coordinates, geological layers by radial depth.
+(
+    mode: Spherical,
+    mean_radius: 32000.0,
+    sea_level_radius: 32000.0,
+    surface_gravity: 9.80665,
+    rotation_rate: 7.292e-5,
+    rotation_axis: (0.0, 1.0, 0.0),
+    height_scale: 32.0,
+    layers: [
+        (
+            name: "inner_core",
+            inner_radius: 0.0,
+            outer_radius: 5000.0,
+            material: "Iron",
+        ),
+        (
+            name: "outer_core",
+            inner_radius: 5000.0,
+            outer_radius: 11000.0,
+            material: "Iron",
+        ),
+        (
+            name: "mantle",
+            inner_radius: 11000.0,
+            outer_radius: 28000.0,
+            material: "Stone",
+        ),
+        (
+            name: "crust",
+            inner_radius: 28000.0,
+            outer_radius: 32000.0,
+            material: "Stone",
+        ),
+    ],
+    seed: 42,
+    continent_freq: 0.005,
+    detail_freq: 0.02,
+    cave_freq: 0.03,
+    cave_threshold: -0.3,
+    soil_depth: 4.0,
+)

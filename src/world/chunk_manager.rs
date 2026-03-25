@@ -1,16 +1,21 @@
 // Chunk manager: loads and unloads chunks around the camera.
 //
 // Each frame the manager compares the set of currently loaded chunks against
-// the set that *should* be loaded (a sphere of chunks centered on the camera).
-// New chunks are spawned and far-away chunks are despawned. Terrain generation
-// fills newly created chunks via the TerrainGenerator.
+// the set that *should* be loaded. New chunks are spawned and far-away chunks
+// are despawned. Terrain generation fills newly created chunks.
+//
+// Two loading modes:
+//   **Flat** (legacy): cylindrical loading around camera in XZ plane.
+//   **Spherical**: shell-based loading — only chunks near the planet surface
+//     are loaded, skipping deep interior and outer space.
 
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkOctree};
+use super::planet::{PlanetConfig, TerrainMode};
 use super::refinement::{SubdivisionConfig, analyze_chunk, build_refined_octree};
-use super::terrain::{TerrainConfig, TerrainGenerator};
+use super::terrain::UnifiedTerrainGenerator;
 use crate::camera::FpsCamera;
 use crate::chemistry::runtime::ChunkActivity;
 
@@ -21,6 +26,10 @@ pub struct ChunkLoadRadius {
     pub horizontal: i32,
     /// Vertical (Y) radius in chunk units.
     pub vertical: i32,
+    /// For spherical mode: how many meters below the surface to load.
+    pub shell_depth: f64,
+    /// For spherical mode: how many meters above the surface to load.
+    pub shell_height: f64,
 }
 
 impl Default for ChunkLoadRadius {
@@ -28,6 +37,8 @@ impl Default for ChunkLoadRadius {
         Self {
             horizontal: 4,
             vertical: 2,
+            shell_depth: 128.0,  // 4 chunks deep
+            shell_height: 128.0, // 4 chunks high
         }
     }
 }
@@ -73,6 +84,7 @@ impl ChunkMap {
 }
 
 /// Compute the set of chunk coordinates that should be loaded around a world position.
+/// This is the **flat-mode** (legacy) loader using cylindrical distance.
 pub fn desired_chunks(world_pos: Vec3, radius: &ChunkLoadRadius) -> HashSet<ChunkCoord> {
     let cs = CHUNK_SIZE as f32;
     let center_cx = (world_pos.x / cs).floor() as i32;
@@ -102,6 +114,57 @@ pub fn desired_chunks(world_pos: Vec3, radius: &ChunkLoadRadius) -> HashSet<Chun
     set
 }
 
+/// Compute the set of chunk coordinates for **spherical** shell-based loading.
+///
+/// Loads chunks in a spherical shell around the camera, constrained to
+/// chunks whose centers fall within `[surface_radius - depth, surface_radius + height]`
+/// of the planet center.  Only chunks within `horizontal` chunk-units of the
+/// camera are considered (measured as Cartesian chunk-space distance).
+pub fn desired_chunks_spherical(
+    world_pos: Vec3,
+    radius: &ChunkLoadRadius,
+    planet: &PlanetConfig,
+) -> HashSet<ChunkCoord> {
+    let cs = CHUNK_SIZE as f32;
+    let center_cx = (world_pos.x / cs).floor() as i32;
+    let center_cy = (world_pos.y / cs).floor() as i32;
+    let center_cz = (world_pos.z / cs).floor() as i32;
+
+    let h = radius.horizontal;
+    let h_sq = (h * h) as f32;
+
+    let shell_min = (planet.mean_radius - radius.shell_depth) as f32;
+    let shell_max = (planet.mean_radius + radius.shell_height) as f32;
+
+    let mut set = HashSet::new();
+    for dz in -h..=h {
+        for dy in -h..=h {
+            for dx in -h..=h {
+                let dist_sq = (dx * dx + dy * dy + dz * dz) as f32;
+                if dist_sq > h_sq {
+                    continue;
+                }
+
+                let cx = center_cx + dx;
+                let cy = center_cy + dy;
+                let cz = center_cz + dz;
+
+                // Check if chunk center is within the surface shell
+                let chunk_center = Vec3::new(
+                    (cx as f32 + 0.5) * cs,
+                    (cy as f32 + 0.5) * cs,
+                    (cz as f32 + 0.5) * cs,
+                );
+                let r = chunk_center.length();
+                if r >= shell_min && r <= shell_max {
+                    set.insert(ChunkCoord::new(cx, cy, cz));
+                }
+            }
+        }
+    }
+    set
+}
+
 /// System: spawns and despawns chunks to keep the loaded set matching the camera position.
 pub fn update_chunks(
     mut commands: Commands,
@@ -109,13 +172,19 @@ pub fn update_chunks(
     radius: Res<ChunkLoadRadius>,
     terrain_gen: Res<TerrainGeneratorRes>,
     subdiv_config: Res<SubdivisionConfig>,
+    planet: Res<PlanetConfig>,
     camera_q: Query<&Transform, With<FpsCamera>>,
 ) {
     let Ok(cam_transform) = camera_q.single() else {
         return;
     };
 
-    let desired = desired_chunks(cam_transform.translation, &radius);
+    let desired = match planet.mode {
+        TerrainMode::Flat => desired_chunks(cam_transform.translation, &radius),
+        TerrainMode::Spherical => {
+            desired_chunks_spherical(cam_transform.translation, &radius, &planet)
+        }
+    };
 
     // Despawn chunks no longer in range
     let loaded: Vec<ChunkCoord> = chunk_map.coords().copied().collect();
@@ -157,15 +226,21 @@ pub fn update_chunks(
 
 /// Wrapper resource holding the terrain generator.
 #[derive(Resource)]
-pub struct TerrainGeneratorRes(pub TerrainGenerator);
+pub struct TerrainGeneratorRes(pub UnifiedTerrainGenerator);
 
 /// Plugin that registers chunk management resources and systems.
 pub struct ChunkManagerPlugin;
 
 impl Plugin for ChunkManagerPlugin {
     fn build(&self, app: &mut App) {
-        let config = TerrainConfig::default();
-        let generator = TerrainGenerator::new(config);
+        // Create a unified generator from the PlanetConfig resource.
+        // The PlanetConfig is already inserted by WorldPlugin before this runs.
+        let planet = app
+            .world()
+            .get_resource::<PlanetConfig>()
+            .cloned()
+            .unwrap_or_default();
+        let generator = UnifiedTerrainGenerator::from_planet_config(&planet);
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
             .insert_resource(TerrainGeneratorRes(generator))
@@ -213,6 +288,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 2,
             vertical: 1,
+            ..Default::default()
         };
         let chunks = desired_chunks(Vec3::ZERO, &radius);
 
@@ -239,6 +315,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 4,
             vertical: 2,
+            ..Default::default()
         };
         let chunks = desired_chunks(Vec3::ZERO, &radius);
 
@@ -253,6 +330,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 1,
             vertical: 0,
+            ..Default::default()
         };
 
         // Camera at origin → chunks around (0,0,0)
@@ -272,6 +350,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 1,
             vertical: 0,
+            ..Default::default()
         };
         let pos = Vec3::new(-100.0, -100.0, -100.0);
         let chunks = desired_chunks(pos, &radius);
@@ -287,6 +366,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 0,
             vertical: 0,
+            ..Default::default()
         };
         let chunks = desired_chunks(Vec3::new(16.0, 16.0, 16.0), &radius);
         assert_eq!(chunks.len(), 1);
@@ -305,6 +385,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 2,
             vertical: 1,
+            ..Default::default()
         };
         let chunks = desired_chunks(Vec3::ZERO, &radius);
 
@@ -322,6 +403,7 @@ mod tests {
         let radius = ChunkLoadRadius {
             horizontal: 3,
             vertical: 0,
+            ..Default::default()
         };
         let chunks = desired_chunks(Vec3::ZERO, &radius);
 
@@ -333,5 +415,89 @@ mod tests {
 
         // Diagonal: dx=2, dz=2 → dist²=8 ≤ 9 → included
         assert!(chunks.contains(&ChunkCoord::new(2, 0, 2)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Spherical shell-based loading tests
+    // -----------------------------------------------------------------------
+
+    fn small_planet() -> PlanetConfig {
+        PlanetConfig {
+            mean_radius: 320.0, // 10 chunks radius
+            sea_level_radius: 320.0,
+            height_scale: 8.0,
+            ..PlanetConfig::default()
+        }
+    }
+
+    #[test]
+    fn spherical_loads_surface_chunks() {
+        let planet = small_planet();
+        // Camera at surface along +X
+        let cam = Vec3::new(planet.mean_radius as f32, 0.0, 0.0);
+        let radius = ChunkLoadRadius {
+            horizontal: 2,
+            shell_depth: 64.0,
+            shell_height: 64.0,
+            ..Default::default()
+        };
+        let chunks = desired_chunks_spherical(cam, &radius, &planet);
+        assert!(!chunks.is_empty(), "Should load chunks near surface");
+    }
+
+    #[test]
+    fn spherical_excludes_deep_interior() {
+        let planet = small_planet();
+        // Camera at surface along +X
+        let cam = Vec3::new(planet.mean_radius as f32, 0.0, 0.0);
+        let radius = ChunkLoadRadius {
+            horizontal: 4,
+            shell_depth: 64.0,
+            shell_height: 64.0,
+            ..Default::default()
+        };
+        let chunks = desired_chunks_spherical(cam, &radius, &planet);
+
+        // Origin chunk (0,0,0) is at planet center — way below shell
+        assert!(
+            !chunks.contains(&ChunkCoord::new(0, 0, 0)),
+            "Planet core chunk should not be loaded"
+        );
+    }
+
+    #[test]
+    fn spherical_excludes_outer_space() {
+        let planet = small_planet();
+        let cam = Vec3::new(planet.mean_radius as f32, 0.0, 0.0);
+        let radius = ChunkLoadRadius {
+            horizontal: 4,
+            shell_depth: 64.0,
+            shell_height: 64.0,
+            ..Default::default()
+        };
+        let chunks = desired_chunks_spherical(cam, &radius, &planet);
+
+        // A chunk far above the surface (20 chunk units from surface = 640 m above)
+        let far_out = ChunkCoord::new(20, 0, 0);
+        assert!(
+            !chunks.contains(&far_out),
+            "Outer space chunk should not be loaded"
+        );
+    }
+
+    #[test]
+    fn spherical_chunk_count_is_reasonable() {
+        let planet = small_planet();
+        let cam = Vec3::new(planet.mean_radius as f32, 0.0, 0.0);
+        let radius = ChunkLoadRadius {
+            horizontal: 4,
+            shell_depth: 128.0,
+            shell_height: 128.0,
+            ..Default::default()
+        };
+        let chunks = desired_chunks_spherical(cam, &radius, &planet);
+        // Should be a reasonable number — not the full sphere
+        assert!(chunks.len() > 10, "Too few chunks: {}", chunks.len());
+        assert!(chunks.len() < 500, "Too many chunks: {}", chunks.len());
     }
 }
