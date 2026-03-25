@@ -1,5 +1,6 @@
-// Heat transfer using Fourier's law on a discrete voxel grid.
+// Heat transfer for voxel grids: conduction + radiation.
 //
+// **Conduction (Fourier's law)**
 // Each tick, heat flux between adjacent voxels is computed as:
 //   Q = k_eff * (T_neighbor - T_self)
 // where k_eff is the harmonic mean conductivity at the interface (A=1m², dx=1m).
@@ -7,13 +8,23 @@
 // Temperature update per voxel:
 //   ΔT = Σ(Q_neighbors) * dt / (ρ * Cₚ)      [V=1m³]
 //
-// Thermal properties (k, ρ, Cₚ) are read from MaterialData via MaterialRegistry.
-// CFL stability: dt < dx² / (6 × α_max) where α = k/(ρ×Cₚ).
+// **Radiation (Stefan-Boltzmann)**
+// Hot surface voxels emit thermal radiation: P/A = εσT⁴.
+// Net radiative exchange between visible surface pairs uses the gray-body
+// formula: q = ε_eff × σ × F₁₂ × (T₁⁴ − T₂⁴), where ε_eff accounts for
+// both emissivities and F₁₂ is the view factor (~A/(πd²) for distant faces).
+// Line-of-sight is checked via discrete ray marching through the voxel grid.
+//
+// Thermal properties (k, ρ, Cₚ, ε) are read from MaterialData via MaterialRegistry.
+// CFL stability (conduction): dt < dx² / (6 × α_max) where α = k/(ρ×Cₚ).
 // For iron (α ≈ 2.27e-5 m²/s) with dx=1m: dt_max ≈ 7300s — stable at game timesteps.
 
 #![allow(dead_code)]
 
+use std::collections::HashSet;
+
 use crate::data::MaterialRegistry;
+use crate::world::raycast::{self, RAY_DIRECTIONS};
 use crate::world::voxel::{MaterialId, Voxel};
 
 /// Legacy hardcoded conductivity lookup (normalized 0–1 scale).
@@ -150,6 +161,175 @@ pub fn diffuse_chunk(
     }
 
     new_temps
+}
+
+// ---------------------------------------------------------------------------
+// Radiative heat transfer (Stefan-Boltzmann)
+// ---------------------------------------------------------------------------
+
+/// Maximum view factor — physical cap for two unit-area faces at d = 1 m.
+///
+/// The exact view factor for two coaxial unit squares at d = 1 is ~0.20,
+/// computed from the analytical double-area integral. We cap the far-field
+/// approximation A/(πd²) to this value for close pairs.
+const VIEW_FACTOR_CAP: f32 = 0.20;
+
+/// Radiated power per unit area from a surface (W/m²).
+///
+/// Stefan-Boltzmann law: q = ε × σ × T⁴.
+/// Computation uses f64 internally to preserve precision in T⁴.
+pub fn stefan_boltzmann_flux(emissivity: f32, temperature: f32, sigma: f64) -> f32 {
+    let t4 = (temperature as f64).powi(4);
+    (emissivity as f64 * sigma * t4) as f32
+}
+
+/// Effective emissivity for gray-body radiative exchange between two surfaces.
+///
+/// ε_eff = 1 / (1/ε₁ + 1/ε₂ − 1)
+///
+/// For two black bodies (ε = 1): ε_eff = 1.
+/// Returns 0 if either emissivity is ≤ 0 (prevents division by zero).
+pub fn effective_emissivity(eps1: f32, eps2: f32) -> f32 {
+    if eps1 <= 0.0 || eps2 <= 0.0 {
+        return 0.0;
+    }
+    1.0 / (1.0 / eps1 + 1.0 / eps2 - 1.0)
+}
+
+/// Approximate view factor between two voxel faces at Euclidean distance `d`.
+///
+/// Far-field point-source approximation: F = A / (π × d²), capped at
+/// [`VIEW_FACTOR_CAP`] for close pairs where the approximation breaks down.
+pub fn voxel_view_factor(distance: f32, face_area: f32) -> f32 {
+    if distance <= 0.0 {
+        return VIEW_FACTOR_CAP;
+    }
+    let f = face_area / (std::f32::consts::PI * distance * distance);
+    f.min(VIEW_FACTOR_CAP)
+}
+
+/// Net radiative heat flux between two surfaces (W).
+///
+/// Positive result means heat flows from surface 1 → surface 2.
+/// `eps_eff` is the pre-computed effective emissivity (see [`effective_emissivity`]).
+///
+/// q = ε_eff × σ × F₁₂ × A × (T₁⁴ − T₂⁴)
+///
+/// With voxel_size = 1 m → A = 1 m², so the result is directly in Watts.
+pub fn net_radiative_flux(t1: f32, t2: f32, eps_eff: f32, view_factor: f32, sigma: f64) -> f32 {
+    let t1_4 = (t1 as f64).powi(4);
+    let t2_4 = (t2 as f64).powi(4);
+    (eps_eff as f64 * sigma * view_factor as f64 * (t1_4 - t2_4)) as f32
+}
+
+/// Apply one radiative heat transfer step to a flat `size³` voxel array.
+///
+/// For each surface voxel above `emission_threshold` (K), casts rays in
+/// 26 grid-aligned directions to find visible surfaces. Net radiative
+/// exchange is computed for each pair and accumulated as temperature deltas.
+///
+/// Returns a `Vec<f32>` of temperature deltas (additive, can be positive or
+/// negative). The caller should add these to the current temperatures.
+///
+/// # Parameters
+/// - `voxels`: flat `size³` array of voxels
+/// - `size`: grid edge length (voxels per axis)
+/// - `dt`: timestep in seconds
+/// - `registry`: material property lookup
+/// - `sigma`: Stefan-Boltzmann constant (W/(m²·K⁴))
+/// - `emission_threshold`: minimum temperature (K) to consider a voxel as emitter
+/// - `max_ray_steps`: maximum ray march distance in voxel steps
+pub fn radiate_chunk(
+    voxels: &[Voxel],
+    size: usize,
+    dt: f32,
+    registry: &MaterialRegistry,
+    sigma: f64,
+    emission_threshold: f32,
+    max_ray_steps: usize,
+) -> Vec<f32> {
+    let len = size * size * size;
+    assert_eq!(voxels.len(), len);
+
+    let mut deltas = vec![0.0_f32; len];
+    let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
+
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let idx = z * size * size + y * size + x;
+                let voxel = &voxels[idx];
+
+                if voxel.material.is_air() || voxel.temperature < emission_threshold {
+                    continue;
+                }
+
+                if !raycast::is_surface_voxel(voxels, size, x, y, z) {
+                    continue;
+                }
+
+                let mat_e = match registry.get(voxel.material) {
+                    Some(m) => m,
+                    None => continue,
+                };
+
+                if mat_e.emissivity <= 0.0 {
+                    continue;
+                }
+
+                for dir_idx in 0..RAY_DIRECTIONS.len() {
+                    let hit = match raycast::march_grid_ray(
+                        voxels,
+                        size,
+                        [x, y, z],
+                        dir_idx,
+                        max_ray_steps,
+                    ) {
+                        Some(h) => h,
+                        None => continue,
+                    };
+
+                    // Deduplicate: process each (emitter, receiver) pair once.
+                    let pair = (idx.min(hit.index), idx.max(hit.index));
+                    if !seen_pairs.insert(pair) {
+                        continue;
+                    }
+
+                    let recv = &voxels[hit.index];
+                    let mat_r = match registry.get(recv.material) {
+                        Some(m) => m,
+                        None => continue,
+                    };
+
+                    let eps_eff = effective_emissivity(mat_e.emissivity, mat_r.emissivity);
+                    if eps_eff <= 0.0 {
+                        continue;
+                    }
+
+                    let view = voxel_view_factor(hit.distance, 1.0);
+                    let q = net_radiative_flux(
+                        voxel.temperature,
+                        recv.temperature,
+                        eps_eff,
+                        view,
+                        sigma,
+                    );
+
+                    let rho_cp_e = mat_e.density * mat_e.specific_heat_capacity;
+                    let rho_cp_r = mat_r.density * mat_r.specific_heat_capacity;
+
+                    if rho_cp_e > 0.0 {
+                        deltas[idx] -= q * dt / rho_cp_e;
+                    }
+                    if rho_cp_r > 0.0 {
+                        deltas[hit.index] += q * dt / rho_cp_r;
+                    }
+                }
+            }
+        }
+    }
+
+    deltas
 }
 
 #[cfg(test)]
@@ -467,5 +647,392 @@ mod tests {
         );
         // Iron conducts ~3000× better than air
         assert!(k_iron / k_air > 3000.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Radiation tests
+    // -----------------------------------------------------------------------
+
+    const SIGMA: f64 = 5.670_374_419e-8;
+
+    const LAVA_ID: u16 = 10;
+
+    /// Registry with emissivity values for radiation tests.
+    fn rad_registry() -> MaterialRegistry {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: AIR_ID,
+            name: "Air".into(),
+            default_phase: Phase::Gas,
+            density: 1.225,
+            thermal_conductivity: 0.026,
+            specific_heat_capacity: 1005.0,
+            emissivity: 0.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: STONE_ID,
+            name: "Stone".into(),
+            default_phase: Phase::Solid,
+            density: 2700.0,
+            thermal_conductivity: 2.5,
+            specific_heat_capacity: 790.0,
+            emissivity: 0.93,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: IRON_ID,
+            name: "Iron".into(),
+            default_phase: Phase::Solid,
+            density: 7874.0,
+            thermal_conductivity: 80.2,
+            specific_heat_capacity: 449.0,
+            emissivity: 0.21,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: LAVA_ID,
+            name: "Lava".into(),
+            default_phase: Phase::Liquid,
+            density: 2600.0,
+            thermal_conductivity: 1.5,
+            specific_heat_capacity: 1600.0,
+            emissivity: 0.95,
+            ..Default::default()
+        });
+        reg
+    }
+
+    #[test]
+    fn stefan_boltzmann_black_body_at_1000k() {
+        // P/A = σT⁴ for black body (ε=1)
+        // At 1000 K: 5.67e-8 × 1e12 = 56700 W/m²
+        let flux = stefan_boltzmann_flux(1.0, 1000.0, SIGMA);
+        assert!(
+            (flux - 56_700.0).abs() < 100.0,
+            "Black body at 1000K: {flux:.1} W/m², expected ~56700"
+        );
+    }
+
+    #[test]
+    fn stefan_boltzmann_scales_with_emissivity() {
+        let full = stefan_boltzmann_flux(1.0, 1000.0, SIGMA);
+        let half = stefan_boltzmann_flux(0.5, 1000.0, SIGMA);
+        assert!(
+            (half - full * 0.5).abs() < 1.0,
+            "Half emissivity should give half flux"
+        );
+    }
+
+    #[test]
+    fn stefan_boltzmann_t4_scaling() {
+        // Doubling temperature → 16× the flux
+        let t1 = stefan_boltzmann_flux(1.0, 500.0, SIGMA);
+        let t2 = stefan_boltzmann_flux(1.0, 1000.0, SIGMA);
+        let ratio = t2 / t1;
+        assert!(
+            (ratio - 16.0).abs() < 0.1,
+            "T⁴ scaling: ratio = {ratio:.2}, expected 16.0"
+        );
+    }
+
+    #[test]
+    fn effective_emissivity_black_bodies() {
+        let eps = effective_emissivity(1.0, 1.0);
+        assert!(
+            (eps - 1.0).abs() < f32::EPSILON,
+            "Two black bodies: ε_eff = {eps}"
+        );
+    }
+
+    #[test]
+    fn effective_emissivity_symmetric() {
+        let a = effective_emissivity(0.21, 0.93);
+        let b = effective_emissivity(0.93, 0.21);
+        assert!((a - b).abs() < f32::EPSILON, "ε_eff should be symmetric");
+    }
+
+    #[test]
+    fn effective_emissivity_with_zero() {
+        assert_eq!(effective_emissivity(0.0, 0.5), 0.0);
+        assert_eq!(effective_emissivity(0.5, 0.0), 0.0);
+    }
+
+    #[test]
+    fn effective_emissivity_iron_stone() {
+        // ε_eff = 1/(1/0.21 + 1/0.93 - 1) ≈ 0.207
+        let eps = effective_emissivity(0.21, 0.93);
+        assert!(
+            (eps - 0.207).abs() < 0.01,
+            "Iron-stone ε_eff = {eps:.4}, expected ~0.207"
+        );
+    }
+
+    #[test]
+    fn view_factor_inverse_square() {
+        let f1 = voxel_view_factor(2.0, 1.0);
+        let f2 = voxel_view_factor(4.0, 1.0);
+        let ratio = f1 / f2;
+        assert!(
+            (ratio - 4.0).abs() < 0.1,
+            "View factor should fall off as 1/d²: ratio = {ratio:.2}"
+        );
+    }
+
+    #[test]
+    fn view_factor_capped_at_close_range() {
+        let f = voxel_view_factor(0.5, 1.0);
+        assert!(
+            f <= VIEW_FACTOR_CAP + f32::EPSILON,
+            "View factor {f} should be capped at {VIEW_FACTOR_CAP}"
+        );
+    }
+
+    #[test]
+    fn net_flux_zero_at_equal_temperatures() {
+        let q = net_radiative_flux(500.0, 500.0, 0.5, 0.1, SIGMA);
+        assert!(
+            q.abs() < f32::EPSILON,
+            "Net flux at equal T should be 0, got {q}"
+        );
+    }
+
+    #[test]
+    fn net_flux_positive_hot_to_cold() {
+        let q = net_radiative_flux(1000.0, 300.0, 0.5, 0.1, SIGMA);
+        assert!(
+            q > 0.0,
+            "Net flux should be positive from hot to cold, got {q}"
+        );
+    }
+
+    #[test]
+    fn net_flux_antisymmetric() {
+        let q_ab = net_radiative_flux(1000.0, 300.0, 0.5, 0.1, SIGMA);
+        let q_ba = net_radiative_flux(300.0, 1000.0, 0.5, 0.1, SIGMA);
+        assert!(
+            (q_ab + q_ba).abs() < 0.01,
+            "Net flux should be antisymmetric: q_ab={q_ab:.2}, q_ba={q_ba:.2}"
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_uniform_temperature_no_change() {
+        let reg = rad_registry();
+        let size = 4;
+        let mut voxels: Vec<Voxel> = (0..size * size * size)
+            .map(|_| {
+                let mut v = Voxel::new(MaterialId::STONE);
+                v.temperature = 800.0; // above threshold but uniform
+                v
+            })
+            .collect();
+        // Leave surface layer as air for exposure
+        for x in 0..size {
+            for z in 0..size {
+                voxels[z * size * size + x] = Voxel::default(); // y=0 air
+            }
+        }
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        // Interior stone at uniform 800K: pairs at same temperature → net flux = 0
+        for z in 0..size {
+            for y in 1..size {
+                for x in 0..size {
+                    let idx = z * size * size + y * size + x;
+                    if !voxels[idx].material.is_air() {
+                        assert!(
+                            deltas[idx].abs() < 0.01,
+                            "Uniform temp delta at ({x},{y},{z}) = {:.4}, expected ~0",
+                            deltas[idx]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radiate_chunk_hot_body_warms_cold_across_gap() {
+        // Setup: hot lava wall | air gap | cold stone wall
+        // Radiation should transfer heat across the air gap.
+        let reg = rad_registry();
+        let size = 8;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let idx = |x: usize, y: usize, z: usize| z * size * size + y * size + x;
+
+        // Place hot lava wall at x=1 (y=1..7, z=1..7)
+        for y in 1..7 {
+            for z in 1..7 {
+                let i = idx(1, y, z);
+                voxels[i].material = MaterialId::LAVA;
+                voxels[i].temperature = 1500.0;
+            }
+        }
+
+        // Place cold stone wall at x=5 (y=1..7, z=1..7)
+        for y in 1..7 {
+            for z in 1..7 {
+                let i = idx(5, y, z);
+                voxels[i].material = MaterialId::STONE;
+                voxels[i].temperature = 300.0;
+            }
+        }
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // Lava should lose heat (negative delta)
+        let lava_center = idx(1, 4, 4);
+        assert!(
+            deltas[lava_center] < 0.0,
+            "Lava should lose heat: delta = {:.4}",
+            deltas[lava_center]
+        );
+
+        // Stone should gain heat (positive delta)
+        let stone_center = idx(5, 4, 4);
+        assert!(
+            deltas[stone_center] > 0.0,
+            "Stone should gain heat: delta = {:.4}",
+            deltas[stone_center]
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_energy_conservation_two_body() {
+        // Two single-voxel bodies facing each other across an air gap.
+        // Total thermal energy should be conserved.
+        let reg = rad_registry();
+        let size = 8;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let idx = |x: usize, y: usize, z: usize| z * size * size + y * size + x;
+
+        // Hot stone at (2,4,4)
+        let hot_idx = idx(2, 4, 4);
+        voxels[hot_idx].material = MaterialId::STONE;
+        voxels[hot_idx].temperature = 1200.0;
+
+        // Cold stone at (5,4,4)
+        let cold_idx = idx(5, 4, 4);
+        voxels[cold_idx].material = MaterialId::STONE;
+        voxels[cold_idx].temperature = 300.0;
+
+        let rho_cp_stone = 2700.0_f64 * 790.0; // same material
+
+        // Total energy before
+        let energy_before = rho_cp_stone * 1200.0 + rho_cp_stone * 300.0;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // Total energy after
+        let energy_after = rho_cp_stone * (1200.0 + deltas[hot_idx] as f64)
+            + rho_cp_stone * (300.0 + deltas[cold_idx] as f64);
+
+        let relative_error = ((energy_after - energy_before) / energy_before).abs();
+        assert!(
+            relative_error < 1e-5,
+            "Radiative energy should be conserved. Before: {energy_before:.2}, \
+             After: {energy_after:.2}, error: {relative_error:.2e}"
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_blocked_by_wall() {
+        // Hot voxel and cold voxel with an opaque wall in between.
+        // No radiative exchange should occur.
+        let reg = rad_registry();
+        let size = 8;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let idx = |x: usize, y: usize, z: usize| z * size * size + y * size + x;
+
+        // Hot stone at (1,4,4)
+        let hot_idx = idx(1, 4, 4);
+        voxels[hot_idx].material = MaterialId::STONE;
+        voxels[hot_idx].temperature = 1200.0;
+
+        // Wall at (3,4,4) blocking LOS
+        voxels[idx(3, 4, 4)].material = MaterialId::STONE;
+        voxels[idx(3, 4, 4)].temperature = 288.15;
+
+        // Cold stone at (5,4,4) — behind the wall
+        let cold_idx = idx(5, 4, 4);
+        voxels[cold_idx].material = MaterialId::STONE;
+        voxels[cold_idx].temperature = 300.0;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // Cold stone should NOT gain heat from the hot stone (wall blocks)
+        // It may exchange with the wall, but the wall is near ambient.
+        assert!(
+            deltas[cold_idx].abs() < 1.0,
+            "Blocked cold stone should have negligible delta: {:.4}",
+            deltas[cold_idx]
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_closer_receives_more() {
+        // Two cold stones at different distances from a hot source.
+        // Closer one should receive more heat (1/d² falloff).
+        let reg = rad_registry();
+        let size = 16;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let idx = |x: usize, y: usize, z: usize| z * size * size + y * size + x;
+
+        // Hot stone at (1,8,8)
+        voxels[idx(1, 8, 8)].material = MaterialId::STONE;
+        voxels[idx(1, 8, 8)].temperature = 1500.0;
+
+        // Close stone at (3,8,8) — distance 2
+        let close_idx = idx(3, 8, 8);
+        voxels[close_idx].material = MaterialId::STONE;
+        voxels[close_idx].temperature = 300.0;
+
+        // Far stone at (7,8,8) — distance 6
+        let far_idx = idx(7, 8, 8);
+        voxels[far_idx].material = MaterialId::STONE;
+        voxels[far_idx].temperature = 300.0;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 16);
+
+        // The close stone blocks the hot→far ray in +X direction,
+        // but we still expect close stone to get more heat overall.
+        assert!(
+            deltas[close_idx] > 0.0,
+            "Close stone should gain heat: {:.4}",
+            deltas[close_idx]
+        );
+        // Far stone may get 0 heat if fully blocked. That's fine — the test
+        // confirms closer gets more.
+        assert!(
+            deltas[close_idx] > deltas[far_idx],
+            "Closer stone ({:.4}) should gain more than farther ({:.4})",
+            deltas[close_idx],
+            deltas[far_idx]
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_below_threshold_no_emission() {
+        let reg = rad_registry();
+        let size = 4;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        // Stone at 400K — below 500K threshold
+        let idx = size * size + size + 1;
+        voxels[idx].material = MaterialId::STONE;
+        voxels[idx].temperature = 400.0;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 4);
+        for d in &deltas {
+            assert!(
+                d.abs() < f32::EPSILON,
+                "Below-threshold voxels should produce no radiation deltas"
+            );
+        }
     }
 }

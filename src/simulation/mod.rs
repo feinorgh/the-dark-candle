@@ -2,6 +2,7 @@
 //
 // Provides a deterministic tick loop that combines:
 //   1. Heat diffusion (Fourier's law)
+//   1b. Radiative heat transfer (Stefan-Boltzmann)
 //   2. Chemical reactions (neighbor-pair matching)
 //   3. State transitions (melting/boiling/freezing)
 //   4. Pressure diffusion (gas equalization)
@@ -13,10 +14,11 @@ pub mod assertions;
 pub mod geometry;
 pub mod scenario;
 
-use crate::chemistry::heat::diffuse_chunk;
+use crate::chemistry::heat::{diffuse_chunk, radiate_chunk};
 use crate::chemistry::reactions::{ReactionData, check_reaction};
 use crate::chemistry::state_transitions::apply_transitions;
 use crate::data::{MaterialRegistry, Phase};
+use crate::physics::constants::STEFAN_BOLTZMANN;
 use crate::world::voxel::Voxel;
 
 /// Face-adjacent neighbor offsets (6-connectivity).
@@ -146,10 +148,11 @@ fn diffuse_pressure_sim(
 /// Run one simulation tick on a flat `size³` voxel array.
 ///
 /// Steps per tick:
-/// 1. Heat diffusion (Fourier's law via `diffuse_chunk`)
-/// 2. Chemical reactions (neighbor-pair `check_reaction`)
-/// 3. State transitions (`apply_transitions`)
-/// 4. Pressure diffusion (gas equalization)
+///  1. Heat diffusion (Fourier's law via `diffuse_chunk`)
+///     - 1b. Radiative heat transfer (Stefan-Boltzmann via `radiate_chunk`)
+///  2. Chemical reactions (neighbor-pair `check_reaction`)
+///  3. State transitions (`apply_transitions`)
+///  4. Pressure diffusion (gas equalization)
 ///
 /// `dt` is the simulation timestep in seconds.
 pub fn simulate_tick(
@@ -163,6 +166,12 @@ pub fn simulate_tick(
     let new_temps = diffuse_chunk(voxels, size, dt, registry);
     for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
         v.temperature = t;
+    }
+
+    // 1b. Radiative heat transfer — hot surfaces exchange heat at distance
+    let rad_deltas = radiate_chunk(voxels, size, dt, registry, STEFAN_BOLTZMANN, 500.0, 16);
+    for (v, &delta) in voxels.iter_mut().zip(rad_deltas.iter()) {
+        v.temperature += delta;
     }
 
     // 2. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors

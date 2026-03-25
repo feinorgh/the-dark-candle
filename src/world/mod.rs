@@ -5,6 +5,7 @@ pub mod interpolation;
 pub mod lod;
 pub mod meshing;
 pub mod octree;
+pub mod raycast;
 pub mod refinement;
 pub mod terrain;
 pub mod voxel;
