@@ -459,43 +459,35 @@ fn is_shadowed(pos: Vec3, light_dir: Vec3, voxels: &[Voxel], size: usize) -> boo
     dda_march(origin, to_light, voxels, size, size as f32 * 2.0).is_some()
 }
 
-/// Compute the sky/background color based on sun elevation.
+/// Compute the sky/background color via Rayleigh scattering.
 fn sky_color(ray_dir: Vec3, light_dir: Vec3) -> Rgb<u8> {
-    // Vertical gradient: darker at horizon, lighter above.
-    let up_factor = ray_dir.y.max(0.0);
+    use crate::lighting::sky;
 
-    // Sun elevation (negative light_dir.y means sun is up).
-    let sun_elev = (-light_dir.y).max(0.0);
+    let view = [ray_dir.x, ray_dir.y, ray_dir.z];
+    // light_dir points toward the surface; sun_dir points toward the sun.
+    let sun_dir = sky::normalize([-light_dir.x, -light_dir.y, -light_dir.z]);
 
-    if sun_elev < 0.05 {
-        // Night sky — dark blue-black
-        let b = 10.0 + up_factor * 25.0;
-        Rgb([5, 5, b as u8])
+    let hdr = sky::sky_color(view, sun_dir);
+
+    // Add sun disk and glow on top of the atmospheric color.
+    let sun_dot = ray_dir.dot(light_dir.scale(-1.0).normalized()).max(0.0);
+    let (hdr_r, hdr_g, hdr_b) = if sun_dot > 0.995 {
+        // Sun disk — bright white-yellow
+        (hdr[0] + 5.0, hdr[1] + 4.5, hdr[2] + 3.0)
+    } else if sun_dot > 0.98 {
+        // Sun glow corona
+        let glow = (sun_dot - 0.98) / 0.015;
+        (
+            hdr[0] + 2.0 * glow,
+            hdr[1] + 1.8 * glow,
+            hdr[2] + 1.2 * glow,
+        )
     } else {
-        // Day sky — blue gradient
-        let intensity = 0.3 + sun_elev * 0.7;
-        let r = (135.0 * intensity * (1.0 - up_factor * 0.3)) as u8;
-        let g = (180.0 * intensity * (0.8 + up_factor * 0.2)) as u8;
-        let b = (235.0 * intensity) as u8;
+        (hdr[0], hdr[1], hdr[2])
+    };
 
-        // Sun disk glow
-        let sun_dir = light_dir.scale(-1.0).normalized();
-        let sun_dot = ray_dir.dot(sun_dir).max(0.0);
-        if sun_dot > 0.995 {
-            // Sun disk
-            Rgb([255, 250, 230])
-        } else if sun_dot > 0.98 {
-            // Sun glow
-            let glow = (sun_dot - 0.98) / 0.015;
-            Rgb([
-                (r as f32 + (255.0 - r as f32) * glow) as u8,
-                (g as f32 + (250.0 - g as f32) * glow) as u8,
-                (b as f32 + (230.0 - b as f32) * glow) as u8,
-            ])
-        } else {
-            Rgb([r, g, b])
-        }
-    }
+    let srgb = sky::tonemap_to_srgb([hdr_r, hdr_g, hdr_b]);
+    Rgb(srgb)
 }
 
 // ---------------------------------------------------------------------------
