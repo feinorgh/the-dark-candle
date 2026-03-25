@@ -572,22 +572,15 @@ fn daynight_terrain_video() {
             sun_rgb.0[2] as f32 / 255.0,
         );
 
-        // Ambient scales with elevation
-        let config = DayNightConfig::default();
-        let amb = (ambient_factor(elevation, &config) / config.noon_ambient)
-            .clamp(0.08, 1.0)
-            * 0.25;
+        // Ambient: generous floor so night isn't pitch black, scales up with
+        // sun elevation for a visible but subtle day/night difference.
+        let sun_factor = elevation.sin().max(0.0); // 0 at horizon, 1 at zenith
+        let amb = 0.15 + sun_factor * 0.15; // night=0.15, noon=0.30
 
-        // Smooth intensity: ramp with sin(elevation) near horizon instead of
-        // hard on/off, avoiding abrupt flicker at sunrise/sunset.
-        let sun_intensity = if elevation > 0.1 {
-            1.0
-        } else if elevation > -0.05 {
-            // Smooth ramp over ~0.15 radians (~8.6°) around the horizon
-            ((elevation + 0.05) / 0.15).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        // Sun intensity follows sin(elevation) for a smooth, physically
+        // motivated curve — gradual brightening at dawn, peak at noon,
+        // gradual dimming at dusk. No hard cutoffs.
+        let sun_intensity = sun_factor; // 0.0 at horizon → 1.0 at zenith
 
         let light = SceneLight {
             direction: (sun_x, sun_y, sun_z),
