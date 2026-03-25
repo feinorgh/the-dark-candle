@@ -95,7 +95,13 @@ pub fn diffuse_temperature(
 /// Apply one heat diffusion step to a flat 3D voxel array of size `size³`
 /// using Fourier's law with material properties from the registry.
 ///
-/// `dt` is the timestep in seconds (e.g. 1.0/60.0 for 60 Hz).
+/// Uses adaptive CFL sub-stepping: if the timestep exceeds the explicit Euler
+/// stability limit (Fo ≤ 1/6 in 3D), the diffusion is split into smaller
+/// sub-steps to prevent numerical oscillation. This is essential for
+/// low-density gases (e.g. hydrogen) where thermal diffusivity α = k/(ρ·Cₚ)
+/// is high relative to spatial resolution.
+///
+/// `dt` is the timestep in seconds.
 /// Returns the new temperature buffer.
 pub fn diffuse_chunk(
     voxels: &[Voxel],
@@ -106,61 +112,94 @@ pub fn diffuse_chunk(
     let len = size * size * size;
     assert_eq!(voxels.len(), len);
 
-    let mut new_temps = Vec::with_capacity(len);
+    // Find maximum thermal diffusivity across all materials present to
+    // determine the CFL-stable sub-step size.
+    let mut alpha_max: f32 = 0.0;
+    for v in voxels {
+        let mat = registry.get(v.material);
+        let k = mat.map(|m| m.thermal_conductivity).unwrap_or(0.1);
+        let rho = mat.map(|m| m.density).unwrap_or(1.0);
+        let cp = mat.map(|m| m.specific_heat_capacity).unwrap_or(1000.0);
+        let rho_cp = rho * cp;
+        if rho_cp > 0.0 {
+            alpha_max = alpha_max.max(k / rho_cp);
+        }
+    }
 
-    for z in 0..size {
-        for y in 0..size {
-            for x in 0..size {
-                let idx = z * size * size + y * size + x;
-                let voxel = &voxels[idx];
+    // CFL limit for 3D explicit Euler: dt_stable = dx² / (6 × α_max).
+    // Use a safety factor of 0.9 to stay comfortably below the limit.
+    let n_substeps = if alpha_max > 0.0 {
+        let dt_stable = 1.0 / (6.0 * alpha_max) * 0.9; // dx = 1 m
+        (dt / dt_stable).ceil().max(1.0) as usize
+    } else {
+        1
+    };
+    let sub_dt = dt / n_substeps as f32;
 
-                let mat = registry.get(voxel.material);
-                let self_k = mat.map(|m| m.thermal_conductivity).unwrap_or(0.1);
-                let density = mat.map(|m| m.density).unwrap_or(1.0);
-                let cp = mat.map(|m| m.specific_heat_capacity).unwrap_or(1000.0);
-                let self_rho_cp = density * cp;
+    // Working buffer: start from current voxel temperatures.
+    let mut temps: Vec<f32> = voxels.iter().map(|v| v.temperature).collect();
+    // Material IDs don't change during diffusion — cache them.
+    let materials: Vec<MaterialId> = voxels.iter().map(|v| v.material).collect();
 
-                let mut neighbors = Vec::with_capacity(6);
-                // ±X
-                if x > 0 {
-                    let n = &voxels[idx - 1];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
-                if x + 1 < size {
-                    let n = &voxels[idx + 1];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
-                // ±Y
-                if y > 0 {
-                    let n = &voxels[idx - size];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
-                if y + 1 < size {
-                    let n = &voxels[idx + size];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
-                // ±Z
-                if z > 0 {
-                    let n = &voxels[idx - size * size];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
-                if z + 1 < size {
-                    let n = &voxels[idx + size * size];
-                    neighbors.push((n.temperature, thermal_conductivity(n.material, registry)));
-                }
+    for _step in 0..n_substeps {
+        let snapshot = temps.clone();
+        for z in 0..size {
+            for y in 0..size {
+                for x in 0..size {
+                    let idx = z * size * size + y * size + x;
 
-                new_temps.push(diffuse_temperature(
-                    voxel.temperature,
-                    self_k,
-                    self_rho_cp,
-                    &neighbors,
-                    dt,
-                ));
+                    let mat = registry.get(materials[idx]);
+                    let self_k = mat.map(|m| m.thermal_conductivity).unwrap_or(0.1);
+                    let density = mat.map(|m| m.density).unwrap_or(1.0);
+                    let cp = mat.map(|m| m.specific_heat_capacity).unwrap_or(1000.0);
+                    let self_rho_cp = density * cp;
+
+                    let mut neighbors = Vec::with_capacity(6);
+                    if x > 0 {
+                        neighbors.push((
+                            snapshot[idx - 1],
+                            thermal_conductivity(materials[idx - 1], registry),
+                        ));
+                    }
+                    if x + 1 < size {
+                        neighbors.push((
+                            snapshot[idx + 1],
+                            thermal_conductivity(materials[idx + 1], registry),
+                        ));
+                    }
+                    if y > 0 {
+                        neighbors.push((
+                            snapshot[idx - size],
+                            thermal_conductivity(materials[idx - size], registry),
+                        ));
+                    }
+                    if y + 1 < size {
+                        neighbors.push((
+                            snapshot[idx + size],
+                            thermal_conductivity(materials[idx + size], registry),
+                        ));
+                    }
+                    if z > 0 {
+                        neighbors.push((
+                            snapshot[idx - size * size],
+                            thermal_conductivity(materials[idx - size * size], registry),
+                        ));
+                    }
+                    if z + 1 < size {
+                        neighbors.push((
+                            snapshot[idx + size * size],
+                            thermal_conductivity(materials[idx + size * size], registry),
+                        ));
+                    }
+
+                    temps[idx] =
+                        diffuse_temperature(snapshot[idx], self_k, self_rho_cp, &neighbors, sub_dt);
+                }
             }
         }
     }
 
-    new_temps
+    temps
 }
 
 // ---------------------------------------------------------------------------

@@ -9,9 +9,9 @@ ReactionData(
     min_temperature: 843.0,
     max_temperature: 99999.0,
     output_a: "Steam",
-    output_b: None,
-    // ΔT of 3500 K compensates for the conduction-only heat model (no
-    // convection or radiation). Target: product reaches ~3000–4000 K,
-    // then cools via diffusion to ignite neighboring H₂ voxels.
+    output_b: Some("Steam"),
+    // ΔT of 3500 K applied to the product voxel. With CFL-stable diffusion
+    // and reactions-first tick ordering, this propagates the flame front
+    // through adjacent H₂/O₂ pairs via thermal conduction.
     heat_output: 3500.0,
 )

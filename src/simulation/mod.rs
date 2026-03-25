@@ -1,9 +1,9 @@
 // Shared simulation harness for multi-tick voxel chemistry/physics tests.
 //
 // Provides a deterministic tick loop that combines:
-//   1. Heat diffusion (Fourier's law)
-//   1b. Radiative heat transfer (Stefan-Boltzmann)
-//   2. Chemical reactions (neighbor-pair matching)
+//   1. Chemical reactions (neighbor-pair matching) — fast processes first
+//   2. Heat diffusion (Fourier's law, CFL sub-stepped for stability)
+//   2b. Radiative heat transfer (Stefan-Boltzmann)
 //   3. State transitions (melting/boiling/freezing)
 //   4. Pressure diffusion (gas equalization)
 //
@@ -148,11 +148,16 @@ fn diffuse_pressure_sim(
 /// Run one simulation tick on a flat `size³` voxel array.
 ///
 /// Steps per tick:
-///  1. Heat diffusion (Fourier's law via `diffuse_chunk`)
-///     - 1b. Radiative heat transfer (Stefan-Boltzmann via `radiate_chunk`)
-///  2. Chemical reactions (neighbor-pair `check_reaction`)
+///  1. Chemical reactions (neighbor-pair `check_reaction`) — fast processes
+///  2. Heat diffusion (Fourier's law via `diffuse_chunk`, CFL sub-stepped)
+///     - 2b. Radiative heat transfer (Stefan-Boltzmann via `radiate_chunk`)
 ///  3. State transitions (`apply_transitions`)
 ///  4. Pressure diffusion (gas equalization)
+///
+/// Reactions run first because chemical processes (μs timescale) are
+/// effectively instantaneous relative to thermal transport (s–min timescale).
+/// This ensures ignition sources trigger reactions before diffusion smears
+/// them across the grid.
 ///
 /// `dt` is the simulation timestep in seconds.
 pub fn simulate_tick(
@@ -162,19 +167,8 @@ pub fn simulate_tick(
     registry: &MaterialRegistry,
     dt: f32,
 ) -> TickResult {
-    // 1. Heat diffusion
-    let new_temps = diffuse_chunk(voxels, size, dt, registry);
-    for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
-        v.temperature = t;
-    }
-
-    // 1b. Radiative heat transfer — hot surfaces exchange heat at distance
-    let rad_deltas = radiate_chunk(voxels, size, dt, registry, STEFAN_BOLTZMANN, 500.0, 16);
-    for (v, &delta) in voxels.iter_mut().zip(rad_deltas.iter()) {
-        v.temperature += delta;
-    }
-
-    // 2. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors
+    // 1. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors.
+    //    Runs first so ignition hot-spots trigger before diffusion spreads them.
     let mut reactions_fired = 0;
     let snapshot: Vec<Voxel> = voxels.to_vec();
 
@@ -222,6 +216,18 @@ pub fn simulate_tick(
                 }
             }
         }
+    }
+
+    // 2. Heat diffusion (CFL sub-stepped for stability with low-density gases)
+    let new_temps = diffuse_chunk(voxels, size, dt, registry);
+    for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
+        v.temperature = t;
+    }
+
+    // 2b. Radiative heat transfer — hot surfaces exchange heat at distance
+    let rad_deltas = radiate_chunk(voxels, size, dt, registry, STEFAN_BOLTZMANN, 500.0, 16);
+    for (v, &delta) in voxels.iter_mut().zip(rad_deltas.iter()) {
+        v.temperature += delta;
     }
 
     // 3. State transitions
@@ -354,5 +360,106 @@ mod tests {
         assert!(is_permeable(MaterialId::AIR, &reg));
         assert!(is_permeable(MaterialId(12), &reg));
         assert!(!is_permeable(MaterialId(1), &reg));
+    }
+
+    /// Regression test: oxyhydrogen chain reaction must propagate.
+    ///
+    /// Places H₂ and O₂ in an alternating pattern with a 900K hot spot.
+    /// Verifies that the initial reaction fires AND heat propagates enough
+    /// to ignite additional H₂/O₂ pairs over subsequent ticks.
+    #[test]
+    fn oxyhydrogen_chain_reaction_propagates() {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: 0,
+            name: "Air".into(),
+            default_phase: Phase::Gas,
+            density: 1.225,
+            thermal_conductivity: 0.026,
+            specific_heat_capacity: 1005.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 12,
+            name: "Hydrogen".into(),
+            default_phase: Phase::Gas,
+            density: 0.0899,
+            thermal_conductivity: 0.1805,
+            specific_heat_capacity: 14304.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 13,
+            name: "Oxygen".into(),
+            default_phase: Phase::Gas,
+            density: 1.429,
+            thermal_conductivity: 0.02658,
+            specific_heat_capacity: 918.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 9,
+            name: "Steam".into(),
+            default_phase: Phase::Gas,
+            density: 0.6,
+            thermal_conductivity: 0.025,
+            specific_heat_capacity: 2010.0,
+            ..Default::default()
+        });
+
+        let rule = ReactionData {
+            name: "Oxyhydrogen".into(),
+            input_a: "Hydrogen".into(),
+            input_b: Some("Oxygen".into()),
+            min_temperature: 843.0,
+            max_temperature: 99999.0,
+            output_a: "Steam".into(),
+            output_b: Some("Steam".into()),
+            heat_output: 3500.0,
+        };
+
+        // 4³ grid: alternating H₂ and O₂ (checkerboard)
+        let size = 4;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        for z in 0..size {
+            for y in 0..size {
+                for x in 0..size {
+                    let i = z * size * size + y * size + x;
+                    voxels[i].temperature = 288.15;
+                    if (x + y + z) % 2 == 0 {
+                        voxels[i].material = MaterialId(12); // H₂
+                    } else {
+                        voxels[i].material = MaterialId(13); // O₂
+                    }
+                }
+            }
+        }
+
+        // Hot spot at (2,2,2) — even sum so it's H₂
+        let center = 2 * size * size + 2 * size + 2;
+        assert_eq!(
+            voxels[center].material,
+            MaterialId(12),
+            "hot spot should be H₂"
+        );
+        voxels[center].temperature = 900.0;
+
+        let rules = vec![rule];
+        let mut total_reactions = 0;
+        for _tick in 0..50 {
+            let result = simulate_tick(&mut voxels, size, &rules, &reg, 500.0);
+            total_reactions += result.reactions_fired;
+        }
+
+        let steam_count = voxels
+            .iter()
+            .filter(|v| v.material == MaterialId(9))
+            .count();
+
+        assert!(
+            total_reactions >= 5,
+            "Chain reaction should propagate: got {total_reactions} reactions"
+        );
+        assert!(steam_count >= 5, "Should produce steam: got {steam_count}");
     }
 }
