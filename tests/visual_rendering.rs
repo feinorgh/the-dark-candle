@@ -575,13 +575,24 @@ fn daynight_terrain_video() {
         // Ambient scales with elevation
         let config = DayNightConfig::default();
         let amb = (ambient_factor(elevation, &config) / config.noon_ambient)
-            .clamp(0.05, 1.0)
-            * 0.2;
+            .clamp(0.08, 1.0)
+            * 0.25;
+
+        // Smooth intensity: ramp with sin(elevation) near horizon instead of
+        // hard on/off, avoiding abrupt flicker at sunrise/sunset.
+        let sun_intensity = if elevation > 0.1 {
+            1.0
+        } else if elevation > -0.05 {
+            // Smooth ramp over ~0.15 radians (~8.6°) around the horizon
+            ((elevation + 0.05) / 0.15).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
         let light = SceneLight {
             direction: (sun_x, sun_y, sun_z),
             color: sc,
-            intensity: if elevation > 0.0 { 1.0 } else { 0.0 },
+            intensity: sun_intensity,
             ambient: amb,
         };
 
