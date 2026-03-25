@@ -12,6 +12,7 @@ use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkOctree};
 use super::refinement::{SubdivisionConfig, analyze_chunk, build_refined_octree};
 use super::terrain::{TerrainConfig, TerrainGenerator};
 use crate::camera::FpsCamera;
+use crate::chemistry::runtime::ChunkActivity;
 
 /// How many chunks outward from the camera to load in each axis.
 #[derive(Resource)]
@@ -145,6 +146,7 @@ pub fn update_chunks(
                     chunk,
                     coord,
                     chunk_octree,
+                    ChunkActivity::default(),
                     Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
                 ))
                 .id();

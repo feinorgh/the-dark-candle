@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
@@ -15,6 +16,18 @@ impl Plugin for DataPlugin {
             .add_plugins(RonAssetPlugin::<CreatureData>::new(&["creature.ron"]))
             .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]))
             .add_plugins(RonAssetPlugin::<FluidConfig>::new(&["fluid_config.ron"]));
+
+        // Build MaterialRegistry synchronously from .material.ron files on disk.
+        match load_material_registry() {
+            Ok(registry) => {
+                info!("Loaded MaterialRegistry with {} materials", registry.len());
+                app.insert_resource(registry);
+            }
+            Err(e) => {
+                warn!("Failed to load MaterialRegistry: {e}");
+                app.init_resource::<MaterialRegistry>();
+            }
+        }
     }
 }
 
@@ -257,7 +270,7 @@ fn default_max_stack() -> u32 {
 
 /// Lookup table from MaterialId to material properties, with name-based resolution.
 /// Built at startup from loaded MaterialData assets.
-#[derive(Debug, Default, Clone)]
+#[derive(Resource, Debug, Default, Clone)]
 pub struct MaterialRegistry {
     materials: HashMap<u16, MaterialData>,
     name_to_id: HashMap<String, u16>,
@@ -297,6 +310,55 @@ impl MaterialRegistry {
     pub fn is_empty(&self) -> bool {
         self.materials.is_empty()
     }
+}
+
+/// Build a `MaterialRegistry` by reading all `.material.ron` files from disk.
+///
+/// Searches `assets/data/materials/` relative to `CARGO_MANIFEST_DIR` (tests)
+/// or the current working directory (runtime).
+pub fn load_material_registry() -> Result<MaterialRegistry, String> {
+    let dir = find_data_dir()?.join("materials");
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+
+    let mut reg = MaterialRegistry::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !name.ends_with(".material.ron") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let data: MaterialData =
+            ron::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+        reg.insert(data);
+    }
+
+    if reg.is_empty() {
+        return Err(format!("no .material.ron files found in {}", dir.display()));
+    }
+    Ok(reg)
+}
+
+/// Locate the `assets/data/` directory.
+///
+/// Checks `CARGO_MANIFEST_DIR` first (for tests), then falls back to paths
+/// relative to the current working directory.
+pub fn find_data_dir() -> Result<std::path::PathBuf, String> {
+    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let path = Path::new(&dir).join("assets").join("data");
+        if path.is_dir() {
+            return Ok(path);
+        }
+    }
+    for candidate in ["assets/data", "data"] {
+        let path = Path::new(candidate);
+        if path.is_dir() {
+            return Ok(path.to_path_buf());
+        }
+    }
+    Err("cannot find assets/data/ directory".into())
 }
 
 /// Configuration for fluid simulation systems, loaded from
