@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use the_dark_candle::{
     behavior::BehaviorPlugin, biology::BiologyPlugin, camera::CameraPlugin,
-    chemistry::ChemistryPlugin, data::DataPlugin, entities::EntityPlugin,
-    persistence::PersistencePlugin, physics::PhysicsPlugin, procgen::ProcgenPlugin,
-    social::SocialPlugin, world::WorldPlugin,
+    chemistry::ChemistryPlugin, data::DataPlugin, diagnostics::DiagnosticsPlugin,
+    entities::EntityPlugin, persistence::PersistencePlugin, physics::PhysicsPlugin,
+    procgen::ProcgenPlugin, social::SocialPlugin, world::WorldPlugin,
 };
 
 fn main() {
@@ -19,6 +19,7 @@ fn main() {
         .add_plugins((
             DataPlugin,
             CameraPlugin,
+            DiagnosticsPlugin,
             EntityPlugin,
             WorldPlugin,
             PhysicsPlugin,

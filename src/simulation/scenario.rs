@@ -17,6 +17,7 @@ use serde::Deserialize;
 use crate::chemistry::heat::thermal_conductivity;
 use crate::chemistry::reactions::ReactionData;
 use crate::data::{MaterialData, MaterialRegistry};
+use crate::diagnostics::state_dump::{dump_grid_state, dump_to_ron};
 use crate::simulation::assertions::{Assertion, evaluate};
 use crate::simulation::geometry::{Region, apply_regions};
 use crate::simulation::{SimulationStats, simulate_tick};
@@ -159,6 +160,14 @@ pub struct SimulationScenario {
     /// Assertions evaluated after the simulation completes (or each tick for
     /// `StopCondition::UntilAllPass`).
     pub assertions: Vec<Assertion>,
+
+    /// Optional path to write a post-simulation state dump as RON.
+    ///
+    /// Use `"stdout"` to print to stderr (avoids mixing with test output),
+    /// or a file path like `"diagnostics/my_dump.ron"`. When `None` (the
+    /// default), no dump is emitted.
+    #[serde(default)]
+    pub emit_dump: Option<String>,
 }
 
 fn default_ambient_temperature() -> f32 {
@@ -464,7 +473,34 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
         );
     }
 
-    // 6. Evaluate assertions against final state
+    // 6. Emit state dump (if requested)
+    if let Some(ref dump_target) = scenario.emit_dump {
+        let dump = dump_grid_state(&voxels, size, &registry, Some(&stats), false);
+        match dump_to_ron(&dump) {
+            Ok(ron_text) => {
+                if dump_target == "stdout" {
+                    eprintln!("--- State dump for {} ---\n{}", scenario.name, ron_text);
+                } else {
+                    if let Some(parent) = Path::new(dump_target).parent()
+                        && !parent.as_os_str().is_empty()
+                    {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(dump_target, &ron_text) {
+                        eprintln!("Failed to write dump to {dump_target}: {e}");
+                    } else {
+                        eprintln!(
+                            "  State dump written to {dump_target} ({} bytes)",
+                            ron_text.len()
+                        );
+                    }
+                }
+            }
+            Err(e) => eprintln!("Failed to serialize dump: {e}"),
+        }
+    }
+
+    // 7. Evaluate assertions against final state
     let mut failures = Vec::new();
     for assertion in &scenario.assertions {
         if let Err(msg) = evaluate(assertion, &voxels, size, &registry, &stats) {
@@ -536,6 +572,7 @@ mod tests {
             dt: 1.0,
             stop_condition: StopCondition::FixedTicks,
             assertions: vec![Assertion::NoReactions],
+            emit_dump: None,
         };
         assert!(run_scenario(&scenario).is_ok());
     }
@@ -561,6 +598,7 @@ mod tests {
                 material: "Stone".into(),
                 min_count: 1,
             }],
+            emit_dump: None,
         };
         assert!(run_scenario(&scenario).is_err());
     }
@@ -596,6 +634,7 @@ mod tests {
             dt: 1.0,
             stop_condition: StopCondition::UntilAllPass,
             assertions: vec![Assertion::NoReactions],
+            emit_dump: None,
         };
         // Should pass on the very first tick (no reactions in empty grid)
         assert!(run_scenario(&scenario).is_ok());

@@ -6,6 +6,7 @@ pub mod biology;
 pub mod camera;
 pub mod chemistry;
 pub mod data;
+pub mod diagnostics;
 pub mod entities;
 pub mod persistence;
 pub mod physics;
