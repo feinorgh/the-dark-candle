@@ -697,6 +697,30 @@ Design constraint: all collision properties (restitution, friction) derive from
 `MaterialData` in RON files. No magic numbers — emergent behavior from SI
 material properties.
 
+### Soft Body Physics (Future)
+Deformable objects that bend, stretch, compress, or tear under stress — as
+opposed to the infinitely-stiff assumption of rigid body dynamics. Candidate
+implementation: mass-spring lattice or position-based dynamics (PBD/XPBD).
+
+- **Elastic deformation** — objects return to rest shape when stress < yield
+  strength. Governed by Young's modulus (already in `MaterialData`)
+- **Plastic deformation & fracture** — permanent shape change above yield
+  strength; tearing/snapping above ultimate strength
+- **Use cases** — cloth (banners, nets), rope/vines/tethers, organic creatures
+  (slimes, tentacles, flesh deformation on impact), vegetation bending in wind
+- **Terrain deformation** — soft materials (mud, snow, sand) compressing under
+  load rather than discrete voxel placement/removal
+- **Coupling with rigid bodies** — soft body nodes exert forces on rigid bodies
+  and vice versa (e.g. rope attached to a rigid anchor)
+
+Design constraint: material stiffness, damping, and yield/ultimate strength
+derive from `MaterialData` RON files. Deformation emerges from the interaction
+of applied forces and material properties — no hardcoded spring constants.
+
+Priority: low. Rigid body physics, fluids (LBM/FLIP), and structural integrity
+cover most gameplay needs. Soft bodies become relevant when a core mechanic
+requires deformation (rope/grapple, ragdolls, destructible organic entities).
+
 ### Simulation Video Demos
 The video visualization pipeline (`src/diagnostics/video.rs` +
 `visualization.rs`) can render per-tick frames from headless simulations and
