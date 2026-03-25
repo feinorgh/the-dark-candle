@@ -14,6 +14,7 @@ MaterialData(
     latent_heat_fusion: None,
     latent_heat_vaporization: None,
     emissivity: 0.0,
+    absorption_coefficient: Some(0.5),
     viscosity: Some(0.0000120),
     friction_coefficient: 0.0,
     restitution: 0.0,

@@ -1,12 +1,16 @@
 // Discrete grid ray marching for voxel grids.
 //
 // Traces rays through a flat `size³` voxel array along the 26 grid-aligned
-// directions (6 cardinal, 12 edge-diagonal, 8 corner-diagonal). Opaque
-// (non-air) voxels terminate the ray; transparent voxels are traversed.
+// directions (6 cardinal, 12 edge-diagonal, 8 corner-diagonal). Two march
+// variants:
+//
+// - `march_grid_ray` — binary opaque/transparent: non-air stops the ray.
+// - `march_grid_ray_attenuated` — Beer-Lambert attenuation through
+//    semi-transparent media (water, ice, steam). Returns transmittance.
 //
 // Used by radiative heat transfer (Phase 9a) and later by optics (Phase 11).
 
-use crate::world::voxel::Voxel;
+use crate::world::voxel::{MaterialId, Voxel};
 
 /// Result of a successful ray march — the first opaque voxel hit.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,6 +23,19 @@ pub struct RayHit {
     /// Euclidean distance from origin to hit in voxel units (= meters).
     pub distance: f32,
 }
+
+/// Ray hit with Beer-Lambert transmittance through intervening media.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttenuatedRayHit {
+    /// The opaque surface that terminated the ray.
+    pub hit: RayHit,
+    /// Fraction of radiation reaching the target (0.0–1.0).
+    /// `transmittance = exp(−Σ(αᵢ × dᵢ))` via Beer-Lambert law.
+    pub transmittance: f32,
+}
+
+/// Transmittance below this threshold is treated as fully absorbed (early exit).
+const MIN_TRANSMITTANCE: f32 = 0.001;
 
 /// All 26 grid-aligned directions: 6 cardinal + 12 edge + 8 corner.
 pub const RAY_DIRECTIONS: [[i32; 3]; 26] = [
@@ -121,6 +138,76 @@ pub fn march_grid_ray(
                 index: idx,
                 distance: step as f32 * step_dist,
             });
+        }
+    }
+
+    None
+}
+
+/// March a ray with Beer-Lambert attenuation through semi-transparent media.
+///
+/// `get_absorption` classifies each material:
+/// - `Some(0.0)` — fully transparent (air), no attenuation
+/// - `Some(α)` where α > 0 — semi-transparent, attenuate by exp(−α × step_dist)
+/// - `None` — opaque surface, terminates the ray (returned as hit)
+///
+/// Returns the first opaque hit plus the cumulative transmittance through
+/// any intervening semi-transparent voxels. Returns `None` if the ray exits
+/// the grid, exceeds `max_steps`, or is fully absorbed (transmittance < 0.001).
+pub fn march_grid_ray_attenuated<F>(
+    voxels: &[Voxel],
+    size: usize,
+    start: [usize; 3],
+    dir_index: usize,
+    max_steps: usize,
+    get_absorption: F,
+) -> Option<AttenuatedRayHit>
+where
+    F: Fn(MaterialId) -> Option<f32>,
+{
+    debug_assert!(dir_index < 26);
+    let dir = RAY_DIRECTIONS[dir_index];
+    let step_dist = STEP_DISTANCES[dir_index];
+
+    let mut x = start[0] as i32;
+    let mut y = start[1] as i32;
+    let mut z = start[2] as i32;
+    let bound = size as i32;
+    let mut optical_depth: f32 = 0.0;
+
+    for step in 1..=max_steps {
+        x += dir[0];
+        y += dir[1];
+        z += dir[2];
+
+        if x < 0 || y < 0 || z < 0 || x >= bound || y >= bound || z >= bound {
+            return None;
+        }
+
+        let ux = x as usize;
+        let uy = y as usize;
+        let uz = z as usize;
+        let idx = uz * size * size + uy * size + ux;
+
+        match get_absorption(voxels[idx].material) {
+            Some(alpha) => {
+                optical_depth += alpha * step_dist;
+                if (-optical_depth).exp() < MIN_TRANSMITTANCE {
+                    return None; // fully absorbed by medium
+                }
+            }
+            None => {
+                return Some(AttenuatedRayHit {
+                    hit: RayHit {
+                        x: ux,
+                        y: uy,
+                        z: uz,
+                        index: idx,
+                        distance: step as f32 * step_dist,
+                    },
+                    transmittance: (-optical_depth).exp(),
+                });
+            }
         }
     }
 
@@ -286,5 +373,152 @@ mod tests {
                 "dir {i}: step dist {dist} != expected {expected}"
             );
         }
+    }
+
+    // --- Attenuated ray march tests ---
+
+    fn set_material(
+        voxels: &mut [Voxel],
+        size: usize,
+        x: usize,
+        y: usize,
+        z: usize,
+        mat: MaterialId,
+    ) {
+        voxels[z * size * size + y * size + x].material = mat;
+    }
+
+    /// Classify materials for attenuated tests:
+    /// Air → Some(0.0), Water → Some(0.1), Stone → None (opaque).
+    fn test_absorption(mat: MaterialId) -> Option<f32> {
+        if mat.is_air() {
+            Some(0.0)
+        } else if mat == MaterialId::WATER {
+            Some(0.1) // α = 0.1 m⁻¹ for test convenience
+        } else {
+            None // opaque
+        }
+    }
+
+    #[test]
+    fn attenuated_through_air_has_full_transmittance() {
+        let mut grid = make_grid(8);
+        set_solid(&mut grid, 8, 6, 4, 4);
+        let result = march_grid_ray_attenuated(&grid, 8, [4, 4, 4], 0, 8, test_absorption);
+        let result = result.expect("should hit stone");
+        assert_eq!(result.hit.x, 6);
+        assert!(
+            (result.transmittance - 1.0).abs() < f32::EPSILON,
+            "pure air path should have transmittance 1.0, got {}",
+            result.transmittance
+        );
+    }
+
+    #[test]
+    fn attenuated_through_water_reduces_transmittance() {
+        let mut grid = make_grid(8);
+        // Water at x=5, stone target at x=6
+        set_material(&mut grid, 8, 5, 4, 4, MaterialId::WATER);
+        set_material(&mut grid, 8, 6, 4, 4, MaterialId::STONE);
+        let result = march_grid_ray_attenuated(&grid, 8, [4, 4, 4], 0, 8, test_absorption);
+        let result = result.expect("should hit stone through water");
+        assert_eq!(result.hit.x, 6);
+        // 1 voxel of water with α=0.1: transmittance = exp(-0.1) ≈ 0.905
+        let expected = (-0.1_f32).exp();
+        assert!(
+            (result.transmittance - expected).abs() < 1e-6,
+            "transmittance {:.6} should be {expected:.6}",
+            result.transmittance
+        );
+    }
+
+    #[test]
+    fn attenuated_multiple_water_voxels() {
+        let mut grid = make_grid(10);
+        // 3 voxels of water (x=5,6,7), stone target at x=8
+        for x in 5..=7 {
+            set_material(&mut grid, 10, x, 4, 4, MaterialId::WATER);
+        }
+        set_material(&mut grid, 10, 8, 4, 4, MaterialId::STONE);
+        let result = march_grid_ray_attenuated(&grid, 10, [4, 4, 4], 0, 10, test_absorption);
+        let result = result.expect("should hit stone through water");
+        assert_eq!(result.hit.x, 8);
+        // 3 voxels × α=0.1 × d=1: transmittance = exp(-0.3) ≈ 0.741
+        let expected = (-0.3_f32).exp();
+        assert!(
+            (result.transmittance - expected).abs() < 1e-5,
+            "transmittance {:.6} should be {expected:.6}",
+            result.transmittance
+        );
+    }
+
+    #[test]
+    fn attenuated_fully_absorbed_returns_none() {
+        let mut grid = make_grid(16);
+        // Use high α to ensure full absorption
+        let high_absorption = |mat: MaterialId| -> Option<f32> {
+            if mat.is_air() {
+                Some(0.0)
+            } else if mat == MaterialId::WATER {
+                Some(10.0) // α = 10 m⁻¹: exp(-10) ≈ 4.5e-5 < MIN_TRANSMITTANCE
+            } else {
+                None
+            }
+        };
+        // Fill x=5..12 with water (8 voxels), stone target at x=13
+        for x in 5..=12 {
+            set_material(&mut grid, 16, x, 4, 4, MaterialId::WATER);
+        }
+        set_material(&mut grid, 16, 13, 4, 4, MaterialId::STONE);
+        let result = march_grid_ray_attenuated(&grid, 16, [4, 4, 4], 0, 16, high_absorption);
+        assert!(
+            result.is_none(),
+            "thick water layer with high α should fully absorb the ray"
+        );
+    }
+
+    #[test]
+    fn attenuated_opaque_stops_before_transparent() {
+        let mut grid = make_grid(8);
+        // Stone at x=5 blocks, water at x=6 is behind it
+        set_material(&mut grid, 8, 5, 4, 4, MaterialId::STONE);
+        set_material(&mut grid, 8, 6, 4, 4, MaterialId::WATER);
+        let result = march_grid_ray_attenuated(&grid, 8, [4, 4, 4], 0, 8, test_absorption);
+        let result = result.expect("should hit stone");
+        assert_eq!(result.hit.x, 5);
+        assert!(
+            (result.transmittance - 1.0).abs() < f32::EPSILON,
+            "no semi-transparent material before stone"
+        );
+    }
+
+    #[test]
+    fn attenuated_low_alpha_preserves_most_radiation() {
+        let mut grid = make_grid(8);
+        set_material(&mut grid, 8, 5, 4, 4, MaterialId::WATER);
+        set_material(&mut grid, 8, 6, 4, 4, MaterialId::STONE);
+        // Use very low absorption coefficient
+        let low_absorption = |mat: MaterialId| -> Option<f32> {
+            if mat.is_air() {
+                Some(0.0)
+            } else if mat == MaterialId::WATER {
+                Some(0.01) // nearly transparent
+            } else {
+                None
+            }
+        };
+        let result = march_grid_ray_attenuated(&grid, 8, [4, 4, 4], 0, 8, low_absorption);
+        let result = result.expect("should hit stone");
+        let expected = (-0.01_f32).exp(); // ≈ 0.99
+        assert!(
+            result.transmittance > 0.98,
+            "low α should preserve most radiation: {:.4}",
+            result.transmittance
+        );
+        assert!(
+            (result.transmittance - expected).abs() < 1e-5,
+            "transmittance {:.6} should be {expected:.6}",
+            result.transmittance
+        );
     }
 }

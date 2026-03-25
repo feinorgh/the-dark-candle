@@ -91,6 +91,11 @@ pub struct MaterialData {
     /// Emissivity for radiative heat transfer (0.0–1.0, dimensionless).
     #[serde(default)]
     pub emissivity: f32,
+    /// Absorption coefficient for semi-transparent materials (m⁻¹).
+    /// Beer-Lambert attenuation: transmittance = exp(−α × d).
+    /// `None` = fully opaque (blocks radiation), `Some(α)` = attenuates per meter.
+    #[serde(default)]
+    pub absorption_coefficient: Option<f32>,
 
     // --- Mechanical properties (SI) ---
     /// Dynamic viscosity in Pa·s. Only meaningful for fluids.

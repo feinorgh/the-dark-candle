@@ -278,16 +278,26 @@ pub fn radiate_chunk(
                 }
 
                 for dir_idx in 0..RAY_DIRECTIONS.len() {
-                    let hit = match raycast::march_grid_ray(
+                    let get_absorption = |mat_id: MaterialId| -> Option<f32> {
+                        if mat_id.is_air() {
+                            return Some(0.0);
+                        }
+                        registry.get(mat_id).and_then(|m| m.absorption_coefficient)
+                    };
+
+                    let attenuated = match raycast::march_grid_ray_attenuated(
                         voxels,
                         size,
                         [x, y, z],
                         dir_idx,
                         max_ray_steps,
+                        get_absorption,
                     ) {
                         Some(h) => h,
                         None => continue,
                     };
+
+                    let hit = attenuated.hit;
 
                     // Deduplicate: process each (emitter, receiver) pair once.
                     let pair = (idx.min(hit.index), idx.max(hit.index));
@@ -313,7 +323,7 @@ pub fn radiate_chunk(
                         eps_eff,
                         view,
                         sigma,
-                    );
+                    ) * attenuated.transmittance;
 
                     let rho_cp_e = mat_e.density * mat_e.specific_heat_capacity;
                     let rho_cp_r = mat_r.density * mat_r.specific_heat_capacity;
@@ -681,6 +691,17 @@ mod tests {
             ..Default::default()
         });
         reg.insert(MaterialData {
+            id: WATER_ID,
+            name: "Water".into(),
+            default_phase: Phase::Liquid,
+            density: 1000.0,
+            thermal_conductivity: 0.606,
+            specific_heat_capacity: 4186.0,
+            emissivity: 0.96,
+            absorption_coefficient: Some(100.0),
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
             id: IRON_ID,
             name: "Iron".into(),
             default_phase: Phase::Solid,
@@ -1034,5 +1055,131 @@ mod tests {
                 "Below-threshold voxels should produce no radiation deltas"
             );
         }
+    }
+
+    #[test]
+    fn radiate_chunk_attenuated_through_water() {
+        // Hot stone (1200K) → water voxel → cold stone: water attenuates flux.
+        let reg = rad_registry();
+        let size = 8;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let hot_idx = 4 * size * size + 4 * size + 1;
+        voxels[hot_idx].material = MaterialId::STONE;
+        voxels[hot_idx].temperature = 1200.0;
+
+        // Water at x=2 (semi-transparent, α=100 m⁻¹)
+        let water_idx = 4 * size * size + 4 * size + 2;
+        voxels[water_idx].material = MaterialId::WATER;
+        voxels[water_idx].temperature = 288.15;
+
+        // Cold stone target at x=3
+        let cold_idx = 4 * size * size + 4 * size + 3;
+        voxels[cold_idx].material = MaterialId::STONE;
+        voxels[cold_idx].temperature = 288.15;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // With α=100 m⁻¹ and 1m of water: transmittance = exp(-100) ≈ 3.7e-44
+        // This is below MIN_TRANSMITTANCE so the ray is fully absorbed.
+        // The cold stone should receive negligible radiation.
+        assert!(
+            deltas[cold_idx].abs() < 1e-10,
+            "Water (α=100) should nearly fully absorb radiation: got delta={}",
+            deltas[cold_idx]
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_no_absorption_coeff_blocks_like_before() {
+        // Verify materials without absorption_coefficient (None) are opaque.
+        // Stone wall between hot and cold stone should fully block radiation.
+        let reg = rad_registry();
+        let size = 8;
+        let mut voxels: Vec<Voxel> = (0..size * size * size).map(|_| Voxel::default()).collect();
+
+        let hot_idx = 4 * size * size + 4 * size + 1;
+        voxels[hot_idx].material = MaterialId::STONE;
+        voxels[hot_idx].temperature = 1200.0;
+
+        // Opaque iron wall at x=3 (no absorption_coefficient)
+        let wall_idx = 4 * size * size + 4 * size + 3;
+        voxels[wall_idx].material = MaterialId(IRON_ID);
+        voxels[wall_idx].temperature = 288.15;
+
+        // Target stone at x=5
+        let target_idx = 4 * size * size + 4 * size + 5;
+        voxels[target_idx].material = MaterialId::STONE;
+        voxels[target_idx].temperature = 288.15;
+
+        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // Iron wall should absorb from hot stone (it's the first hit in +x dir),
+        // but target at x=5 should only receive radiation from wall itself
+        // (which is at 288K, below 500K threshold), so no direct hot→target flux.
+        // The wall gets heated:
+        assert!(
+            deltas[wall_idx] > 0.0,
+            "Iron wall should absorb radiation from hot stone"
+        );
+    }
+
+    #[test]
+    fn radiate_chunk_partial_attenuation_reduces_flux() {
+        // Compare radiation with and without a semi-transparent medium.
+        // Use a low-α water variant to get partial attenuation.
+        let mut reg = rad_registry();
+        // Override water with very low absorption (α=0.1 m⁻¹)
+        reg.insert(MaterialData {
+            id: WATER_ID,
+            name: "Water".into(),
+            default_phase: Phase::Liquid,
+            density: 1000.0,
+            thermal_conductivity: 0.606,
+            specific_heat_capacity: 4186.0,
+            emissivity: 0.96,
+            absorption_coefficient: Some(0.1),
+            ..Default::default()
+        });
+
+        let size = 8;
+
+        // Case 1: hot stone → air → cold stone (no attenuation)
+        let mut voxels_clear: Vec<Voxel> =
+            (0..size * size * size).map(|_| Voxel::default()).collect();
+        let hot = 4 * size * size + 4 * size + 1;
+        let cold = 4 * size * size + 4 * size + 3;
+        voxels_clear[hot].material = MaterialId::STONE;
+        voxels_clear[hot].temperature = 1200.0;
+        voxels_clear[cold].material = MaterialId::STONE;
+        voxels_clear[cold].temperature = 288.15;
+        let deltas_clear = radiate_chunk(&voxels_clear, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // Case 2: hot stone → water → cold stone (partial attenuation)
+        let mut voxels_water = voxels_clear.clone();
+        let water = 4 * size * size + 4 * size + 2;
+        voxels_water[water].material = MaterialId::WATER;
+        voxels_water[water].temperature = 288.15;
+        let deltas_water = radiate_chunk(&voxels_water, size, 1.0, &reg, SIGMA, 500.0, 8);
+
+        // With α=0.1 and 1m water: transmittance = exp(-0.1) ≈ 0.905
+        // Cold stone should receive ~90.5% of the clear-path flux
+        assert!(
+            deltas_water[cold] > 0.0,
+            "Cold stone should still receive some radiation through thin water"
+        );
+        assert!(
+            deltas_water[cold] < deltas_clear[cold],
+            "Attenuated flux ({}) should be less than clear flux ({})",
+            deltas_water[cold],
+            deltas_clear[cold]
+        );
+        // Transmittance ≈ 0.905, so attenuated delta should be ~90% of clear
+        let ratio = deltas_water[cold] / deltas_clear[cold];
+        let expected_transmittance = (-0.1_f32).exp();
+        assert!(
+            (ratio - expected_transmittance).abs() < 0.05,
+            "flux ratio {ratio:.3} should be near transmittance {expected_transmittance:.3}"
+        );
     }
 }
