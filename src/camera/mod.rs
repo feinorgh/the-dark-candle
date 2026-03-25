@@ -1,4 +1,5 @@
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
@@ -76,6 +77,7 @@ fn spawn_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 100.0, 0.0).looking_at(Vec3::new(10.0, 95.0, 10.0), Vec3::Y),
+        Bloom::NATURAL,
         FpsCamera::default(),
     ));
 }

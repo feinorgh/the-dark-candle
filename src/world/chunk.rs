@@ -147,6 +147,13 @@ impl Chunk {
         self.dirty = false;
     }
 
+    /// Explicitly mark the chunk dirty without modifying voxel data.
+    /// Used when external state (e.g. thermal vision mode) requires remeshing.
+    #[inline]
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     /// Read-only access to the raw voxel slice. Useful for meshing and simulation
     /// passes that need bulk access.
     pub fn voxels(&self) -> &[Voxel] {

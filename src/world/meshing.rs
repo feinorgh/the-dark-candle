@@ -17,6 +17,7 @@ use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
 use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hysteresis};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
+use crate::chemistry::runtime::ChunkActivity;
 
 /// Output of the meshing pass for a single chunk.
 pub struct ChunkMesh {
@@ -38,6 +39,81 @@ impl ChunkMesh {
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }
+}
+
+/// Resource toggling thermal-vision debug overlay. When enabled, vertex colors
+/// use a blue→cyan→green→yellow→red heatmap based on temperature.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct ThermalVisionMode(pub bool);
+
+// --- Incandescence ---
+
+/// Temperature (K) below which voxels have no glow.
+const GLOW_THRESHOLD: f32 = 800.0;
+
+/// Compute an incandescent color for a voxel given its base material color
+/// and temperature. Below `GLOW_THRESHOLD` the base color is returned
+/// unchanged. Above it, the color blends toward a physically-motivated
+/// incandescence ramp and HDR values > 1.0 enable bloom.
+pub fn incandescence_color(base: [f32; 4], temperature: f32) -> [f32; 4] {
+    if temperature < GLOW_THRESHOLD {
+        return base;
+    }
+
+    // Incandescence ramp: dark red → cherry red → orange → yellow-white
+    let (r, g, b) = if temperature < 1200.0 {
+        let t = (temperature - 800.0) / 400.0;
+        (0.3 + 0.4 * t, 0.02 * t, 0.0)
+    } else if temperature < 1500.0 {
+        let t = (temperature - 1200.0) / 300.0;
+        (0.7 + 0.3 * t, 0.02 + 0.28 * t, 0.0)
+    } else if temperature < 1800.0 {
+        let t = (temperature - 1500.0) / 300.0;
+        (1.0, 0.3 + 0.4 * t, 0.1 * t)
+    } else {
+        (
+            1.0,
+            0.7 + 0.3 * ((temperature - 1800.0) / 500.0).min(1.0),
+            0.1 + 0.9 * ((temperature - 1800.0) / 500.0).min(1.0),
+        )
+    };
+
+    // Blend base toward incandescent color
+    let blend = ((temperature - GLOW_THRESHOLD) / 400.0).min(1.0);
+    let cr = base[0] * (1.0 - blend) + r * blend;
+    let cg = base[1] * (1.0 - blend) + g * blend;
+    let cb = base[2] * (1.0 - blend) + b * blend;
+
+    // HDR emissive multiplier — scales with T⁴ (Stefan-Boltzmann) normalized
+    // to a moderate bloom range. At 1000 K → ~1.5×, at 2000 K → ~24×.
+    let t_norm = temperature / 1000.0;
+    let emissive = t_norm * t_norm * t_norm * t_norm * 0.1;
+    let scale = 1.0 + emissive;
+
+    [cr * scale, cg * scale, cb * scale, base[3]]
+}
+
+/// Map temperature to a debug heatmap color (blue→cyan→green→yellow→red).
+fn thermal_heatmap_color(temperature: f32) -> [f32; 4] {
+    let min_k = 250.0_f32;
+    let max_k = 2000.0_f32;
+    let t = ((temperature - min_k) / (max_k - min_k)).clamp(0.0, 1.0);
+
+    let (r, g, b) = if t < 0.25 {
+        let s = t / 0.25;
+        (0.0, s, 1.0)
+    } else if t < 0.5 {
+        let s = (t - 0.25) / 0.25;
+        (0.0, 1.0, 1.0 - s)
+    } else if t < 0.75 {
+        let s = (t - 0.5) / 0.25;
+        (s, 1.0, 0.0)
+    } else {
+        let s = (t - 0.75) / 0.25;
+        (1.0, 1.0 - s, 0.0)
+    };
+
+    [r, g, b, 1.0]
 }
 
 /// Map a material ID to an RGBA color for rendering.
@@ -71,8 +147,9 @@ fn material_color(mat: MaterialId, color_map: Option<&MaterialColorMap>) -> [f32
 /// Sample the scalar field: 1.0 for solid, 0.0 for air.
 /// Uses an extended grid (CHUNK_SIZE + 1) so we can form cells at the boundary.
 /// Out-of-bounds samples return 0.0 (air) to create surfaces at chunk edges.
+/// Returns (solidity, material, temperature_K).
 #[inline]
-fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId) {
+fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
     if x >= 0
         && y >= 0
         && z >= 0
@@ -82,31 +159,41 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId) {
     {
         let v = chunk.get(x as usize, y as usize, z as usize);
         if v.is_air() {
-            (0.0, MaterialId::AIR)
+            (0.0, MaterialId::AIR, v.temperature)
         } else {
-            (1.0, v.material)
+            (1.0, v.material, v.temperature)
         }
     } else {
-        (0.0, MaterialId::AIR)
+        (0.0, MaterialId::AIR, 288.15)
     }
 }
 
 /// Generate a mesh from a chunk's voxel data using the Surface Nets algorithm.
 pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
-    generate_mesh_with_colors(chunk, None)
+    generate_mesh_with_colors(chunk, None, false)
 }
 
 /// Generate a mesh from a chunk, using the color map for material colors.
-pub fn generate_mesh_with_colors(chunk: &Chunk, color_map: Option<&MaterialColorMap>) -> ChunkMesh {
+pub fn generate_mesh_with_colors(
+    chunk: &Chunk,
+    color_map: Option<&MaterialColorMap>,
+    thermal_vision: bool,
+) -> ChunkMesh {
     generate_mesh_generic(
         CHUNK_SIZE as i32,
         |x, y, z| sample(chunk, x, y, z),
-        |mat| material_color(mat, color_map),
+        |mat, temp| {
+            if thermal_vision {
+                thermal_heatmap_color(temp)
+            } else {
+                incandescence_color(material_color(mat, color_map), temp)
+            }
+        },
     )
 }
 
 /// Sample the scalar field from an octree at a given cell coordinate and size.
-/// Returns (solidity, material). Out-of-bounds → air.
+/// Returns (solidity, material, temperature_K). Out-of-bounds → air.
 #[inline]
 fn sample_octree(
     tree: &OctreeNode<Voxel>,
@@ -114,7 +201,7 @@ fn sample_octree(
     x: i32,
     y: i32,
     z: i32,
-) -> (f32, MaterialId) {
+) -> (f32, MaterialId, f32) {
     if x >= 0
         && y >= 0
         && z >= 0
@@ -124,12 +211,12 @@ fn sample_octree(
     {
         let v = tree.get(x as usize, y as usize, z as usize, size);
         if v.is_air() {
-            (0.0, MaterialId::AIR)
+            (0.0, MaterialId::AIR, v.temperature)
         } else {
-            (1.0, v.material)
+            (1.0, v.material, v.temperature)
         }
     } else {
-        (0.0, MaterialId::AIR)
+        (0.0, MaterialId::AIR, 288.15)
     }
 }
 
@@ -142,7 +229,7 @@ fn sample_octree(
 ///
 /// `size` is the grid dimension (e.g. CHUNK_SIZE = 32).
 pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> ChunkMesh {
-    generate_mesh_from_octree_with_colors(tree, size, None)
+    generate_mesh_from_octree_with_colors(tree, size, None, false)
 }
 
 /// Generate a mesh from an octree volume, using the color map for materials.
@@ -150,11 +237,18 @@ pub fn generate_mesh_from_octree_with_colors(
     tree: &OctreeNode<Voxel>,
     size: usize,
     color_map: Option<&MaterialColorMap>,
+    thermal_vision: bool,
 ) -> ChunkMesh {
     generate_mesh_generic(
         size as i32,
         |x, y, z| sample_octree(tree, size, x, y, z),
-        |mat| material_color(mat, color_map),
+        |mat, temp| {
+            if thermal_vision {
+                thermal_heatmap_color(temp)
+            } else {
+                incandescence_color(material_color(mat, color_map), temp)
+            }
+        },
     )
 }
 
@@ -164,7 +258,7 @@ pub fn generate_mesh_from_octree_with_colors(
 /// 4 = quarter (8³), etc. The output mesh covers the same world-space volume
 /// but with fewer vertices and triangles.
 pub fn generate_mesh_lod(chunk: &Chunk, lod_step: usize) -> ChunkMesh {
-    generate_mesh_lod_with_colors(chunk, lod_step, None)
+    generate_mesh_lod_with_colors(chunk, lod_step, None, false)
 }
 
 /// Generate a mesh at reduced resolution for LOD, using the color map.
@@ -172,6 +266,7 @@ pub fn generate_mesh_lod_with_colors(
     chunk: &Chunk,
     lod_step: usize,
     color_map: Option<&MaterialColorMap>,
+    thermal_vision: bool,
 ) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = CHUNK_SIZE / lod_step;
@@ -185,7 +280,13 @@ pub fn generate_mesh_lod_with_colors(
             let fz = z * step;
             sample(chunk, fx, fy, fz)
         },
-        |mat| material_color(mat, color_map),
+        |mat, temp| {
+            if thermal_vision {
+                thermal_heatmap_color(temp)
+            } else {
+                incandescence_color(material_color(mat, color_map), temp)
+            }
+        },
     )
 }
 
@@ -195,7 +296,7 @@ pub fn generate_mesh_from_octree_lod(
     size: usize,
     lod_step: usize,
 ) -> ChunkMesh {
-    generate_mesh_from_octree_lod_with_colors(tree, size, lod_step, None)
+    generate_mesh_from_octree_lod_with_colors(tree, size, lod_step, None, false)
 }
 
 /// Generate a mesh from an octree at reduced resolution, using the color map.
@@ -204,6 +305,7 @@ pub fn generate_mesh_from_octree_lod_with_colors(
     size: usize,
     lod_step: usize,
     color_map: Option<&MaterialColorMap>,
+    thermal_vision: bool,
 ) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = size / lod_step;
@@ -217,19 +319,25 @@ pub fn generate_mesh_from_octree_lod_with_colors(
             let fz = z * step;
             sample_octree(tree, size, fx, fy, fz)
         },
-        |mat| material_color(mat, color_map),
+        |mat, temp| {
+            if thermal_vision {
+                thermal_heatmap_color(temp)
+            } else {
+                incandescence_color(material_color(mat, color_map), temp)
+            }
+        },
     )
 }
 
 /// Core Surface Nets implementation parameterized over sampling and color functions.
 ///
 /// `grid_size` is the number of cells along each axis.
-/// `sample_fn(x, y, z)` returns (scalar, material) for the given cell corner.
-/// `color_fn(mat)` returns the RGBA color for a material ID.
+/// `sample_fn(x, y, z)` returns (scalar, material, temperature) for the given cell corner.
+/// `color_fn(mat, temperature)` returns the RGBA color for a material and temperature.
 fn generate_mesh_generic<F, C>(grid_size: i32, sample_fn: F, color_fn: C) -> ChunkMesh
 where
-    F: Fn(i32, i32, i32) -> (f32, MaterialId),
-    C: Fn(MaterialId) -> [f32; 4],
+    F: Fn(i32, i32, i32) -> (f32, MaterialId, f32),
+    C: Fn(MaterialId, f32) -> [f32; 4],
 {
     let corners: [(i32, i32, i32); 8] = [
         (0, 0, 0),
@@ -268,12 +376,14 @@ where
             for cx in 0..grid_size {
                 let mut corner_values = [0.0f32; 8];
                 let mut corner_mats = [MaterialId::AIR; 8];
+                let mut corner_temps = [288.15_f32; 8];
                 let mut solid_count = 0u32;
 
                 for (i, &(dx, dy, dz)) in corners.iter().enumerate() {
-                    let (val, mat) = sample_fn(cx + dx, cy + dy, cz + dz);
+                    let (val, mat, temp) = sample_fn(cx + dx, cy + dy, cz + dz);
                     corner_values[i] = val;
                     corner_mats[i] = mat;
+                    corner_temps[i] = temp;
                     if val > 0.5 {
                         solid_count += 1;
                     }
@@ -317,17 +427,16 @@ where
                     cz as f32 + vertex_pos.z,
                 ];
 
-                let dominant_mat = corner_mats
-                    .iter()
-                    .copied()
-                    .find(|m| !m.is_air())
-                    .unwrap_or(MaterialId::STONE);
+                // Pick the dominant non-air material and its temperature.
+                let dominant_idx = corner_mats.iter().position(|m| !m.is_air()).unwrap_or(0);
+                let dominant_mat = corner_mats[dominant_idx];
+                let dominant_temp = corner_temps[dominant_idx];
 
                 let idx = positions.len() as u32;
                 vertex_map.insert((cx, cy, cz), idx);
                 positions.push(world_pos);
                 normals.push([0.0, 1.0, 0.0]);
-                colors.push(color_fn(dominant_mat));
+                colors.push(color_fn(dominant_mat, dominant_temp));
             }
         }
     }
@@ -342,8 +451,8 @@ where
             vertex_map.get(&(cx, cy, cz - 1)),
             vertex_map.get(&(cx, cy - 1, cz - 1)),
         ) {
-            let (s0, _) = sample_fn(cx, cy, cz);
-            let (s1, _) = sample_fn(cx + 1, cy, cz);
+            let (s0, _, _) = sample_fn(cx, cy, cz);
+            let (s1, _, _) = sample_fn(cx + 1, cy, cz);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v1, v3, v2);
@@ -359,8 +468,8 @@ where
             vertex_map.get(&(cx, cy, cz - 1)),
             vertex_map.get(&(cx - 1, cy, cz - 1)),
         ) {
-            let (s0, _) = sample_fn(cx, cy, cz);
-            let (s1, _) = sample_fn(cx, cy + 1, cz);
+            let (s0, _, _) = sample_fn(cx, cy, cz);
+            let (s1, _, _) = sample_fn(cx, cy + 1, cz);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v2, v3, v1);
@@ -376,8 +485,8 @@ where
             vertex_map.get(&(cx, cy - 1, cz)),
             vertex_map.get(&(cx - 1, cy - 1, cz)),
         ) {
-            let (s0, _) = sample_fn(cx, cy, cz);
-            let (s1, _) = sample_fn(cx, cy, cz + 1);
+            let (s0, _, _) = sample_fn(cx, cy, cz);
+            let (s1, _, _) = sample_fn(cx, cy, cz + 1);
             if (s0 > 0.5) != (s1 > 0.5) {
                 if s0 > 0.5 {
                     emit_quad(&mut indices, v0, v1, v3, v2);
@@ -505,16 +614,21 @@ fn generate_chunk_mesh(
     octree: Option<&ChunkOctree>,
     lod_step_size: usize,
     color_map: Option<&MaterialColorMap>,
+    thermal_vision: bool,
 ) -> ChunkMesh {
     match octree {
         Some(oct) if lod_step_size <= 1 => {
-            generate_mesh_from_octree_with_colors(&oct.0, CHUNK_SIZE, color_map)
+            generate_mesh_from_octree_with_colors(&oct.0, CHUNK_SIZE, color_map, thermal_vision)
         }
-        Some(oct) => {
-            generate_mesh_from_octree_lod_with_colors(&oct.0, CHUNK_SIZE, lod_step_size, color_map)
-        }
-        None if lod_step_size <= 1 => generate_mesh_with_colors(chunk, color_map),
-        None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map),
+        Some(oct) => generate_mesh_from_octree_lod_with_colors(
+            &oct.0,
+            CHUNK_SIZE,
+            lod_step_size,
+            color_map,
+            thermal_vision,
+        ),
+        None if lod_step_size <= 1 => generate_mesh_with_colors(chunk, color_map, thermal_vision),
+        None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map, thermal_vision),
     }
 }
 
@@ -531,6 +645,7 @@ pub fn mesh_dirty_chunks(
     mut materials: ResMut<Assets<StandardMaterial>>,
     lod_config: Option<Res<LodConfig>>,
     color_map: Option<Res<MaterialColorMap>>,
+    thermal_mode: Option<Res<ThermalVisionMode>>,
     camera_q: Query<&Transform, With<Camera3d>>,
     mut chunk_q: Query<
         (
@@ -540,6 +655,7 @@ pub fn mesh_dirty_chunks(
             Option<&ChunkOctree>,
             Option<&Mesh3d>,
             Option<&ChunkLod>,
+            Option<&ChunkActivity>,
         ),
         Without<ChunkMeshMarker>,
     >,
@@ -551,6 +667,7 @@ pub fn mesh_dirty_chunks(
             Option<&ChunkOctree>,
             &Mesh3d,
             Option<&ChunkLod>,
+            Option<&ChunkActivity>,
         ),
         With<ChunkMeshMarker>,
     >,
@@ -558,20 +675,23 @@ pub fn mesh_dirty_chunks(
     let default_config = LodConfig::default();
     let config = lod_config.as_deref().unwrap_or(&default_config);
     let colors = color_map.as_deref();
+    let thermal_vision = thermal_mode.as_ref().is_some_and(|m| m.0);
     let camera_pos = camera_q
         .iter()
         .next()
         .map(|t| t.translation)
         .unwrap_or(Vec3::ZERO);
 
-    // Default material for chunk meshes (vertex colored)
+    // Default material for chunk meshes (vertex colored, no emissive)
     let chunk_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         ..default()
     });
 
     // Initial mesh generation for new chunks without a mesh
-    for (entity, mut chunk, coord, octree, existing_mesh, current_lod) in chunk_q.iter_mut() {
+    for (entity, mut chunk, coord, octree, _existing_mesh, current_lod, activity) in
+        chunk_q.iter_mut()
+    {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = current_lod.is_some() && new_level != current_level;
@@ -581,7 +701,7 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors);
+        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
@@ -597,9 +717,9 @@ pub fn mesh_dirty_chunks(
             .insert(ChunkLod(new_level))
             .insert(ChunkMeshMarker);
 
-        if existing_mesh.is_none() {
-            cmds.insert(MeshMaterial3d(chunk_material.clone()));
-        }
+        // Hot chunks get an emissive material so bloom activates.
+        let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
+        cmds.insert(MeshMaterial3d(mat));
 
         if lod_changed {
             cmds.insert(LodTransition {
@@ -610,7 +730,7 @@ pub fn mesh_dirty_chunks(
     }
 
     // Remesh already-meshed chunks that got dirty or changed LOD
-    for (entity, mut chunk, coord, octree, _mesh, current_lod) in remesh_q.iter_mut() {
+    for (entity, mut chunk, coord, octree, _mesh, current_lod, activity) in remesh_q.iter_mut() {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = new_level != current_level;
@@ -620,7 +740,7 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors);
+        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
@@ -633,8 +753,11 @@ pub fn mesh_dirty_chunks(
         } else {
             let bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
             let mesh_handle = meshes.add(bevy_mesh);
+            let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
             let mut cmds = commands.entity(entity);
-            cmds.insert(Mesh3d(mesh_handle)).insert(ChunkLod(new_level));
+            cmds.insert(Mesh3d(mesh_handle))
+                .insert(ChunkLod(new_level))
+                .insert(MeshMaterial3d(mat));
 
             if lod_changed {
                 cmds.insert(LodTransition {
@@ -690,14 +813,70 @@ pub fn tick_lod_transitions(
     }
 }
 
+/// Select an emissive or default material based on chunk thermal activity.
+/// Hot chunks (max temp > 800 K) get a self-illuminating material for bloom.
+fn chunk_emissive_material(
+    activity: Option<&ChunkActivity>,
+    materials: &mut Assets<StandardMaterial>,
+    default_material: &Handle<StandardMaterial>,
+) -> Handle<StandardMaterial> {
+    let max_temp = activity.map(|a| a.last_max_temp).unwrap_or(0.0);
+    if max_temp < GLOW_THRESHOLD {
+        return default_material.clone();
+    }
+
+    // Emissive intensity scales with T⁴ (Stefan-Boltzmann), normalized to
+    // a visually comfortable range.
+    let t_norm = max_temp / 1000.0;
+    let intensity = (t_norm * t_norm * t_norm * t_norm * 0.05).min(50.0);
+
+    // Incandescent color for the emissive channel
+    let (r, g, b) = if max_temp < 1200.0 {
+        (0.7 * intensity, 0.05 * intensity, 0.0)
+    } else if max_temp < 1500.0 {
+        (1.0 * intensity, 0.3 * intensity, 0.02 * intensity)
+    } else {
+        (1.0 * intensity, 0.7 * intensity, 0.3 * intensity)
+    };
+
+    materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::rgb(r, g, b),
+        ..default()
+    })
+}
+
+/// System: toggle thermal vision mode with the T key. Marks all chunks dirty
+/// so they remesh with the new color mode.
+pub fn toggle_thermal_vision(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut mode: ResMut<ThermalVisionMode>,
+    mut chunks: Query<&mut Chunk>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyT) {
+        return;
+    }
+    mode.0 = !mode.0;
+    info!("Thermal vision: {}", if mode.0 { "ON" } else { "OFF" });
+    // Mark all chunks dirty to force remesh with new color mode.
+    for mut chunk in &mut chunks {
+        chunk.mark_dirty();
+    }
+}
+
 /// Plugin that registers the chunk meshing system.
 pub struct MeshingPlugin;
 
 impl Plugin for MeshingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<ThermalVisionMode>().add_systems(
             Update,
-            (mesh_dirty_chunks, tick_lod_transitions).in_set(super::WorldSet::Meshing),
+            (
+                mesh_dirty_chunks,
+                tick_lod_transitions,
+                toggle_thermal_vision,
+            )
+                .in_set(super::WorldSet::Meshing),
         );
     }
 }
@@ -1030,5 +1209,71 @@ mod tests {
             mesh.triangle_count() > 0,
             "Small octree mesh should have triangles"
         );
+    }
+
+    // --- Thermal glow tests ---
+
+    #[test]
+    fn incandescence_below_threshold_returns_base() {
+        let base = [0.5, 0.5, 0.5, 1.0];
+        let result = incandescence_color(base, 700.0);
+        assert_eq!(result, base, "Below 800 K, base color should be unchanged");
+    }
+
+    #[test]
+    fn incandescence_above_threshold_shifts_toward_red() {
+        let base = [0.5, 0.5, 0.5, 1.0];
+        let result = incandescence_color(base, 1000.0);
+        // Red channel should be boosted toward incandescent warm tones
+        assert!(
+            result[0] > base[0],
+            "At 1000 K, red channel should increase"
+        );
+        // Alpha stays the same
+        assert!(
+            (result[3] - base[3]).abs() < f32::EPSILON,
+            "Alpha should be preserved"
+        );
+    }
+
+    #[test]
+    fn incandescence_high_temp_produces_hdr() {
+        let base = [0.5, 0.5, 0.5, 1.0];
+        let result = incandescence_color(base, 2000.0);
+        // At 2000 K the emissive multiplier (T⁴ scaling) pushes channels > 1.0
+        let max_channel = result[0].max(result[1]).max(result[2]);
+        assert!(
+            max_channel > 1.0,
+            "At 2000 K, HDR emissive should push channels above 1.0, got {max_channel}"
+        );
+    }
+
+    #[test]
+    fn thermal_heatmap_cold_is_blue() {
+        let color = thermal_heatmap_color(250.0);
+        assert!(
+            color[2] > color[0] && color[2] > color[1],
+            "At 250 K, heatmap should be predominantly blue"
+        );
+    }
+
+    #[test]
+    fn thermal_heatmap_hot_is_red() {
+        let color = thermal_heatmap_color(2000.0);
+        assert!(
+            color[0] > color[1] && color[0] > color[2],
+            "At 2000 K, heatmap should be predominantly red"
+        );
+    }
+
+    #[test]
+    fn thermal_heatmap_alpha_is_opaque() {
+        for temp in [250.0, 1000.0, 2000.0] {
+            let color = thermal_heatmap_color(temp);
+            assert!(
+                (color[3] - 1.0).abs() < f32::EPSILON,
+                "Heatmap alpha should always be 1.0"
+            );
+        }
     }
 }
