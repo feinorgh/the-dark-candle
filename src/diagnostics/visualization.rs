@@ -586,8 +586,9 @@ fn render_perspective(
 
                 let shadow_factor = if in_shadow { 0.0 } else { 1.0 };
 
-                // Final lighting: ambient + diffuse * shadow
-                let lit = light.ambient + n_dot_l * light.intensity * shadow_factor;
+                // Final lighting: ambient uses neutral white, directional uses
+                // the light color so dawn/dusk warmth only tints direct light.
+                let diffuse = n_dot_l * light.intensity * shadow_factor;
 
                 // Depth fog (gentle fade toward background at far distances)
                 let fog_start = size as f32 * 0.5;
@@ -596,9 +597,9 @@ fn render_perspective(
 
                 let bg = sky_color(dir, light_dir);
 
-                let r = (base.0[0] as f32 * lit * light_col.0).min(255.0);
-                let g = (base.0[1] as f32 * lit * light_col.1).min(255.0);
-                let b = (base.0[2] as f32 * lit * light_col.2).min(255.0);
+                let r = (base.0[0] as f32 * (light.ambient + diffuse * light_col.0)).min(255.0);
+                let g = (base.0[1] as f32 * (light.ambient + diffuse * light_col.1)).min(255.0);
+                let b = (base.0[2] as f32 * (light.ambient + diffuse * light_col.2)).min(255.0);
 
                 Rgb([
                     (r * (1.0 - fog) + bg.0[0] as f32 * fog) as u8,

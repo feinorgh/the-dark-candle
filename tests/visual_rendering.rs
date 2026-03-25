@@ -228,14 +228,35 @@ fn sun_elevation(hour: f32) -> f32 {
 }
 
 /// Sun color from elevation (mirrors src/lighting/mod.rs).
+/// Smoothly blends from night blue through warm dawn/dusk to neutral noon.
 fn sun_color_rgb(elevation: f32) -> Rgb<u8> {
-    let (r, g, b) = if elevation <= 0.0 {
-        (0.3_f32, 0.35, 0.5) // night
-    } else if elevation < 0.3 {
-        let t = elevation / 0.3;
-        (1.0, 0.7 + 0.3 * t, 0.4 + 0.55 * t)
+    // Night tint
+    let night = (0.3_f32, 0.35_f32, 0.5_f32);
+    // Warm dawn/dusk
+    let warm = (1.0_f32, 0.7_f32, 0.45_f32);
+    // Noon white
+    let noon = (1.0_f32, 1.0_f32, 0.95_f32);
+
+    let (r, g, b) = if elevation <= -0.15 {
+        night
+    } else if elevation < 0.15 {
+        // Smooth blend over ±0.15 rad (~17°) around horizon
+        let t = (elevation + 0.15) / 0.3;
+        (
+            night.0 + (warm.0 - night.0) * t,
+            night.1 + (warm.1 - night.1) * t,
+            night.2 + (warm.2 - night.2) * t,
+        )
+    } else if elevation < 0.5 {
+        // Warm dawn → neutral noon
+        let t = (elevation - 0.15) / 0.35;
+        (
+            warm.0 + (noon.0 - warm.0) * t,
+            warm.1 + (noon.1 - warm.1) * t,
+            warm.2 + (noon.2 - warm.2) * t,
+        )
     } else {
-        (1.0, 1.0, 0.95) // noon
+        noon
     };
     Rgb([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8])
 }
