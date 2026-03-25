@@ -823,23 +823,37 @@ Extended force model for high-speed projectiles where aerodynamic effects matter
 Uses existing `DragProfile`, `AngularVelocity`, and collision damage feedback.
 No new physics engine — extends the force summation in `apply_forces`.
 
-### Radiative Heat Transfer (Future)
+### Radiative Heat Transfer & Thermal Visualization (Phase 9a)
 Supplement conductive (Fourier) heat diffusion with radiative transfer for
-long-range thermal effects.
+long-range thermal effects. Can be implemented before Phase 9 proper since
+it only depends on the existing temperature field and material emissivity
+(both already in place).
 
 - **Stefan-Boltzmann emission** — hot surfaces emit thermal radiation at rate
-  P = εσAT⁴. The constant σ is already defined in `constants.rs`
+  P = εσAT⁴. The constant σ is already defined in `constants.rs`; emissivity ε
+  is already a field on every `MaterialData`
 - **View factor / ray-cast** — radiative flux between surfaces depends on
-  line-of-sight and angle. Sample via short ray casts between hot emitters and
-  nearby voxels/entities
+  line-of-sight and solid angle. Sample via short ray casts between hot emitters
+  and nearby voxels/entities. Opaque voxels block radiation; semi-transparent
+  materials (glass, water) attenuate by `absorption_coefficient` (new field)
 - **Absorption** — receiving surfaces absorb radiation proportional to
-  emissivity ε (from `MaterialData`). Opaque voxels block radiation
-- **Use cases** — warming by campfire/lava at distance, solar heating of
-  surfaces (Phase 9), metal glowing red-hot, furnace/kiln radiation
+  emissivity ε. Reflected fraction = (1 − ε) is re-emitted diffusely
+- **Black-body color (Planck's law)** — map voxel temperature to visible
+  emission color via Planck spectral radiance. Iron at 1000 K glows dull red;
+  at 1800 K bright orange-white. Rendered as emissive mesh color or glow
+  post-process
+- **Solar insolation** — (Phase 9 integration) sun angle × atmosphere
+  transmittance × surface albedo → absorbed heat flux per exposed voxel face.
+  Drives diurnal temperature cycling, biome differentiation
+- **Use cases** — warming by campfire/lava at distance, forge/kiln radiation,
+  solar heating, metal glow, thermal hazards for creatures
 
-Priority: medium. Currently heat only spreads by direct contact (Fourier).
-Radiative transfer enables gameplay around fire, forges, and lava without
-requiring physical adjacency.
+New `MaterialData` fields needed: `absorption_coefficient: Option<f32>` (m⁻¹),
+`albedo: Option<f32>` (0–1).
+
+Priority: medium. Enables fire/forge gameplay without adjacency.
+Depends on: Phase 2 (materials ✅), Phase 3 (temperature field ✅).
+Unlocks: Phase 9b (solar optics), thermal visualization.
 
 ### Fluid–Terrain Interaction (Future)
 Bridge the AMR fluid simulation with the voxel terrain grid so that liquid
@@ -904,26 +918,220 @@ gameplay mechanic.
 - **AI hearing** — creatures sample the acoustic field at their position; loud
   events above a threshold trigger alert/investigate behaviors
 
-### Electricity & Magnetism (Future)
-Electromagnetic simulation for advanced gameplay mechanics. Very low priority —
-only relevant if the game introduces technology tiers with electrical systems.
+### Optics & Light Phenomena (Phase 11)
+Physically-based light transport through the voxel world, enabling glass optics,
+underwater caustics, atmospheric color, and material-dependent visual effects.
+Builds on the radiative transfer ray-cast infrastructure from Phase 9a.
 
-- **Electrical conductivity** — per-material property (S/m) in `MaterialData`.
-  Current flows through connected conductive voxels via resistance network
-  (Kirchhoff's laws)
-- **Power sources** — generators (mechanical → electrical via Faraday's law),
-  batteries (stored charge in C), lightning strikes (atmospheric discharge from
-  Phase 9 charge buildup)
-- **Resistive heating** — I²R power dissipated as heat into the thermal system.
-  Enables electric furnaces, heating elements, short-circuit fires
-- **Magnetic fields** — optional. Solenoid/permanent-magnet fields for
-  electromagnetic locks, compasses, rail transport
-- **Lightning** — atmospheric charge separation (Phase 9) → discharge path
-  through lowest-resistance voxel column. Damage, fire ignition, sand → glass
-  conversion
+- **Refraction (Snell's law)** — light bends at material boundaries proportional
+  to the ratio of refractive indices: n₁ sin θ₁ = n₂ sin θ₂. New `MaterialData`
+  field: `refractive_index: Option<f32>` (dimensionless; air ≈ 1.0003,
+  water = 1.33, glass = 1.52, diamond = 2.42). Enables lensing through glass
+  blocks, underwater distortion, mirage effects from hot air (gradient in n due
+  to temperature-dependent density)
+- **Reflection (Fresnel equations)** — partial reflection at every interface;
+  reflectance depends on angle and refractive index ratio. At glancing angles
+  even water becomes mirror-like (total internal reflection above the critical
+  angle). New field: `reflectivity: Option<f32>` (0–1, for metals where Fresnel
+  is insufficient)
+- **Absorption & extinction (Beer-Lambert law)** — light intensity decays
+  exponentially through a medium: I = I₀ × e^(−α × d), where α is the
+  absorption coefficient (m⁻¹) and d is path length. Colored glass, murky water,
+  fog, and smoke all derive from this. Transparent materials use
+  `absorption_coefficient` per RGB channel for wavelength-dependent color
+  filtering
+- **Rayleigh scattering** — short wavelengths scatter more in atmosphere
+  (∝ 1/λ⁴). Produces blue sky, red sunsets, purple twilight. Implemented as
+  post-process sky-dome shader driven by sun angle and atmospheric density from
+  Phase 9
+- **Mie scattering** — forward-peaked scattering by particles comparable to
+  wavelength (water droplets, dust, ash). Produces halos around sun/moon, white
+  clouds, fog glow. Coupled to LBM humidity/particulate density
+- **Caustics** — focused light patterns from refraction through curved surfaces
+  (underwater ripple patterns, light through glass bottles). Approximate via
+  photon mapping or screen-space caustic estimation
+- **Shadows & light propagation** — per-voxel light level from sun + point
+  sources, attenuated by opaque/translucent voxels. Extend the existing
+  DirectionalLight with a voxel-aware shadow system (shadow maps or ray-traced
+  voxel shadows)
+- **Dispersion** — wavelength-dependent refractive index separates white light
+  into spectral components (prisms, rainbows). Model via 3-channel (RGB)
+  refraction with slightly different n per channel
 
-Priority: very low. Only pursue if a technology/crafting progression requires
-wiring, circuits, or electromagnetic machinery.
+New universal constants needed: `speed_of_light: f64 = 299_792_458.0` m/s
+(already needed for nuclear physics).
+
+Design constraint: all optical parameters derive from `MaterialData`.
+No per-material shader hacks — a single physically-based light transport model
+with material-driven parameters.
+
+Priority: medium-high. Optics are central to visual quality and enable unique
+gameplay (lens crafting, underwater exploration, light puzzles).
+Depends on: Phase 9a (ray-cast infrastructure), Phase 9 (atmosphere, sun
+angle), Phase 10 (glass material for structures).
+
+### Electricity & Magnetism (Phase 12)
+Full electromagnetic simulation using a simplified Maxwell's equations solver on
+the voxel grid. Enables technology progression, electrical hazards, and magnetic
+gameplay mechanics.
+
+#### Electrostatics & Current Flow
+- **Electrical conductivity** — per-material property `electrical_conductivity:
+  Option<f32>` (S/m) in `MaterialData`. Iron = 1.0e7, copper = 5.96e7,
+  water = 0.05, stone ≈ 0, air ≈ 0 (insulator). Determines which voxels
+  conduct current
+- **Resistance network** — connected conductive voxels form a circuit graph.
+  Solve for current via Kirchhoff's laws (sparse linear system) or relaxation
+  on the voxel grid. Current I = V / R where R = 1 / (σ × A / L)
+- **Voltage sources** — batteries (stored charge), generators (mechanical →
+  electrical via Faraday's law: EMF = −dΦ_B/dt), piezoelectric crystals
+  (pressure → voltage)
+- **Resistive heating** — I²R power dissipated as heat into the thermal field.
+  Enables electric furnaces, heating elements, short-circuit fires, fuses that
+  melt when overloaded
+
+#### Magnetism
+- **Magnetic permeability** — per-material `magnetic_permeability: Option<f32>`
+  (H/m; vacuum = 4π×10⁻⁷, iron = 6.3×10⁻³). Determines magnetic response
+- **Magnetic field** — per-voxel `B: Vec3` (Tesla). Permanent magnets from
+  ferromagnetic materials, electromagnets from current-carrying coils
+  (Biot-Savart or Ampère's law on the grid)
+- **Lorentz force** — charged/magnetized entities experience F = q(v × B).
+  Enables magnetic rail transport, compass needles, magnetic locks
+- **Electromagnetic induction** — changing B through a conductive loop induces
+  EMF (Faraday's law). Generator gameplay, inductive sensors
+
+#### Electromagnetic Waves (simplified)
+- **Wave propagation** — EM waves at speed c through the voxel grid (FDTD —
+  Finite-Difference Time-Domain — on a coarsened grid for performance).
+  Primarily for radio/signal propagation, not visual light (handled by Phase 11
+  optics)
+- **Absorption & shielding** — conductive materials absorb/reflect EM waves
+  (skin depth δ = √(2/(ωμσ))). Faraday cage gameplay, signal blocking through
+  metal walls
+
+#### Lightning
+- **Atmospheric charge separation** (Phase 9) → leader propagation along
+  lowest-resistance voxel path → return stroke. Deposits massive current →
+  resistive heating → fire ignition, sand → glass (fulgurite), tree splitting
+- **Discharge probability** — builds with charge differential and humidity;
+  tall/conductive structures attract strikes
+
+New universal constants needed: `elementary_charge: f64 = 1.602_176_634e-19` C,
+`vacuum_permittivity: f64 = 8.854_187_8128e-12` F/m,
+`vacuum_permeability: f64 = 1.256_637_062_12e-6` H/m.
+
+Priority: low. Only pursue when a technology/crafting tier requires wiring,
+circuits, or electromagnetic machinery.
+Depends on: Phase 9 (atmosphere for lightning), Phase 10 (structures for
+circuits), Phase 9a (thermal coupling for resistive heating).
+
+### Nuclear Physics & Radiation (Phase 13)
+Radioactive decay, nuclear reactions, and ionizing/non-ionizing radiation
+transport. Enables late-game content: nuclear materials, radiation hazards,
+advanced energy sources.
+
+#### Radioactive Decay
+- **Decay modes** — extend `ReactionData` with optional decay fields:
+  `decay_half_life: Option<f32>` (seconds), `radiation_type:
+  Option<RadiationType>` (Alpha, Beta, Gamma, Neutron). Decay is probabilistic:
+  P(decay per tick) = 1 − e^(−λ × dt) where λ = ln(2) / t½
+- **Decay chains** — parent isotope decays to daughter product(s), which may
+  themselves be radioactive. Model as linked reactions: Uranium → Thorium + α,
+  Thorium → Radium + β, etc. Products field:
+  `decay_products: Option<Vec<(String, f32)>>` (material name, probability)
+- **Mass-energy equivalence** — decay energy Q = Δm × c². New constant:
+  `speed_of_light: f64 = 299_792_458.0` m/s (shared with optics). Energy
+  released per decay event deposited as heat and radiation
+
+#### Radiation Types & Transport
+- **Alpha particles** — heavy (4 amu), highly ionizing, very short range
+  (~5 cm in air). Stopped by a single voxel of any solid. Modeled as entity
+  spawns or absorbed within the source voxel
+- **Beta particles** — electrons/positrons, moderate ionizing power, range ~1 m
+  in air, stopped by a few cm of metal. Ray-cast from source; attenuate by
+  material density and thickness
+- **Gamma rays** — high-energy photons, low ionizing power per interaction but
+  very penetrating. Exponential attenuation: I = I₀ × e^(−μ × d) where μ is
+  the mass attenuation coefficient (m⁻¹) derived from material density and
+  atomic number. Ray-cast through multiple voxels
+- **Neutron radiation** — uncharged, penetrates most materials except
+  hydrogen-rich ones (water, paraffin). Triggers secondary reactions (neutron
+  activation, fission). Range: meters through air, attenuated by light elements
+- **Non-ionizing radiation** — thermal infrared (already handled by Phase 9a
+  radiative heat), visible light (Phase 11 optics), radio waves (Phase 12 EM).
+  No additional system needed — these are subsumed by earlier phases
+
+#### Radiation Effects
+- **Ionizing dose** — per-entity cumulative dose in Gray (Gy = J/kg). Absorbed
+  energy per unit mass from all incident radiation. Weighted by radiation type
+  (quality factor Q: α=20, β=1, γ=1, neutron=5–20) to get equivalent dose in
+  Sieverts (Sv)
+- **Biological damage** — creatures accumulate dose over time. Threshold effects:
+  nausea (1 Sv), radiation sickness (2–6 Sv), lethal (>6 Sv). Chronic low-dose
+  effects: mutation chance, cancer probability (stochastic). Integrates with
+  Phase 5 (biology/health system)
+- **Material activation** — neutron bombardment converts stable materials to
+  radioactive isotopes (neutron activation). Extends the reaction framework
+- **Shielding** — attenuation by material: lead (high Z, excellent γ shield),
+  water/concrete (excellent neutron moderator), any solid (α stopper).
+  Effectiveness from `density`, `atomic_number: Option<u8>` (new MaterialData
+  field), and thickness
+
+#### Nuclear Reactions
+- **Fission** — heavy nucleus splits when struck by neutron. Releases ~200 MeV
+  per event (3.2×10⁻¹¹ J) plus 2–3 secondary neutrons → chain reaction.
+  Criticality when neutron multiplication factor k ≥ 1. Modeled as cascading
+  reactions in the chemistry system with neutron count tracking
+- **Fusion** — light nuclei combine at extreme temperature (>10⁷ K). Releases
+  energy per the binding energy curve. Only relevant in extreme scenarios
+  (stellar simulation, late-game tech). Very low sub-priority
+- **Criticality control** — geometry matters: sphere minimizes surface/volume
+  ratio → lowest critical mass. The voxel grid naturally supports geometry-
+  dependent criticality calculation (count fissile neighbors, track neutron
+  economy)
+
+New `MaterialData` fields: `atomic_number: Option<u8>`,
+`mass_attenuation_coeff: Option<f32>` (m⁻¹),
+`radioactive: Option<RadioactiveProfile>` (half_life, decay_mode, decay_energy).
+
+New universal constants: `speed_of_light` (shared), `planck_constant: f64 =
+6.626_070_15e-34` J·s, `boltzmann_constant: f64 = 1.380_649e-23` J/K
+(shared with chemistry), `avogadro: f64 = 6.022_140_76e23` mol⁻¹.
+
+Priority: very low. Nuclear physics is late-game content requiring most other
+systems to be in place. Radiation transport reuses the ray-cast infrastructure
+from Phase 9a/11.
+Depends on: Phase 5 (biology for radiation damage), Phase 9a (radiative
+transport), Phase 11 (ray-cast optics infrastructure), Phase 12 (EM field model
+for neutron interactions).
+
+### EM, Radiation & Optics — Phasing & Dependencies
+
+These systems build on each other in a natural progression. The recommended
+integration order follows the dependency chain:
+
+```
+Phase 2 (Materials ✅) ──→ Phase 9a: Radiative Heat Transfer
+Phase 3 (Temperature ✅)─┘      │
+                                ├──→ Phase 9b: Solar Optics (with Phase 9)
+Phase 8 (Spherical Planet) ─────┘
+Phase 9 (Atmosphere) ───────────┐
+                                ├──→ Phase 11: Optics & Light Phenomena
+Phase 10 (Buildings) ───────────┘
+                                ├──→ Phase 12: Electricity & Magnetism
+                                └──→ Phase 13: Nuclear Physics & Radiation
+```
+
+Material property extensions accumulate across phases:
+- Phase 9a adds: `absorption_coefficient`, `albedo`
+- Phase 11 adds: `refractive_index`, `reflectivity`, `transmissivity`
+- Phase 12 adds: `electrical_conductivity`, `magnetic_permeability`
+- Phase 13 adds: `atomic_number`, `mass_attenuation_coeff`, `radioactive`
+
+Universal constants can be added to `universal_constants.ron` proactively:
+`speed_of_light`, `planck_constant`, `boltzmann_constant`, `elementary_charge`,
+`vacuum_permittivity`, `vacuum_permeability`, `avogadro`.
 
 ### Simulation Video Demos
 The video visualization pipeline (`src/diagnostics/video.rs` +
