@@ -18,6 +18,7 @@ use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hys
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
 use crate::chemistry::runtime::ChunkActivity;
+use crate::lighting::light_map::{ChunkLightMap, apply_light_map};
 
 /// Output of the meshing pass for a single chunk.
 pub struct ChunkMesh {
@@ -615,8 +616,9 @@ fn generate_chunk_mesh(
     lod_step_size: usize,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
+    light_map: Option<&ChunkLightMap>,
 ) -> ChunkMesh {
-    match octree {
+    let mut mesh = match octree {
         Some(oct) if lod_step_size <= 1 => {
             generate_mesh_from_octree_with_colors(&oct.0, CHUNK_SIZE, color_map, thermal_vision)
         }
@@ -629,7 +631,13 @@ fn generate_chunk_mesh(
         ),
         None if lod_step_size <= 1 => generate_mesh_with_colors(chunk, color_map, thermal_vision),
         None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map, thermal_vision),
+    };
+
+    if let Some(lm) = light_map {
+        apply_light_map(&mesh.positions, &mut mesh.colors, lm);
     }
+
+    mesh
 }
 
 /// System: generates or updates meshes for dirty chunks, respecting LOD levels.
@@ -656,6 +664,7 @@ pub fn mesh_dirty_chunks(
             Option<&Mesh3d>,
             Option<&ChunkLod>,
             Option<&ChunkActivity>,
+            Option<&ChunkLightMap>,
         ),
         Without<ChunkMeshMarker>,
     >,
@@ -668,6 +677,7 @@ pub fn mesh_dirty_chunks(
             &Mesh3d,
             Option<&ChunkLod>,
             Option<&ChunkActivity>,
+            Option<&ChunkLightMap>,
         ),
         With<ChunkMeshMarker>,
     >,
@@ -689,7 +699,7 @@ pub fn mesh_dirty_chunks(
     });
 
     // Initial mesh generation for new chunks without a mesh
-    for (entity, mut chunk, coord, octree, _existing_mesh, current_lod, activity) in
+    for (entity, mut chunk, coord, octree, _existing_mesh, current_lod, activity, light_map) in
         chunk_q.iter_mut()
     {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
@@ -701,7 +711,9 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision);
+        let chunk_mesh = generate_chunk_mesh(
+            &chunk, octree, step, colors, thermal_vision, light_map,
+        );
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
@@ -730,7 +742,9 @@ pub fn mesh_dirty_chunks(
     }
 
     // Remesh already-meshed chunks that got dirty or changed LOD
-    for (entity, mut chunk, coord, octree, _mesh, current_lod, activity) in remesh_q.iter_mut() {
+    for (entity, mut chunk, coord, octree, _mesh, current_lod, activity, light_map) in
+        remesh_q.iter_mut()
+    {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = new_level != current_level;
@@ -740,7 +754,9 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision);
+        let chunk_mesh = generate_chunk_mesh(
+            &chunk, octree, step, colors, thermal_vision, light_map,
+        );
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {

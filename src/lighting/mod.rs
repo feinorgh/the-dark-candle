@@ -4,6 +4,7 @@
 // temperature, intensity, and ambient brightness. Exposes a SolarInsolation
 // resource for future solar heating integration.
 
+pub mod light_map;
 pub mod sky;
 
 use bevy::prelude::*;
@@ -200,7 +201,31 @@ impl Plugin for LightingPlugin {
             .init_resource::<DayNightConfig>()
             .init_resource::<SolarInsolation>()
             .add_systems(Startup, spawn_lights)
-            .add_systems(Update, (advance_time, update_sun, update_ambient).chain());
+            .add_systems(
+                Update,
+                (advance_time, update_sun, update_ambient, update_chunk_light_maps).chain(),
+            );
+    }
+}
+
+/// System: recompute per-voxel sunlight for dirty chunks.
+///
+/// Runs after sun updates so the light direction is current. Only processes
+/// chunks that are dirty (voxels changed). Requires a `MaterialRegistry` to
+/// look up per-material absorption coefficients.
+fn update_chunk_light_maps(
+    mut commands: Commands,
+    registry: Option<Res<crate::data::MaterialRegistry>>,
+    chunk_q: Query<(Entity, &crate::world::chunk::Chunk), Changed<crate::world::chunk::Chunk>>,
+) {
+    let Some(registry) = registry else { return };
+    for (entity, chunk) in &chunk_q {
+        let lm = light_map::propagate_sunlight_from_registry(
+            chunk.voxels(),
+            crate::world::chunk::CHUNK_SIZE,
+            &registry,
+        );
+        commands.entity(entity).insert(lm);
     }
 }
 
