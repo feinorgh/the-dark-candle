@@ -5,12 +5,11 @@
 // New chunks are spawned and far-away chunks are despawned. Terrain generation
 // fills newly created chunks via the TerrainGenerator.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
+use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkOctree};
+use super::refinement::{SubdivisionConfig, analyze_chunk, build_refined_octree};
 use super::terrain::{TerrainConfig, TerrainGenerator};
 use crate::camera::FpsCamera;
 
@@ -108,6 +107,7 @@ pub fn update_chunks(
     mut chunk_map: ResMut<ChunkMap>,
     radius: Res<ChunkLoadRadius>,
     terrain_gen: Res<TerrainGeneratorRes>,
+    subdiv_config: Res<SubdivisionConfig>,
     camera_q: Query<&Transform, With<FpsCamera>>,
 ) {
     let Ok(cam_transform) = camera_q.single() else {
@@ -131,11 +131,20 @@ pub fn update_chunks(
         if !chunk_map.contains(&coord) {
             let mut chunk = Chunk::new_empty(coord);
             terrain_gen.0.generate_chunk(&mut chunk);
+
+            // Build refined octree: analyze for surface crossings and material
+            // boundaries, then construct a sparse representation that preserves
+            // detail at features while compressing uniform interiors.
+            let analysis = analyze_chunk(&chunk, &subdiv_config);
+            let octree = build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis);
+            let chunk_octree = ChunkOctree(octree);
+
             let origin = coord.world_origin();
             let entity = commands
                 .spawn((
                     chunk,
                     coord,
+                    chunk_octree,
                     Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
                 ))
                 .id();

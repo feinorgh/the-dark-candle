@@ -8,14 +8,12 @@
 // This produces smoother meshes than Marching Cubes with simpler code and no
 // lookup tables. The output is a Bevy Mesh with positions, normals, and colors.
 
-#![allow(dead_code)]
-
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use super::chunk::{CHUNK_SIZE, Chunk};
+use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
 use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hysteresis};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
@@ -497,11 +495,35 @@ fn lod_step(level: LodLevel) -> usize {
     step.min(CHUNK_SIZE / 2) // Don't go below 2³
 }
 
+/// Generate a mesh for a chunk, preferring the octree path when available.
+///
+/// When a `ChunkOctree` is present, meshes from the sparse representation.
+/// Falls back to flat-array meshing otherwise (e.g. for chunks modified
+/// after octree construction whose octree hasn't been rebuilt yet).
+fn generate_chunk_mesh(
+    chunk: &Chunk,
+    octree: Option<&ChunkOctree>,
+    lod_step_size: usize,
+    color_map: Option<&MaterialColorMap>,
+) -> ChunkMesh {
+    match octree {
+        Some(oct) if lod_step_size <= 1 => {
+            generate_mesh_from_octree_with_colors(&oct.0, CHUNK_SIZE, color_map)
+        }
+        Some(oct) => {
+            generate_mesh_from_octree_lod_with_colors(&oct.0, CHUNK_SIZE, lod_step_size, color_map)
+        }
+        None if lod_step_size <= 1 => generate_mesh_with_colors(chunk, color_map),
+        None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map),
+    }
+}
+
 /// System: generates or updates meshes for dirty chunks, respecting LOD levels.
 ///
-/// Queries the camera position to compute per-chunk LOD. Chunks are meshed at
-/// reduced resolution when distant. LOD transitions trigger remeshing with a
-/// smooth opacity fade via `LodTransition`.
+/// Queries the camera position to compute per-chunk LOD. When a `ChunkOctree`
+/// component is present, meshes from the sparse octree for better cache locality
+/// and compression-aware LOD. Falls back to flat-array meshing otherwise.
+/// LOD transitions trigger remeshing with a smooth opacity fade via `LodTransition`.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn mesh_dirty_chunks(
     mut commands: Commands,
@@ -515,6 +537,7 @@ pub fn mesh_dirty_chunks(
             Entity,
             &mut Chunk,
             &super::chunk::ChunkCoord,
+            Option<&ChunkOctree>,
             Option<&Mesh3d>,
             Option<&ChunkLod>,
         ),
@@ -525,6 +548,7 @@ pub fn mesh_dirty_chunks(
             Entity,
             &mut Chunk,
             &super::chunk::ChunkCoord,
+            Option<&ChunkOctree>,
             &Mesh3d,
             Option<&ChunkLod>,
         ),
@@ -547,7 +571,7 @@ pub fn mesh_dirty_chunks(
     });
 
     // Initial mesh generation for new chunks without a mesh
-    for (entity, mut chunk, coord, existing_mesh, current_lod) in chunk_q.iter_mut() {
+    for (entity, mut chunk, coord, octree, existing_mesh, current_lod) in chunk_q.iter_mut() {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = current_lod.is_some() && new_level != current_level;
@@ -557,11 +581,7 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = if step <= 1 {
-            generate_mesh_with_colors(&chunk, colors)
-        } else {
-            generate_mesh_lod_with_colors(&chunk, step, colors)
-        };
+        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {
@@ -590,7 +610,7 @@ pub fn mesh_dirty_chunks(
     }
 
     // Remesh already-meshed chunks that got dirty or changed LOD
-    for (entity, mut chunk, coord, _mesh, current_lod) in remesh_q.iter_mut() {
+    for (entity, mut chunk, coord, octree, _mesh, current_lod) in remesh_q.iter_mut() {
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = new_level != current_level;
@@ -600,11 +620,7 @@ pub fn mesh_dirty_chunks(
         }
 
         let step = lod_step(new_level);
-        let chunk_mesh = if step <= 1 {
-            generate_mesh_with_colors(&chunk, colors)
-        } else {
-            generate_mesh_lod_with_colors(&chunk, step, colors)
-        };
+        let chunk_mesh = generate_chunk_mesh(&chunk, octree, step, colors);
         chunk.clear_dirty();
 
         if chunk_mesh.is_empty() {

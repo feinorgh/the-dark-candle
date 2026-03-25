@@ -5,13 +5,18 @@
 // chunk tracks whether its voxel data has been modified (dirty flag) so that
 // dependent systems (meshing, physics) only reprocess changed regions.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
 use super::voxel_access::{VoxelAccess, flat_to_octree, octree_to_flat};
+
+/// ECS component wrapping a sparse voxel octree for a chunk.
+///
+/// Built from the flat voxel array after terrain generation. Provides
+/// compressed representation for meshing and physics coupling.
+#[derive(Component)]
+pub struct ChunkOctree(pub OctreeNode<Voxel>);
 
 /// Edge length of a chunk in voxels. 32³ = 32,768 voxels per chunk.
 pub const CHUNK_SIZE: usize = 32;

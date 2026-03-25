@@ -7,8 +7,6 @@
 // This module provides the data structure and distance-based LOD selection.
 // Mesh simplification and rendering integration are handled separately.
 
-#![allow(dead_code)]
-
 use super::chunk::{CHUNK_SIZE, ChunkCoord};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};

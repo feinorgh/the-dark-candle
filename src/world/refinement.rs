@@ -5,8 +5,6 @@
 // regions should remain collapsed. This drives the SVO's adaptive resolution:
 // detail where it matters, compact storage elsewhere.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
@@ -64,7 +62,8 @@ impl Plugin for RefinementPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(RonAssetPlugin::<SubdivisionConfig>::new(&[
             "subdivision_config.ron",
-        ]));
+        ]))
+        .insert_resource(SubdivisionConfig::default());
     }
 }
 
