@@ -244,10 +244,11 @@ Assertions are checked after all ticks complete. A scenario passes only if **eve
 Each tick executes these steps in order:
 
 1. **Ambient & boundary conditions** — Compute the current ambient temperature from the schedule. If `boundary_htc` is set, clamp all air voxels to ambient and apply correction flux to adjacent non-air voxels.
-2. **Heat diffusion** — Fourier's law via `diffuse_chunk`. Thermal energy flows between adjacent voxels based on their conductivity and the timestep `dt`.
-3. **Chemical reactions** — Every voxel is checked against its 6 face-adjacent neighbors. If a reaction rule matches (correct input materials, temperature above threshold), the voxels are transformed and heat is released.
-4. **State transitions with latent heat** — Phase changes (melting, boiling, freezing) are checked. If a material defines latent heat (e.g. water's 334,000 J/kg fusion), the temperature is clamped at the phase boundary while energy accumulates in a per-voxel buffer. The transition completes only when the buffer reaches the latent heat threshold. Materials without latent heat transition instantly.
-5. **Pressure diffusion** — Gas-phase voxels equalize pressure with their neighbors.
+2. **Heat diffusion (conduction)** — Fourier's law via `diffuse_chunk`. Thermal energy flows between adjacent voxels based on their conductivity and the timestep `dt`.
+3. **Heat transfer (radiation)** — Stefan-Boltzmann radiative exchange via `radiate_chunk`. Hot surface voxels (above 500 K) cast rays in 26 directions to find other surfaces with line-of-sight. Net heat flux flows from hotter to cooler surfaces based on emissivity and view factor. Opaque voxels block radiation. This step is automatic — all scenarios include radiation.
+4. **Chemical reactions** — Every voxel is checked against its 6 face-adjacent neighbors. If a reaction rule matches (correct input materials, temperature above threshold), the voxels are transformed and heat is released.
+5. **State transitions with latent heat** — Phase changes (melting, boiling, freezing) are checked. If a material defines latent heat (e.g. water's 334,000 J/kg fusion), the temperature is clamped at the phase boundary while energy accumulates in a per-voxel buffer. The transition completes only when the buffer reaches the latent heat threshold. Materials without latent heat transition instantly.
+6. **Pressure diffusion** — Gas-phase voxels equalize pressure with their neighbors.
 
 ### Choosing `ticks` and `dt`
 
@@ -305,6 +306,54 @@ SimulationScenario(
 **What's happening:** The grid starts as a hollow stone box filled with hydrogen, with oxygen sprinkled in. A 900 K hot spot at the center exceeds the 843 K autoignition threshold. Heat diffuses outward, triggering chain reactions that convert H₂ + O₂ → Steam. The assertions verify that reactions occurred, steam was produced, and the interior heated up.
 
 **Stoichiometry note:** The reaction system operates on voxel pairs (1:1). To approximate the 2:1 H₂:O₂ stoichiometric ratio, oxygen is placed at every 3rd position using `EveryNth`. This is an intentional simplification — the framework tests emergent behavior from fundamental rules, not exact molecular accounting.
+
+## Worked Example: Radiative Heat Transfer
+
+This pair of scenarios tests Stefan-Boltzmann radiation across an air gap, and validates that opaque walls block it.
+
+### Positive test: radiation across air gap
+
+```ron
+SimulationScenario(
+    name: "Radiation across air gap",
+    description: "A hot stone wall (1200 K) radiates through an air gap to a cold stone target.",
+
+    grid_size: 12,
+    ambient_temperature: 288.15,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        Shell(material: "Stone", min: (0, 0, 0), max: (11, 11, 11), thickness: 1),
+        Layer(material: "Stone", min: (2, 1, 1), max: (3, 10, 10)),   // hot wall
+        Layer(material: "Stone", min: (8, 1, 1), max: (8, 10, 10)),   // cold target
+    ],
+
+    ignition: [
+        RegionHotSpot(min: (2, 1, 1), max: (3, 10, 10), temperature: 1200.0),
+    ],
+
+    ticks: 500,
+    dt: 1.0,
+
+    assertions: [
+        RegionAvgTempGt(min: (8, 5, 5), max: (8, 6, 6), threshold: 295.0),
+        NoReactions,
+    ],
+)
+```
+
+**What's happening:** A 2-voxel thick stone wall at 1200 K faces a cold stone slab 4 voxels away across air. Radiation (ε_stone = 0.93) dominates over air conduction at this distance. The cold target warms above 295 K (from ambient 288.15 K) within 500 ticks, confirming long-range heat transfer works.
+
+### Negative test: wall blocks radiation
+
+The companion scenario `radiation_blocked_by_wall.simulation.ron` inserts an opaque stone wall at x=6 between the emitter and target. Assertions verify the target stays *below* 295 K (radiation blocked), while the blocking wall itself warms slightly above 289 K (it absorbs some radiation from the emitter side).
+
+**Design notes:**
+- 1200 K is well below stone's 1473 K melting point, avoiding phase transitions that would complicate the test.
+- The 500 K emission threshold means only the hot wall participates as a radiation source. The blocking wall (< 500 K) absorbs but never re-radiates to the target.
+- Conservative threshold of 295 K (just ~7 K above ambient) ensures the test passes reliably despite floating-point approximations.
 
 ## Writing Your Own Scenarios
 
@@ -398,7 +447,9 @@ tests/
 └── cases/simulation/
     ├── oxyhydrogen_combustion.simulation.ron
     ├── inert_gas_no_reaction.simulation.ron
-    └── water_freezing.simulation.ron
+    ├── water_freezing.simulation.ron
+    ├── radiation_across_air_gap.simulation.ron
+    └── radiation_blocked_by_wall.simulation.ron
 ```
 
 The simulation harness (`simulate_tick`) is also used by `src/chemistry/fire_propagation.rs` unit tests, ensuring consistency between inline tests and data-driven scenarios.

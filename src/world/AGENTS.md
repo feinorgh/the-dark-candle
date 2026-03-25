@@ -16,6 +16,7 @@ Voxel world infrastructure: types, chunk storage, terrain generation, Surface Ne
 | `terrain.rs` | Layered Perlin noise terrain generation |
 | `meshing.rs` | Surface Nets mesh extraction + per-material vertex coloring |
 | `collision.rs` | Ground height queries for camera/entity gravity |
+| `raycast.rs` | Discrete 3D grid ray march (26 directions), surface-voxel detection |
 
 ## Constants
 
@@ -54,6 +55,25 @@ When adding new materials: define a `MaterialId` constant in `voxel.rs`, create 
 
 - **Imported by:** physics, chemistry, biology, behavior, camera
 - **Imports from:** `crate::camera::FpsCamera` (for chunk loading around player)
+
+## Ray-Cast Module (`raycast.rs`)
+
+Reusable discrete 3D grid ray march. Currently used by `chemistry/heat.rs` for
+radiative heat transfer visibility checks; designed to be extended for Phase 11 Optics.
+
+### API
+
+- `RayHit { index: usize, distance: f32 }` — hit result (flat array index + Euclidean distance)
+- `RAY_DIRECTIONS: [[i32; 3]; 26]` — 6 cardinal + 12 edge + 8 corner direction vectors
+- `STEP_DISTANCES: [f32; 26]` — precomputed step lengths (1.0, √2, √3)
+- `march_grid_ray(start, dir_index, size, is_opaque) → Option<RayHit>` — march from `start` in direction `dir_index` (0..25) through a `size³` grid. Steps one voxel per iteration. Returns the first opaque hit, or `None` if the ray exits the grid.
+- `is_surface_voxel(index, size, is_air_fn) → bool` — returns `true` if the voxel has at least one air-adjacent face (6 cardinal neighbors). Grid boundaries count as exposed.
+
+### Design
+
+- Integer-step marching (not DDA): each step moves exactly one voxel along the direction vector. Simple, cache-friendly, and correct for a uniform grid.
+- `is_opaque` and `is_air_fn` are closures for decoupling from specific data structures.
+- Max ray distance is controlled by the caller (e.g. `max_ray_steps` in `radiate_chunk`).
 
 ## Patterns
 

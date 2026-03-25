@@ -1,19 +1,19 @@
 # Chemistry Module
 
-Heat transfer, chemical reactions, material state transitions, and fire propagation.
+Heat transfer (conduction + radiation), chemical reactions, material state transitions, and fire propagation.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `heat.rs` | Fourier's-law heat diffusion between neighboring voxels |
+| `heat.rs` | Fourier's-law heat diffusion + Stefan-Boltzmann radiative transfer |
 | `reactions.rs` | `ReactionData` RON struct, condition matching |
 | `state_transitions.rs` | Phase changes (melt/boil/freeze/condense) |
 | `fire_propagation.rs` | Integration: heat + reactions + transitions per tick |
 
 ## Dependencies
 
-- **Imports from:** `crate::data::{MaterialData, MaterialRegistry, Phase}`, `crate::world::voxel::{MaterialId, Voxel}`
+- **Imports from:** `crate::data::{MaterialData, MaterialRegistry, Phase}`, `crate::world::voxel::{MaterialId, Voxel}`, `crate::world::raycast`
 - **Imported by:** (fire_propagation integrates heat + reactions + transitions)
 
 ## Key Types
@@ -66,6 +66,46 @@ For iron (highest diffusivity, α ≈ 2.27 × 10⁻⁵ m²/s): `dt_max ≈ 7300 
 
 In a closed system (no external sources/sinks), total thermal energy `Σ(ρ × Cₚ × T)` is conserved across diffusion steps (within floating-point tolerance). This is tested explicitly.
 
+## Radiative Heat Transfer: Stefan-Boltzmann Law (Phase 9a)
+
+Hot surface voxels exchange heat at distance via thermal radiation. Unlike conduction (adjacent only), radiation crosses air gaps using ray-cast line-of-sight checks.
+
+### Physics
+
+Net radiative flux between two visible surface voxels:
+
+```
+q = ε_eff × σ × F₁₂ × (T₁⁴ − T₂⁴)     [W]
+```
+
+where:
+- `ε_eff = 1 / (1/ε₁ + 1/ε₂ − 1)` — gray-body effective emissivity
+- `σ = 5.670374419 × 10⁻⁸ W/(m²·K⁴)` — Stefan-Boltzmann constant (from `constants.rs`)
+- `F₁₂ ≈ A / (π × d²)` — view factor (capped at 0.20 for close pairs)
+- `T₁, T₂` — surface temperatures in Kelvin (computed in f64 for T⁴ precision)
+
+### Ray-Cast Visibility
+
+Line-of-sight is checked via `src/world/raycast.rs`: a discrete 3D grid march in 26 directions (6 cardinal + 12 edge + 8 corner diagonals). Opaque (non-air) voxels block radiation. Only surface voxels (at least one air-adjacent face) participate.
+
+### API
+
+- `stefan_boltzmann_flux(emissivity, temperature, sigma)` — emitted power per unit area: P/A = εσT⁴.
+- `effective_emissivity(eps1, eps2)` — gray-body ε_eff for two interacting surfaces.
+- `voxel_view_factor(distance, face_area)` — far-field view factor A/(πd²), capped at 0.20.
+- `net_radiative_flux(t1, t2, eps_eff, view_factor, sigma)` — signed net heat flux (W). Positive = heat flows from surface 1 to surface 2.
+- `radiate_chunk(voxels, size, dt, registry, sigma, emission_threshold, max_ray_steps)` — apply one radiation step to a `size³` voxel array. Returns `Vec<f32>` of temperature deltas (additive). Only processes surface voxels above `emission_threshold` (K). Deduplicates pairs via HashSet for energy conservation.
+
+### Performance
+
+- **Emission threshold** (default 500 K): skips cold voxels where radiation is negligible relative to conduction. This is a performance optimization — Stefan-Boltzmann T⁴ scaling means ambient (288 K) surfaces contribute <2% of the flux of a 1000 K surface.
+- **Max ray steps** (default 16): limits ray march distance. View factor falls off as 1/d², so distant contributions are small.
+- **26 directions per emitter**: fixed sampling set avoids per-frame allocation.
+
+### Integration
+
+`radiate_chunk` is called by `simulate_tick()` in `src/simulation/mod.rs` after conductive diffusion (step 1b). The radiation deltas are added to voxel temperatures before chemical reactions and state transitions run.
+
 ## Patterns
 
 - `check_reaction()` tests if a voxel meets reaction conditions (material name, temperature, neighbor); requires `MaterialRegistry` to resolve names to IDs.
@@ -85,8 +125,11 @@ relative to the reaction's trigger point:
 
 > **Note:** The fire-propagation integration tests use deliberately inflated
 > `heat_output` values (3000–10000) to compensate for the conduction-only heat
-> model (no convection or radiation). 1D line spreading works with 3000; 2D
-> surface spreading needs ≥10000 because heat dissipates into more neighbors.
+> model (no convection or radiation at short range). Radiation is now active in
+> `simulate_tick` but only for surfaces above 500 K; fire spread still relies
+> primarily on conduction between adjacent voxels. 1D line spreading works with
+> 3000; 2D surface spreading needs ≥10000 because heat dissipates into more
+> neighbors.
 
 The fire chain reaction depends on heat equilibrium exceeding the ignition point:
 

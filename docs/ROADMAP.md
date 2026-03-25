@@ -829,15 +829,28 @@ long-range thermal effects. Can be implemented before Phase 9 proper since
 it only depends on the existing temperature field and material emissivity
 (both already in place).
 
-- **Stefan-Boltzmann emission** — hot surfaces emit thermal radiation at rate
+- **Stefan-Boltzmann emission** ✅ — hot surfaces emit thermal radiation at rate
   P = εσAT⁴. The constant σ is already defined in `constants.rs`; emissivity ε
-  is already a field on every `MaterialData`
-- **View factor / ray-cast** — radiative flux between surfaces depends on
-  line-of-sight and solid angle. Sample via short ray casts between hot emitters
-  and nearby voxels/entities. Opaque voxels block radiation; semi-transparent
-  materials (glass, water) attenuate by `absorption_coefficient` (new field)
-- **Absorption** — receiving surfaces absorb radiation proportional to
-  emissivity ε. Reflected fraction = (1 − ε) is re-emitted diffusely
+  is already a field on every `MaterialData`. Implemented in `heat.rs` as
+  `stefan_boltzmann_flux()`, `effective_emissivity()`, `net_radiative_flux()`.
+- **View factor / ray-cast** ✅ — radiative flux between surfaces depends on
+  line-of-sight and solid angle. A discrete 3D grid ray march
+  (`src/world/raycast.rs`) casts 26 directions from each hot surface voxel.
+  Opaque voxels block radiation. View factor uses far-field approximation
+  F ≈ A/(πd²), capped at 0.20 for close pairs. Semi-transparent
+  materials (glass, water) attenuate by `absorption_coefficient` (new field,
+  not yet added)
+- **Absorption** ✅ — receiving surfaces absorb radiation proportional to
+  emissivity ε via the gray-body effective emissivity formula
+  ε_eff = 1/(1/ε₁ + 1/ε₂ − 1). Reflected fraction = (1 − ε) is re-emitted
+  diffusely (not yet modeled — deferred to Phase 9b)
+- **Chunk-level integration** ✅ — `radiate_chunk()` in `heat.rs` returns
+  temperature deltas for a flat `size³` voxel array. Called by `simulate_tick()`
+  after conductive diffusion. Pair deduplication via HashSet ensures energy
+  conservation. Emission threshold of 500 K limits computation to hot surfaces.
+- **Simulation scenarios** ✅ — `radiation_across_air_gap.simulation.ron` and
+  `radiation_blocked_by_wall.simulation.ron` validate long-range transfer and
+  LOS occlusion
 - **Black-body color (Planck's law)** — map voxel temperature to visible
   emission color via Planck spectral radiance. Iron at 1000 K glows dull red;
   at 1800 K bright orange-white. Rendered as emissive mesh color or glow
@@ -848,10 +861,12 @@ it only depends on the existing temperature field and material emissivity
 - **Use cases** — warming by campfire/lava at distance, forge/kiln radiation,
   solar heating, metal glow, thermal hazards for creatures
 
-New `MaterialData` fields needed: `absorption_coefficient: Option<f32>` (m⁻¹),
-`albedo: Option<f32>` (0–1).
+New `MaterialData` fields still needed: `absorption_coefficient: Option<f32>`
+(m⁻¹) for semi-transparent attenuation, `albedo: Option<f32>` (0–1) for solar
+reflection.
 
-Priority: medium. Enables fire/forge gameplay without adjacency.
+Priority: medium. Core radiation ✅. Remaining: absorption coefficient, albedo,
+Planck color, solar insolation.
 Depends on: Phase 2 (materials ✅), Phase 3 (temperature field ✅).
 Unlocks: Phase 9b (solar optics), thermal visualization.
 
