@@ -548,7 +548,7 @@ fn daynight_terrain_video() {
     let img_w = 640;
     let img_h = 480;
     let fps = 30;
-    let duration_s = 12.0_f32;
+    let duration_s = 30.0_f32;
     let total_frames = (duration_s * fps as f32) as u32;
 
     let registry = terrain_registry();
@@ -560,9 +560,13 @@ fn daynight_terrain_video() {
     let cam_radius = size as f32 * 1.1;
     let cam_height = size as f32 * 0.75;
 
+    // Start at pre-dawn (hour 4), run through a full 24-hour cycle.
+    // 30 seconds gives ~7.5 s for sunrise→noon, much more gradual.
+    let start_hour = 4.0_f32;
+
     for frame in 0..total_frames {
         let t = frame as f32 / total_frames as f32;
-        let hour = t * 24.0;
+        let hour = (start_hour + t * 24.0) % 24.0;
 
         // Camera slowly orbits (one full revolution per video).
         let angle = t * std::f32::consts::TAU;
