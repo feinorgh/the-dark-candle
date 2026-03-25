@@ -25,6 +25,7 @@ MaterialData(
     // Using LHV: 119.96 MJ/kg (241.8 kJ/mol ÷ 0.002016 kg/mol)
     heat_of_combustion: Some(119960000.0),
     molar_mass: Some(0.002016),
+    refractive_index: Some(1.0001),
     frozen_into: None,
     boiled_into: None,
     melted_into: None,

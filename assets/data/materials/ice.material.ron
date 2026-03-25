@@ -24,5 +24,6 @@ MaterialData(
     melted_into: Some("Water"),
     boiled_into: None,
     frozen_into: None,
+    refractive_index: Some(1.31),
     condensed_into: None,
 )

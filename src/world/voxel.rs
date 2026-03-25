@@ -22,6 +22,7 @@ impl MaterialId {
     pub const STEAM: Self = Self(9);
     pub const LAVA: Self = Self(10);
     pub const ASH: Self = Self(11);
+    pub const GLASS: Self = Self(12);
 
     pub fn is_air(self) -> bool {
         self.0 == 0

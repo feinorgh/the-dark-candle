@@ -451,12 +451,7 @@ fn estimate_normal(x: usize, y: usize, z: usize, voxels: &[Voxel], size: usize) 
 }
 
 /// Check if a point is in shadow by marching toward the light.
-fn is_shadowed(
-    pos: Vec3,
-    light_dir: Vec3,
-    voxels: &[Voxel],
-    size: usize,
-) -> bool {
+fn is_shadowed(pos: Vec3, light_dir: Vec3, voxels: &[Voxel], size: usize) -> bool {
     // March from hit point toward the light (opposite of light direction).
     let to_light = light_dir.scale(-1.0);
     // Offset origin slightly to avoid self-intersection.
@@ -550,10 +545,7 @@ fn render_perspective(
             let v = (1.0 - 2.0 * py as f32 / cam.height as f32) * half_h;
 
             // Ray direction
-            let dir = forward
-                .add(right.scale(u))
-                .add(up.scale(v))
-                .normalized();
+            let dir = forward.add(right.scale(u)).add(up.scale(v)).normalized();
 
             // March the ray
             let pixel = if let Some(hit) = dda_march(cam.eye, dir, voxels, size, max_march) {
@@ -577,11 +569,7 @@ fn render_perspective(
                 let n_dot_l = blended.dot(light_dir.scale(-1.0)).max(0.0);
 
                 // Shadow test
-                let hit_pos = Vec3::new(
-                    hit.x as f32 + 0.5,
-                    hit.y as f32 + 0.5,
-                    hit.z as f32 + 0.5,
-                );
+                let hit_pos = Vec3::new(hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5);
                 let in_shadow = is_shadowed(hit_pos, light_dir, voxels, size);
 
                 let shadow_factor = if in_shadow { 0.0 } else { 1.0 };
@@ -630,7 +618,15 @@ pub fn render_frame(
     color_mode: &ColorMode,
     scale: u32,
 ) -> RgbImage {
-    render_frame_lit(voxels, size, registry, view, color_mode, scale, &SceneLight::default())
+    render_frame_lit(
+        voxels,
+        size,
+        registry,
+        view,
+        color_mode,
+        scale,
+        &SceneLight::default(),
+    )
 }
 
 /// Render a single frame with explicit lighting parameters.
@@ -983,9 +979,7 @@ mod tests {
             width: 32,
             height: 32,
         };
-        let img = render_frame_lit(
-            &grid, size, &reg, &view, &ColorMode::Material, 1, &light,
-        );
+        let img = render_frame_lit(&grid, size, &reg, &view, &ColorMode::Material, 1, &light);
 
         // Center-bottom pixel should show lit stone (not black sky or pure ambient)
         let center_px = *img.get_pixel(16, 28);

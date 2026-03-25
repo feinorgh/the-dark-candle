@@ -136,6 +136,20 @@ pub struct MaterialData {
     #[serde(default)]
     pub molar_mass: Option<f32>,
 
+    // --- Optical properties (SI) ---
+    /// Index of refraction (dimensionless). Ratio of speed of light in vacuum
+    /// to speed in this material. Determines bending at interfaces (Snell's law).
+    /// Air ≈ 1.0003, water = 1.33, ice = 1.31, glass = 1.52, diamond = 2.42.
+    /// `None` = opaque, no refraction. Source: Wikipedia — List of refractive indices.
+    #[serde(default)]
+    pub refractive_index: Option<f32>,
+    /// Specular reflectivity (0.0–1.0, dimensionless). Fraction of incoming light
+    /// reflected at normal incidence. Metals have high reflectivity (iron ≈ 0.65,
+    /// polished steel ≈ 0.70). Most non-metals use Fresnel equations instead.
+    /// `None` = derive from Fresnel (default for non-metals).
+    #[serde(default)]
+    pub reflectivity: Option<f32>,
+
     // --- Phase transition targets ---
     /// Material name this becomes when heated above melting_point (solid → liquid).
     #[serde(default)]

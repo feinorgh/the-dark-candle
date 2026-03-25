@@ -21,6 +21,7 @@ MaterialData(
     youngs_modulus: None,
     heat_of_combustion: None,
     molar_mass: Some(0.018015),
+    refractive_index: Some(1.33),
     frozen_into: Some("Ice"),
     boiled_into: Some("Steam"),
     melted_into: None,

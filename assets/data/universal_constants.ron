@@ -4,4 +4,5 @@
     stefan_boltzmann: 5.670374419e-8,
     gas_constant: 8.314462,
     water_triple_point: 273.16,
+    speed_of_light: 299792458.0,
 )

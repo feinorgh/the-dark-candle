@@ -615,7 +615,13 @@ fn daynight_terrain_video() {
         };
 
         let frame_img = render_frame_lit(
-            &voxels, size, &registry, &view, &ColorMode::Material, 1, &light,
+            &voxels,
+            size,
+            &registry,
+            &view,
+            &ColorMode::Material,
+            1,
+            &light,
         );
         encoder.push_frame(&frame_img).expect("frame");
     }

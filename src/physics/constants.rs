@@ -35,6 +35,13 @@ pub struct UniversalConstants {
     pub gas_constant: f32,
     /// Triple point of water (K). NIST ITS-90.
     pub water_triple_point: f32,
+    /// Speed of light in vacuum (m/s). NIST CODATA 2018 (exact).
+    #[serde(default = "default_speed_of_light")]
+    pub speed_of_light: f64,
+}
+
+fn default_speed_of_light() -> f64 {
+    299_792_458.0
 }
 
 impl Default for UniversalConstants {
@@ -43,6 +50,7 @@ impl Default for UniversalConstants {
             stefan_boltzmann: 5.670_374_419e-8,
             gas_constant: 8.314_462,
             water_triple_point: 273.16,
+            speed_of_light: 299_792_458.0,
         }
     }
 }
@@ -154,6 +162,9 @@ pub const ATMOSPHERIC_PRESSURE: f32 = 101_325.0;
 
 /// Stefan–Boltzmann constant (W/(m²·K⁴)).
 pub const STEFAN_BOLTZMANN: f64 = 5.670_374_419e-8;
+
+/// Speed of light in vacuum (m/s). NIST CODATA 2018 (exact).
+pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
 
 /// Universal (molar) gas constant (J/(mol·K)).
 pub const GAS_CONSTANT: f32 = 8.314_462;
@@ -309,6 +320,7 @@ mod tests {
         assert_eq!(u.stefan_boltzmann, STEFAN_BOLTZMANN);
         assert_eq!(u.gas_constant, GAS_CONSTANT);
         assert_eq!(u.water_triple_point, WATER_TRIPLE_POINT);
+        assert_eq!(u.speed_of_light, SPEED_OF_LIGHT);
     }
 
     #[test]
@@ -356,6 +368,7 @@ mod tests {
         assert_eq!(parsed.stefan_boltzmann, defaults.stefan_boltzmann);
         assert_eq!(parsed.gas_constant, defaults.gas_constant);
         assert_eq!(parsed.water_triple_point, defaults.water_triple_point);
+        assert_eq!(parsed.speed_of_light, defaults.speed_of_light);
     }
 
     #[test]
