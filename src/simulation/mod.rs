@@ -1,0 +1,349 @@
+// Shared simulation harness for multi-tick voxel chemistry/physics tests.
+//
+// Provides a deterministic tick loop that combines:
+//   1. Heat diffusion (Fourier's law)
+//   2. Chemical reactions (neighbor-pair matching)
+//   3. State transitions (melting/boiling/freezing)
+//   4. Pressure diffusion (gas equalization)
+//
+// Used by `fire_propagation.rs` tests and by data-driven `.simulation.ron`
+// scenario files discovered automatically from `tests/cases/simulation/`.
+
+pub mod assertions;
+pub mod geometry;
+pub mod scenario;
+
+use crate::chemistry::heat::diffuse_chunk;
+use crate::chemistry::reactions::{ReactionData, check_reaction};
+use crate::chemistry::state_transitions::apply_transitions;
+use crate::data::{MaterialRegistry, Phase};
+use crate::world::voxel::Voxel;
+
+/// Face-adjacent neighbor offsets (6-connectivity).
+const NEIGHBORS: [(i32, i32, i32); 6] = [
+    (-1, 0, 0),
+    (1, 0, 0),
+    (0, -1, 0),
+    (0, 1, 0),
+    (0, 0, -1),
+    (0, 0, 1),
+];
+
+/// 3D index into a flat `size³` voxel array.
+fn idx(x: usize, y: usize, z: usize, size: usize) -> usize {
+    z * size * size + y * size + x
+}
+
+/// Statistics collected from a single simulation tick.
+#[derive(Debug, Clone, Default)]
+pub struct TickResult {
+    /// Number of chemical reactions that fired this tick.
+    pub reactions_fired: usize,
+    /// Number of phase transitions that occurred this tick.
+    pub transitions: usize,
+    /// Maximum temperature across the grid after this tick.
+    pub max_temp: f32,
+    /// Maximum pressure across the grid after this tick.
+    pub max_pressure: f32,
+    /// Maximum pressure delta from diffusion (convergence indicator).
+    pub max_pressure_delta: f32,
+}
+
+/// Cumulative statistics across the entire simulation run.
+#[derive(Debug, Clone, Default)]
+pub struct SimulationStats {
+    /// Total reactions fired across all ticks.
+    pub total_reactions: usize,
+    /// Total phase transitions across all ticks.
+    pub total_transitions: usize,
+    /// Peak temperature observed at any tick.
+    pub peak_temp: f32,
+    /// Peak pressure observed at any tick.
+    pub peak_pressure: f32,
+}
+
+impl SimulationStats {
+    /// Update cumulative stats with results from one tick.
+    pub fn accumulate(&mut self, tick: &TickResult) {
+        self.total_reactions += tick.reactions_fired;
+        self.total_transitions += tick.transitions;
+        self.peak_temp = self.peak_temp.max(tick.max_temp);
+        self.peak_pressure = self.peak_pressure.max(tick.max_pressure);
+    }
+}
+
+/// Returns true if pressure can propagate through this material.
+///
+/// Unlike the hardcoded check in `physics::pressure`, this version consults
+/// the `MaterialRegistry` so that any gas-phase material (Hydrogen, Oxygen,
+/// Steam, Air, etc.) is treated as permeable.
+fn is_permeable(material: crate::world::voxel::MaterialId, registry: &MaterialRegistry) -> bool {
+    if material.is_air() {
+        return true;
+    }
+    registry
+        .get(material)
+        .is_some_and(|m| m.default_phase == Phase::Gas)
+}
+
+/// Diffuse pressure across a `size³` voxel grid using the material registry
+/// to determine permeability (any gas-phase material is permeable).
+///
+/// Returns the maximum pressure delta applied (useful for convergence checks).
+fn diffuse_pressure_sim(
+    voxels: &mut [Voxel],
+    size: usize,
+    rate: f32,
+    registry: &MaterialRegistry,
+) -> f32 {
+    let snapshot: Vec<Voxel> = voxels.to_vec();
+    let mut max_delta: f32 = 0.0;
+
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let i = idx(x, y, z, size);
+                if !is_permeable(snapshot[i].material, registry) {
+                    continue;
+                }
+
+                let mut sum = 0.0_f32;
+                let mut count = 0u32;
+
+                for &(dx, dy, dz) in &NEIGHBORS {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    let nz = z as i32 + dz;
+
+                    if nx < 0 || ny < 0 || nz < 0 {
+                        continue;
+                    }
+                    let (nx, ny, nz) = (nx as usize, ny as usize, nz as usize);
+                    if nx >= size || ny >= size || nz >= size {
+                        continue;
+                    }
+
+                    let ni = idx(nx, ny, nz, size);
+                    if is_permeable(snapshot[ni].material, registry) {
+                        sum += snapshot[ni].pressure;
+                        count += 1;
+                    }
+                }
+
+                if count > 0 {
+                    let avg = sum / count as f32;
+                    let delta = (avg - snapshot[i].pressure) * rate;
+                    voxels[i].pressure = snapshot[i].pressure + delta;
+                    max_delta = max_delta.max(delta.abs());
+                }
+            }
+        }
+    }
+
+    max_delta
+}
+
+/// Run one simulation tick on a flat `size³` voxel array.
+///
+/// Steps per tick:
+/// 1. Heat diffusion (Fourier's law via `diffuse_chunk`)
+/// 2. Chemical reactions (neighbor-pair `check_reaction`)
+/// 3. State transitions (`apply_transitions`)
+/// 4. Pressure diffusion (gas equalization)
+///
+/// `dt` is the simulation timestep in seconds.
+pub fn simulate_tick(
+    voxels: &mut [Voxel],
+    size: usize,
+    rules: &[ReactionData],
+    registry: &MaterialRegistry,
+    dt: f32,
+) -> TickResult {
+    // 1. Heat diffusion
+    let new_temps = diffuse_chunk(voxels, size, dt, registry);
+    for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
+        v.temperature = t;
+    }
+
+    // 2. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors
+    let mut reactions_fired = 0;
+    let snapshot: Vec<Voxel> = voxels.to_vec();
+
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let i = idx(x, y, z, size);
+                let voxel_a = &snapshot[i];
+
+                for &(dx, dy, dz) in &NEIGHBORS {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    let nz = z as i32 + dz;
+
+                    if nx < 0
+                        || ny < 0
+                        || nz < 0
+                        || nx >= size as i32
+                        || ny >= size as i32
+                        || nz >= size as i32
+                    {
+                        continue;
+                    }
+
+                    let ni = nz as usize * size * size + ny as usize * size + nx as usize;
+                    let voxel_b = &snapshot[ni];
+
+                    for rule in rules {
+                        if let Some(result) = check_reaction(
+                            rule,
+                            voxel_a.material,
+                            voxel_b.material,
+                            voxel_a.temperature,
+                            registry,
+                        ) {
+                            voxels[i].material = result.new_material_a;
+                            voxels[i].temperature += result.heat_output;
+                            if let Some(new_b) = result.new_material_b {
+                                voxels[ni].material = new_b;
+                            }
+                            reactions_fired += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. State transitions
+    let transitions = apply_transitions(voxels, registry);
+
+    // 4. Pressure diffusion
+    let max_pressure_delta = diffuse_pressure_sim(voxels, size, 0.25, registry);
+
+    // Collect grid-wide stats
+    let mut max_temp: f32 = 0.0;
+    let mut max_pressure: f32 = 0.0;
+    for v in voxels.iter() {
+        max_temp = max_temp.max(v.temperature);
+        max_pressure = max_pressure.max(v.pressure);
+    }
+
+    TickResult {
+        reactions_fired,
+        transitions,
+        max_temp,
+        max_pressure,
+        max_pressure_delta,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{MaterialData, Phase};
+    use crate::world::voxel::{MaterialId, Voxel};
+
+    fn minimal_registry() -> MaterialRegistry {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: 0,
+            name: "Air".into(),
+            default_phase: Phase::Gas,
+            density: 1.225,
+            thermal_conductivity: 0.026,
+            specific_heat_capacity: 1005.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 5,
+            name: "Wood".into(),
+            default_phase: Phase::Solid,
+            density: 600.0,
+            thermal_conductivity: 0.15,
+            specific_heat_capacity: 1700.0,
+            ignition_point: Some(573.0),
+            hardness: 0.3,
+            color: [0.6, 0.4, 0.2],
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 11,
+            name: "Ash".into(),
+            default_phase: Phase::Solid,
+            density: 500.0,
+            thermal_conductivity: 0.15,
+            specific_heat_capacity: 800.0,
+            melting_point: Some(1273.0),
+            hardness: 0.05,
+            color: [0.3, 0.3, 0.3],
+            ..Default::default()
+        });
+        reg
+    }
+
+    fn wood_combustion_rule() -> ReactionData {
+        ReactionData {
+            name: "Wood combustion".into(),
+            input_a: "Wood".into(),
+            input_b: Some("Air".into()),
+            min_temperature: 573.0,
+            max_temperature: 99999.0,
+            output_a: "Ash".into(),
+            output_b: None,
+            heat_output: 3500.0,
+        }
+    }
+
+    #[test]
+    fn tick_with_no_rules_only_diffuses() {
+        let size = 4;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        voxels[0].temperature = 500.0;
+
+        let registry = minimal_registry();
+        let result = simulate_tick(&mut voxels, size, &[], &registry, 1.0);
+
+        assert_eq!(result.reactions_fired, 0);
+        assert_eq!(result.transitions, 0);
+    }
+
+    #[test]
+    fn tick_fires_reaction_above_ignition() {
+        let size = 4;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        // Place one wood voxel at (0,0,0), neighbor air at (1,0,0)
+        voxels[0].material = MaterialId(5);
+        voxels[0].temperature = 800.0;
+
+        let registry = minimal_registry();
+        let rules = vec![wood_combustion_rule()];
+        let result = simulate_tick(&mut voxels, size, &rules, &registry, 1.0);
+
+        assert!(result.reactions_fired > 0, "Should fire reaction");
+        assert_eq!(voxels[0].material, MaterialId::ASH);
+    }
+
+    #[test]
+    fn gas_phase_materials_are_permeable() {
+        let mut reg = MaterialRegistry::new();
+        reg.insert(MaterialData {
+            id: 12,
+            name: "Hydrogen".into(),
+            default_phase: Phase::Gas,
+            density: 0.0899,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 1,
+            name: "Stone".into(),
+            default_phase: Phase::Solid,
+            density: 2700.0,
+            ..Default::default()
+        });
+
+        assert!(is_permeable(MaterialId::AIR, &reg));
+        assert!(is_permeable(MaterialId(12), &reg));
+        assert!(!is_permeable(MaterialId(1), &reg));
+    }
+}

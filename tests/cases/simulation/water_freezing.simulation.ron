@@ -1,0 +1,80 @@
+// Water Freezing Simulation
+//
+// Models a realistic freezing scenario: randomized stone terrain at the bottom,
+// two layers of liquid water on top, and open air above. The ambient temperature
+// ramps from 5°C (278.15 K) down to −20°C (253.15 K) over 24 simulated hours,
+// then holds. The simulation runs until all water has frozen into ice.
+//
+// Expected behaviour (matches real-world lake physics):
+//   - Top water layer (exposed to air) freezes first (~day 8–9)
+//   - Bottom water layer (insulated by ice + stone) takes much longer (~100+ days)
+//   - The ice cap insulates the water below, slowing the freezing front
+//
+// The convective boundary condition (boundary_htc) models the fact that real
+// air–water heat transfer is convection-dominated (h ≈ 10–50 W/(m²·K)), which
+// pure conduction through 1 m voxels cannot capture. With boundary_htc set,
+// boundary air voxels are clamped to ambient temperature each tick.
+//
+// NOTE: When native octree physics with LOD-based dynamic resolution is
+// implemented, sub-voxel resolution at phase interfaces will capture the
+// freezing front more accurately and may reduce reliance on the boundary HTC
+// correction. The scenario parameters should be revisited at that time.
+
+SimulationScenario(
+    name: "Water Freezing",
+    description: "Two water layers over stone terrain cool from 5°C to −20°C; all water should freeze into ice",
+
+    grid_size: 12,
+
+    // Initial temperature: 5°C (278.15 K)
+    ambient_temperature: 278.15,
+    ambient_pressure: 101325.0,
+
+    // Ramp to −20°C (253.15 K) over 24 hours (86400 s), then hold
+    ambient_schedule: RampThenHold(
+        end_temperature: 253.15,
+        ramp_seconds: 86400.0,
+    ),
+
+    // Convective boundary: clamp boundary air to ambient each tick
+    boundary_htc: Some(25.0),
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Layer 1: randomized stone terrain filling y=0 through y=0..3
+        RandomHeightmap(
+            material: "Stone",
+            x_range: (0, 11),
+            z_range: (0, 11),
+            y_min: 0,
+            y_max: 3,
+            seed: 42,
+        ),
+        // Layer 2: water fills y=4 and y=5 (two 1-m layers)
+        Fill(
+            material: "Water",
+            min: (0, 4, 0),
+            max: (11, 5, 11),
+        ),
+        // Air fills the rest (y=6..11) by default (grid starts as air)
+    ],
+
+    // dt = 600 s (10 minutes per tick).
+    // ticks = 25000 max ≈ 174 simulated days — enough for both layers to freeze.
+    dt: 600.0,
+    ticks: 25000,
+
+    // Run until all assertions pass (convergence-based stopping)
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All water must have frozen
+        MaterialAbsent(material: "Water"),
+        // There must be ice present
+        MaterialCountGt(material: "Ice", min_count: 1),
+        // No chemical reactions should fire (pure thermal scenario)
+        NoReactions,
+    ],
+)

@@ -249,6 +249,7 @@ mod tests {
             temperature: 288.15,
             pressure: 101325.0,
             damage: 1.0,
+            latent_heat_buffer: 0.0,
         };
         let stone = Voxel {
             material: MaterialId::STONE,

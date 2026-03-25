@@ -107,6 +107,7 @@ pub fn decode_rle(runs: &[VoxelRun]) -> Vec<crate::world::voxel::Voxel> {
             temperature: r.temperature,
             pressure: r.pressure,
             damage: r.damage,
+            latent_heat_buffer: 0.0,
         };
         for _ in 0..r.count {
             out.push(v);

@@ -1,0 +1,32 @@
+MaterialData(
+    id: 12,
+    name: "Hydrogen",
+    default_phase: Gas,
+    // Source: Wikipedia — Hydrogen, standard conditions (0 °C, 101.325 kPa)
+    density: 0.0899,
+    melting_point: Some(14.01),
+    boiling_point: Some(20.28),
+    ignition_point: None,
+    hardness: 0.0,
+    color: (0.8, 0.85, 1.0),
+    transparent: true,
+    // Source: Wikipedia — Thermal conductivity, H₂ at 300 K
+    thermal_conductivity: 0.1805,
+    // Source: Wikipedia — Specific heat capacity, H₂ gas at 298 K
+    specific_heat_capacity: 14304.0,
+    latent_heat_fusion: Some(58600.0),
+    latent_heat_vaporization: Some(449400.0),
+    emissivity: 0.0,
+    viscosity: Some(0.0000089),
+    friction_coefficient: 0.0,
+    restitution: 0.0,
+    youngs_modulus: None,
+    // Source: Wikipedia — Heat of combustion, H₂ = 141.8 MJ/kg (HHV)
+    // Using LHV: 119.96 MJ/kg (241.8 kJ/mol ÷ 0.002016 kg/mol)
+    heat_of_combustion: Some(119960000.0),
+    molar_mass: Some(0.002016),
+    frozen_into: None,
+    boiled_into: None,
+    melted_into: None,
+    condensed_into: None,
+)

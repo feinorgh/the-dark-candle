@@ -401,7 +401,10 @@ mod tests {
     fn compression_stats_empty_chunk() {
         let chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
         let stats = compression_stats(&chunk);
-        assert_eq!(stats.flat_bytes, 16 * 32 * 32 * 32);
+        assert_eq!(
+            stats.flat_bytes,
+            std::mem::size_of::<crate::world::voxel::Voxel>() * 32 * 32 * 32
+        );
         assert!(
             stats.compression_ratio > 1.0,
             "Empty chunk should compress well"

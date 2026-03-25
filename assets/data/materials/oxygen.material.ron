@@ -1,0 +1,30 @@
+MaterialData(
+    id: 13,
+    name: "Oxygen",
+    default_phase: Gas,
+    // Source: Wikipedia — Oxygen, standard conditions (0 °C, 101.325 kPa)
+    density: 1.429,
+    melting_point: Some(54.36),
+    boiling_point: Some(90.19),
+    ignition_point: None,
+    hardness: 0.0,
+    color: (0.7, 0.85, 0.95),
+    transparent: true,
+    // Source: Wikipedia — Thermal conductivity, O₂ at 300 K
+    thermal_conductivity: 0.02658,
+    // Source: Wikipedia — Specific heat capacity, O₂ gas at 298 K
+    specific_heat_capacity: 918.0,
+    latent_heat_fusion: Some(13900.0),
+    latent_heat_vaporization: Some(213100.0),
+    emissivity: 0.0,
+    viscosity: Some(0.00002055),
+    friction_coefficient: 0.0,
+    restitution: 0.0,
+    youngs_modulus: None,
+    heat_of_combustion: None,
+    molar_mass: Some(0.032),
+    frozen_into: None,
+    boiled_into: None,
+    melted_into: None,
+    condensed_into: None,
+)

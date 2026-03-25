@@ -1,10 +1,9 @@
 // Fire propagation: emergent integration test for the chemistry pipeline.
 //
-// This module simulates fire spreading through connected wood voxels by
-// combining all three chemistry subsystems in a tick loop:
-//   1. Heat diffusion  — diffuse_chunk()
-//   2. Chemical reactions — check_reaction() applied across neighbor pairs
-//   3. State transitions — apply_transitions() for melting/boiling
+// This module tests fire spreading through connected wood voxels using the
+// shared simulation harness (`crate::simulation::simulate_tick`), which
+// combines heat diffusion, chemical reactions, state transitions, and
+// pressure diffusion in a single tick loop.
 //
 // The test verifies that igniting one wood voxel eventually causes adjacent
 // wood to burn as well, producing ash and releasing heat — all driven purely
@@ -12,10 +11,7 @@
 
 #![allow(dead_code)]
 
-use crate::chemistry::heat::diffuse_chunk;
-use crate::chemistry::reactions::{ReactionData, check_reaction};
-use crate::chemistry::state_transitions::apply_transitions;
-use crate::data::MaterialRegistry;
+use crate::chemistry::reactions::ReactionData;
 use crate::world::voxel::{MaterialId, Voxel};
 
 const WOOD: u16 = 5;
@@ -41,98 +37,6 @@ fn wood_combustion_rule() -> ReactionData {
     }
 }
 
-/// Run one simulation tick on a flat voxel array of `size³`.
-///
-/// Steps per tick:
-/// 1. Heat diffusion (temperature spreads between neighbors via Fourier's law)
-/// 2. Reaction matching (e.g. hot wood + air → ash + heat)
-/// 3. State transitions (melting/boiling/freezing)
-///
-/// `dt` is the simulation timestep in seconds passed to `diffuse_chunk`.
-///
-/// Returns the number of reactions that fired.
-fn simulate_tick(
-    voxels: &mut [Voxel],
-    size: usize,
-    rules: &[ReactionData],
-    registry: &MaterialRegistry,
-    dt: f32,
-) -> usize {
-    // 1. Heat diffusion
-    let new_temps = diffuse_chunk(voxels, size, dt, registry);
-    for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
-        v.temperature = t;
-    }
-
-    // 2. Chemical reactions — check each voxel against its ±X/±Y/±Z neighbors
-    let mut reactions_fired = 0;
-    let snapshot: Vec<Voxel> = voxels.to_vec();
-
-    for z in 0..size {
-        for y in 0..size {
-            for x in 0..size {
-                let idx = z * size * size + y * size + x;
-                let voxel_a = &snapshot[idx];
-
-                let neighbor_offsets: [(i32, i32, i32); 6] = [
-                    (-1, 0, 0),
-                    (1, 0, 0),
-                    (0, -1, 0),
-                    (0, 1, 0),
-                    (0, 0, -1),
-                    (0, 0, 1),
-                ];
-
-                for (dx, dy, dz) in neighbor_offsets {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    let nz = z as i32 + dz;
-
-                    if nx < 0
-                        || ny < 0
-                        || nz < 0
-                        || nx >= size as i32
-                        || ny >= size as i32
-                        || nz >= size as i32
-                    {
-                        continue;
-                    }
-
-                    let nidx = nz as usize * size * size + ny as usize * size + nx as usize;
-                    let voxel_b = &snapshot[nidx];
-
-                    for rule in rules {
-                        if let Some(result) = check_reaction(
-                            rule,
-                            voxel_a.material,
-                            voxel_b.material,
-                            voxel_a.temperature,
-                            registry,
-                        ) {
-                            voxels[idx].material = result.new_material_a;
-                            // heat_output is a temperature delta (K); see ReactionData docs.
-                            // TODO: Replace with energy-based model using
-                            // MaterialData::heat_of_combustion (J/kg) and a sustained
-                            // burn rate, converting via ΔT = E / (ρ × Cₚ × V).
-                            voxels[idx].temperature += result.heat_output;
-                            if let Some(new_b) = result.new_material_b {
-                                voxels[nidx].material = new_b;
-                            }
-                            reactions_fired += 1;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. State transitions
-    apply_transitions(voxels, registry);
-
-    reactions_fired
-}
-
 /// Count how many voxels have the given material.
 fn count_material(voxels: &[Voxel], mat: MaterialId) -> usize {
     voxels.iter().filter(|v| v.material == mat).count()
@@ -141,7 +45,8 @@ fn count_material(voxels: &[Voxel], mat: MaterialId) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{MaterialData, Phase};
+    use crate::data::{MaterialData, MaterialRegistry, Phase};
+    use crate::simulation::simulate_tick;
 
     fn minimal_registry() -> MaterialRegistry {
         let mut reg = MaterialRegistry::new();
@@ -230,7 +135,8 @@ mod tests {
         // Run 10 ticks at room temperature (dt=5000s for real SI diffusion)
         let mut total_reactions = 0;
         for _ in 0..10 {
-            total_reactions += simulate_tick(&mut voxels, size, &rules, &registry, 5000.0);
+            total_reactions +=
+                simulate_tick(&mut voxels, size, &rules, &registry, 5000.0).reactions_fired;
         }
 
         assert_eq!(total_reactions, 0, "Room-temp wood should not burn");
@@ -251,7 +157,7 @@ mod tests {
         assert_eq!(initial_wood, 16);
 
         // Run a single tick — the ignited voxel should react
-        let reactions = simulate_tick(&mut voxels, size, &rules, &registry, 5000.0);
+        let reactions = simulate_tick(&mut voxels, size, &rules, &registry, 5000.0).reactions_fired;
 
         assert!(reactions > 0, "Ignited wood should react in first tick");
         assert!(
@@ -285,7 +191,8 @@ mod tests {
 
         let mut total_reactions = 0;
         for _ in 0..200 {
-            total_reactions += simulate_tick(&mut voxels, size, &rules, &registry, 5000.0);
+            total_reactions +=
+                simulate_tick(&mut voxels, size, &rules, &registry, 5000.0).reactions_fired;
         }
 
         let remaining_wood = count_material(&voxels, MaterialId(WOOD));
@@ -370,7 +277,7 @@ mod tests {
         let registry = minimal_registry();
 
         // Run a tick — center has no air neighbors, only wood
-        let reactions = simulate_tick(&mut voxels, size, &rules, &registry, 5000.0);
+        let reactions = simulate_tick(&mut voxels, size, &rules, &registry, 5000.0).reactions_fired;
 
         // Center is fully surrounded by wood — no air neighbor
         // Only surface voxels touch chunk boundary (treated as out-of-bounds, not air)

@@ -38,6 +38,18 @@ pub struct Voxel {
     pub pressure: f32,
     /// Structural damage / mass fraction remaining [1.0 = intact, 0.0 = destroyed].
     pub damage: f32,
+    /// Cumulative energy (J/kg) accumulated toward the next phase transition.
+    ///
+    /// When a voxel is at a phase boundary (e.g. water at 273.15 K), heat
+    /// extracted each tick is stored here instead of changing temperature.
+    /// The transition completes when this buffer reaches the material's latent
+    /// heat. Materials without latent heat transition instantly (buffer stays 0).
+    ///
+    /// TODO: When native octree physics is implemented with LOD-based dynamic
+    /// resolution, sub-voxel thermal gradients will make this buffer less
+    /// critical — finer cells at interfaces will capture the phase front
+    /// directly rather than averaging over 1 m³.
+    pub latent_heat_buffer: f32,
 }
 
 impl Default for Voxel {
@@ -47,6 +59,7 @@ impl Default for Voxel {
             temperature: 288.15,
             pressure: 101_325.0,
             damage: 0.0,
+            latent_heat_buffer: 0.0,
         }
     }
 }
@@ -134,10 +147,11 @@ mod tests {
 
     #[test]
     fn voxel_size_is_compact() {
-        // Voxel should be ≤16 bytes for cache efficiency in chunk arrays
+        // Voxel should be ≤24 bytes for cache efficiency in chunk arrays.
+        // Current layout: MaterialId(u16) + pad + 4×f32 = 20 bytes.
         assert!(
-            std::mem::size_of::<Voxel>() <= 16,
-            "Voxel is {} bytes, expected ≤16",
+            std::mem::size_of::<Voxel>() <= 24,
+            "Voxel is {} bytes, expected ≤24",
             std::mem::size_of::<Voxel>()
         );
     }

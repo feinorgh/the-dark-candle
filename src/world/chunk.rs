@@ -460,6 +460,7 @@ mod tests {
             temperature: 350.0,
             pressure: 2.5,
             damage: 0.3,
+            latent_heat_buffer: 0.0,
         };
         chunk.set(7, 7, 7, v);
 

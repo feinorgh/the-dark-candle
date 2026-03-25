@@ -1,0 +1,34 @@
+// Negative test: inert gas in a sealed chamber does not react.
+//
+// A stone box filled entirely with air (no combustible material) should
+// produce zero reactions and maintain ambient temperature. This validates
+// that the simulation harness does not produce false positives.
+
+SimulationScenario(
+    name: "Inert gas no reaction",
+    description: "Sealed stone box with only air. Nothing should happen even with a hot spot.",
+
+    grid_size: 6,
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        Shell(material: "Stone", min: (0, 0, 0), max: (5, 5, 5), thickness: 1),
+    ],
+
+    ignition: [
+        HotSpot(pos: (3, 3, 3), temperature: 2000.0),
+    ],
+
+    ticks: 50,
+    dt: 100.0,
+
+    assertions: [
+        NoReactions,
+        // Interior temperature should equilibrate well below the hot spot
+        RegionAvgTempLt(min: (1, 1, 1), max: (4, 4, 4), threshold: 1000.0),
+    ],
+)

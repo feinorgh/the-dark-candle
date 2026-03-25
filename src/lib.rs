@@ -10,5 +10,6 @@ pub mod entities;
 pub mod persistence;
 pub mod physics;
 pub mod procgen;
+pub mod simulation;
 pub mod social;
 pub mod world;

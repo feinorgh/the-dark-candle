@@ -12,7 +12,7 @@
 
 #![allow(dead_code)]
 
-use crate::data::MaterialRegistry;
+use crate::data::{MaterialData, MaterialRegistry, Phase};
 use crate::world::voxel::{MaterialId, Voxel};
 
 // MaterialRegistry is now defined in crate::data and re-exported from there.
@@ -74,19 +74,169 @@ pub fn check_transition(voxel: &Voxel, registry: &MaterialRegistry) -> Transitio
     TransitionResult::None
 }
 
+/// Determine the latent heat (J/kg) for a pending transition, if any.
+///
+/// Returns `Some(latent_heat)` when the material's data specifies a latent
+/// heat for this transition type, or `None` for instant transitions.
+fn latent_heat_for_transition(voxel: &Voxel, data: &MaterialData) -> Option<f32> {
+    match data.default_phase {
+        Phase::Solid => {
+            // Melting: uses latent_heat_fusion
+            if data.melting_point.is_some_and(|mp| voxel.temperature > mp) {
+                return data.latent_heat_fusion;
+            }
+        }
+        Phase::Liquid => {
+            // Boiling: uses latent_heat_vaporization
+            if data.boiling_point.is_some_and(|bp| voxel.temperature > bp) {
+                return data.latent_heat_vaporization;
+            }
+            // Freezing: uses latent_heat_fusion
+            if data.melting_point.is_some_and(|mp| voxel.temperature < mp) {
+                return data.latent_heat_fusion;
+            }
+        }
+        Phase::Gas => {
+            // Condensation: uses latent_heat_vaporization
+            if data.boiling_point.is_some_and(|bp| voxel.temperature < bp) {
+                return data.latent_heat_vaporization;
+            }
+        }
+    }
+    None
+}
+
+/// Return the phase-boundary temperature and sign for the current transition.
+///
+/// `direction` is +1.0 when the voxel is heating past the threshold (melting,
+/// boiling) and −1.0 when cooling past it (freezing, condensation).
+fn transition_threshold_and_direction(voxel: &Voxel, data: &MaterialData) -> (f32, f32) {
+    match data.default_phase {
+        Phase::Solid => (data.melting_point.unwrap_or(voxel.temperature), 1.0),
+        Phase::Liquid => {
+            if data.boiling_point.is_some_and(|bp| voxel.temperature > bp) {
+                (data.boiling_point.unwrap(), 1.0)
+            } else {
+                (data.melting_point.unwrap_or(voxel.temperature), -1.0)
+            }
+        }
+        Phase::Gas => (data.boiling_point.unwrap_or(voxel.temperature), -1.0),
+    }
+}
+
+/// Drain the latent-heat buffer when the voxel's temperature moves away from
+/// the transition threshold (e.g. water warms back above 273.15 K while the
+/// freezing buffer was partially filled).
+///
+/// Energy conservation: `Cₚ × T − buffer` is invariant across the drain.
+fn drain_latent_buffer(voxel: &mut Voxel, data: &MaterialData) {
+    if voxel.latent_heat_buffer <= 0.0 {
+        return;
+    }
+    let cp = data.specific_heat_capacity.max(1.0);
+
+    // Find the threshold the buffer was accumulated toward.
+    let threshold = match data.default_phase {
+        Phase::Solid => data.melting_point,
+        Phase::Liquid => match (data.melting_point, data.boiling_point) {
+            (Some(mp), Some(bp)) => {
+                if (voxel.temperature - mp).abs() <= (voxel.temperature - bp).abs() {
+                    Some(mp)
+                } else {
+                    Some(bp)
+                }
+            }
+            (Some(mp), None) => Some(mp),
+            (None, Some(bp)) => Some(bp),
+            (None, None) => None,
+        },
+        Phase::Gas => data.boiling_point,
+    };
+
+    let Some(threshold) = threshold else {
+        voxel.latent_heat_buffer = 0.0;
+        return;
+    };
+
+    let distance = (voxel.temperature - threshold).abs();
+    let drain_energy = cp * distance;
+
+    if drain_energy >= voxel.latent_heat_buffer {
+        let remaining = drain_energy - voxel.latent_heat_buffer;
+        let sign = if voxel.temperature >= threshold {
+            1.0
+        } else {
+            -1.0
+        };
+        voxel.temperature = threshold + sign * remaining / cp;
+        voxel.latent_heat_buffer = 0.0;
+    } else {
+        voxel.latent_heat_buffer -= drain_energy;
+        voxel.temperature = threshold;
+    }
+}
+
 /// Apply state transitions to a flat voxel array.
-/// Returns the number of voxels that changed.
+///
+/// Uses cumulative latent-heat tracking when a material defines
+/// `latent_heat_fusion` or `latent_heat_vaporization`. Materials without
+/// latent heat transition instantly (backward compatible).
+///
+/// Returns the number of voxels that completed a phase change this tick.
+///
+/// TODO: When native octree physics with LOD-based dynamic resolution is
+/// implemented, sub-voxel cells will track their own latent heat buffers,
+/// enabling a spatially resolved phase front instead of the current per-voxel
+/// average.
 pub fn apply_transitions(voxels: &mut [Voxel], registry: &MaterialRegistry) -> usize {
     let mut changed = 0;
     for voxel in voxels.iter_mut() {
         if voxel.is_air() {
             continue;
         }
+        let Some(data) = registry.get(voxel.material) else {
+            continue;
+        };
+
         match check_transition(voxel, registry) {
-            TransitionResult::None => {}
-            TransitionResult::TransformTo(new_mat) => {
-                voxel.material = new_mat;
-                changed += 1;
+            TransitionResult::None => {
+                // Temperature did not cross a threshold this tick.
+                // If there is accumulated buffer energy, drain it.
+                if voxel.latent_heat_buffer > 0.0 {
+                    drain_latent_buffer(voxel, data);
+                }
+            }
+            TransitionResult::TransformTo(target) => {
+                let latent = latent_heat_for_transition(voxel, data);
+                if let Some(lh) = latent {
+                    // Cumulative model: absorb overcooling/overheating energy.
+                    let (threshold, direction) = transition_threshold_and_direction(voxel, data);
+                    let cp = data.specific_heat_capacity.max(1.0);
+                    let overcooling = (voxel.temperature - threshold).abs();
+                    let energy = cp * overcooling;
+                    voxel.latent_heat_buffer += energy;
+                    voxel.temperature = threshold;
+
+                    if voxel.latent_heat_buffer >= lh {
+                        let excess = voxel.latent_heat_buffer - lh;
+                        let new_cp = registry
+                            .get(target)
+                            .map(|d| d.specific_heat_capacity)
+                            .unwrap_or(1000.0)
+                            .max(1.0);
+                        let residual = excess / new_cp;
+
+                        voxel.material = target;
+                        voxel.latent_heat_buffer = 0.0;
+                        voxel.temperature = threshold + direction * residual;
+                        changed += 1;
+                    }
+                } else {
+                    // No latent heat — instant transition.
+                    voxel.material = target;
+                    voxel.latent_heat_buffer = 0.0;
+                    changed += 1;
+                }
             }
         }
     }
@@ -313,14 +463,147 @@ mod tests {
             Voxel::new(MaterialId::WATER),
             Voxel::new(MaterialId::AIR),
         ];
-        voxels[0].temperature = 1500.0; // stone → lava
-        voxels[1].temperature = 250.0; // water → ice
+        voxels[0].temperature = 1500.0; // stone → lava (no latent heat in test registry)
+        voxels[1].temperature = 250.0; // water → ice (no latent heat in test registry)
 
         let changed = apply_transitions(&mut voxels, &reg);
         assert_eq!(changed, 2);
         assert_eq!(voxels[0].material, MaterialId::LAVA);
         assert_eq!(voxels[1].material, MaterialId::ICE);
         assert_eq!(voxels[2].material, MaterialId::AIR); // unchanged
+    }
+
+    // ---- Latent heat tests ----
+
+    fn test_registry_with_latent_heat() -> MaterialRegistry {
+        let mut reg = test_registry();
+        // Re-insert water and ice with latent heat values
+        reg.insert(MaterialData {
+            id: 3,
+            name: "Water".into(),
+            default_phase: Phase::Liquid,
+            density: 1000.0,
+            melting_point: Some(273.15),
+            boiling_point: Some(373.15),
+            specific_heat_capacity: 4186.0,
+            latent_heat_fusion: Some(334_000.0),
+            latent_heat_vaporization: Some(2_260_000.0),
+            frozen_into: Some("Ice".into()),
+            boiled_into: Some("Steam".into()),
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 8,
+            name: "Ice".into(),
+            default_phase: Phase::Solid,
+            density: 917.0,
+            melting_point: Some(273.15),
+            specific_heat_capacity: 2090.0,
+            latent_heat_fusion: Some(334_000.0),
+            melted_into: Some("Water".into()),
+            ..Default::default()
+        });
+        reg
+    }
+
+    #[test]
+    fn latent_heat_delays_freezing() {
+        let reg = test_registry_with_latent_heat();
+        let mut voxels = vec![Voxel::new(MaterialId::WATER)];
+        voxels[0].temperature = 272.0;
+        let changed = apply_transitions(&mut voxels, &reg);
+        assert_eq!(changed, 0, "should not freeze instantly with latent heat");
+        assert_eq!(voxels[0].material, MaterialId::WATER);
+        assert_eq!(voxels[0].temperature, 273.15); // clamped to threshold
+        assert!(voxels[0].latent_heat_buffer > 0.0);
+
+        // Energy stored: Cp × overcooling = 4186 × 1.15 ≈ 4814 J/kg
+        let expected_energy = 4186.0 * 1.15;
+        assert!(
+            (voxels[0].latent_heat_buffer - expected_energy).abs() < 1.0,
+            "buffer should be ~{expected_energy}, got {}",
+            voxels[0].latent_heat_buffer
+        );
+    }
+
+    #[test]
+    fn latent_heat_accumulates_over_ticks() {
+        let reg = test_registry_with_latent_heat();
+        let mut voxels = vec![Voxel::new(MaterialId::WATER)];
+
+        // Simulate many ticks of 1 K overcooling
+        for _ in 0..100 {
+            voxels[0].temperature = 272.15; // 1 K below mp
+            apply_transitions(&mut voxels, &reg);
+        }
+
+        // 100 ticks × 4186 J/kg = 418,600 J/kg > 334,000 → should have frozen
+        assert_eq!(
+            voxels[0].material,
+            MaterialId::ICE,
+            "water should freeze after enough ticks"
+        );
+        assert_eq!(voxels[0].latent_heat_buffer, 0.0);
+        // Residual temperature should be below threshold
+        assert!(voxels[0].temperature < 273.15);
+    }
+
+    #[test]
+    fn latent_heat_transition_residual_temperature() {
+        let reg = test_registry_with_latent_heat();
+        let mut voxels = vec![Voxel::new(MaterialId::WATER)];
+
+        // Accumulate exactly 334,000 J/kg + some excess
+        // Each tick at 1K below: 4186 J/kg. Need 334000/4186 ≈ 79.8 ticks.
+        // Use 80 ticks at 1K → 80 × 4186 = 334,880 J/kg. Excess = 880 J/kg.
+        for _ in 0..80 {
+            voxels[0].temperature = 272.15; // 1 K below mp
+            apply_transitions(&mut voxels, &reg);
+        }
+
+        assert_eq!(voxels[0].material, MaterialId::ICE);
+        // Residual: excess / Cp_ice = 880 / 2090 ≈ 0.421 K below mp
+        let expected_residual = 273.15 - 880.0 / 2090.0;
+        assert!(
+            (voxels[0].temperature - expected_residual).abs() < 0.1,
+            "residual temp should be ~{expected_residual:.2}, got {:.2}",
+            voxels[0].temperature
+        );
+    }
+
+    #[test]
+    fn latent_heat_buffer_drains_on_warming() {
+        let reg = test_registry_with_latent_heat();
+        let mut voxels = vec![Voxel::new(MaterialId::WATER)];
+
+        // Accumulate some freezing energy
+        voxels[0].temperature = 272.15;
+        apply_transitions(&mut voxels, &reg);
+        let buffer_after = voxels[0].latent_heat_buffer;
+        assert!(buffer_after > 0.0);
+
+        // Now warm above threshold → should drain
+        voxels[0].temperature = 275.0; // 1.85 K above mp
+        apply_transitions(&mut voxels, &reg);
+
+        // Drain energy = 4186 × 1.85 = 7744 > buffer ≈ 4186 → fully drained
+        assert_eq!(voxels[0].latent_heat_buffer, 0.0);
+        // Temperature reduced by buffer/Cp
+        assert!(voxels[0].temperature < 275.0);
+        assert!(voxels[0].temperature > 273.15);
+    }
+
+    #[test]
+    fn no_latent_heat_instant_transition() {
+        // test_registry has NO latent heat → instant transition (backward compat)
+        let reg = test_registry();
+        let mut voxels = vec![Voxel::new(MaterialId::WATER)];
+        voxels[0].temperature = 250.0;
+
+        let changed = apply_transitions(&mut voxels, &reg);
+        assert_eq!(changed, 1);
+        assert_eq!(voxels[0].material, MaterialId::ICE);
+        assert_eq!(voxels[0].latent_heat_buffer, 0.0);
     }
 
     #[test]

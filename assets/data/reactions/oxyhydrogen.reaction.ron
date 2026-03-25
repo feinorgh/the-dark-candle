@@ -1,0 +1,17 @@
+ReactionData(
+    name: "Oxyhydrogen combustion",
+    // Source: Wikipedia — Oxyhydrogen
+    // 2 H₂ + O₂ → 2 H₂O
+    // 241.8 kJ/mol H₂ (LHV), autoignition ≈ 570 °C (843 K)
+    // Max flame temperature ≈ 2800 °C (3073 K)
+    input_a: "Hydrogen",
+    input_b: Some("Oxygen"),
+    min_temperature: 843.0,
+    max_temperature: 99999.0,
+    output_a: "Steam",
+    output_b: None,
+    // ΔT of 3500 K compensates for the conduction-only heat model (no
+    // convection or radiation). Target: product reaches ~3000–4000 K,
+    // then cools via diffusion to ignite neighboring H₂ voxels.
+    heat_output: 3500.0,
+)

@@ -1,0 +1,52 @@
+// Oxyhydrogen combustion in a sealed stone chamber.
+//
+// Source: Wikipedia — Oxyhydrogen
+//   2 H₂ + O₂ → 2 H₂O
+//   Autoignition: 570 °C (843 K)
+//   LHV: 241.8 kJ/mol H₂
+//   Max flame temperature: ~2800 °C (3073 K) stoichiometric
+//
+// Setup: 8³ grid, stone walls, interior filled with hydrogen, oxygen placed
+// at every 3rd position (approximating a 2:1 ratio). A 900 K hot spot
+// at the center triggers ignition.
+//
+// Assertions verify that combustion occurred, hydrogen was consumed, steam
+// was produced, and the interior heated significantly.
+
+SimulationScenario(
+    name: "Oxyhydrogen combustion in sealed chamber",
+    description: "Stoichiometric H₂/O₂ mixture ignited in a stone box. Verifies reaction products and temperature rise.",
+
+    grid_size: 8,
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone walls (hollow box)
+        Shell(material: "Stone", min: (0, 0, 0), max: (7, 7, 7), thickness: 1),
+        // Fill interior with hydrogen
+        Fill(material: "Hydrogen", min: (1, 1, 1), max: (6, 6, 6)),
+        // Place oxygen at every 3rd position (≈1:2 O₂:H₂ ratio)
+        EveryNth(material: "Oxygen", min: (1, 1, 1), max: (6, 6, 6), step: 3),
+    ],
+
+    ignition: [
+        // Spark at center, well above autoignition (843 K)
+        HotSpot(pos: (3, 3, 3), temperature: 900.0),
+    ],
+
+    ticks: 200,
+    dt: 5000.0,
+
+    assertions: [
+        // At least some reactions should have fired
+        TotalReactionsGt(min_count: 5),
+        // Some steam should be produced
+        MaterialCountGt(material: "Steam", min_count: 5),
+        // Interior temperature should be significantly above ambient
+        RegionAvgTempGt(min: (2, 2, 2), max: (5, 5, 5), threshold: 300.0),
+    ],
+)
