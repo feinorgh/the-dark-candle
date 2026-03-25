@@ -1,0 +1,89 @@
+// Thermal Glow Visualization
+//
+// A block of iron at ambient temperature sits next to a superheated iron core.
+// Heat spreads via Fourier conduction, producing a visible temperature gradient
+// that exercises the incandescence color ramp (dark red → cherry → orange →
+// yellow-white). The video output captures both a temperature heatmap and the
+// incandescence rendering for visual evaluation.
+//
+// Run with:
+//   cargo test --test simulations -- --nocapture
+//
+// Output: test_output/thermal_glow_heatmap.mp4
+//         test_output/thermal_glow_incandescence.mp4
+
+SimulationScenario(
+    name: "Thermal Glow Visual",
+    description: "Hot iron core radiates heat outward; video captures the glow ramp",
+
+    grid_size: 16,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Fill entire grid with iron
+        Fill(
+            material: "Iron",
+            min: (0, 0, 0),
+            max: (15, 15, 15),
+        ),
+    ],
+
+    ignition: [
+        // Superheated core at center: 2000 K
+        HeatRegion(
+            min: (6, 6, 6),
+            max: (9, 9, 9),
+            temperature: 2000.0,
+        ),
+        // Warm shell around it: 1200 K
+        HeatRegion(
+            min: (4, 4, 4),
+            max: (11, 11, 11),
+            temperature: 1200.0,
+        ),
+        // Re-apply inner core (overwrites the shell overlap)
+        HeatRegion(
+            min: (6, 6, 6),
+            max: (9, 9, 9),
+            temperature: 2000.0,
+        ),
+    ],
+
+    // Short timestep: 0.5 s per tick, 200 ticks = 100 s of simulated time.
+    // Iron's high thermal diffusivity means heat spreads visibly.
+    dt: 0.5,
+    ticks: 200,
+
+    stop_condition: FixedTicks,
+
+    assertions: [
+        // Core should still be hot (above 1000 K on average)
+        RegionAvgTempGt(
+            min: (6, 6, 6),
+            max: (9, 9, 9),
+            threshold: 1000.0,
+        ),
+        // Middle shell should have absorbed heat
+        RegionAvgTempGt(
+            min: (3, 3, 3),
+            max: (5, 5, 5),
+            threshold: 350.0,
+        ),
+    ],
+
+    emit_dump: None,
+    emit_video: Some(VideoConfig(
+        path: "test_output/thermal_glow_heatmap.mp4",
+        view: Slice(axis: Y, depth: 8),
+        color_mode: Temperature(min_k: 280.0, max_k: 2100.0),
+        fps: 30,
+        scale: 8,
+    )),
+)

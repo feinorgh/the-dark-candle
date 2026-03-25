@@ -64,6 +64,11 @@ pub enum ColorMode {
         /// Upper bound in Pascals.
         max_pa: f32,
     },
+    /// Material color blended with incandescent glow above 800 K.
+    /// Mirrors the in-game thermal glow ramp: dark red → cherry →
+    /// orange → yellow-white. HDR emissive values are tone-mapped
+    /// to [0, 255] for the output image.
+    Incandescence,
 }
 
 /// Map a normalized value in `[0, 1]` to a blue→cyan→green→yellow→red gradient.
@@ -121,6 +126,20 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
                 0.5
             };
             heatmap_rgb(t)
+        }
+        ColorMode::Incandescence => {
+            // Base color from material data
+            let base = if let Some(mat) = registry.get(voxel.material) {
+                [mat.color[0], mat.color[1], mat.color[2], 1.0]
+            } else {
+                [0.8, 0.0, 0.8, 1.0]
+            };
+            let hdr = crate::world::meshing::incandescence_color(base, voxel.temperature);
+            // Tone-map HDR → LDR via Reinhard
+            fn tonemap(v: f32) -> u8 {
+                ((v / (1.0 + v)) * 255.0).min(255.0) as u8
+            }
+            Rgb([tonemap(hdr[0]), tonemap(hdr[1]), tonemap(hdr[2])])
         }
     }
 }
