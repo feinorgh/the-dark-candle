@@ -33,6 +33,7 @@ opt-level = 1
 [dev-dependencies]
 glob = "0.3"
 approx = "0.5"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Optimize the final Windows/Linux release build
 [profile.release]
