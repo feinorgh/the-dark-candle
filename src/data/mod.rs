@@ -149,6 +149,13 @@ pub struct MaterialData {
     /// `None` = derive from Fresnel (default for non-metals).
     #[serde(default)]
     pub reflectivity: Option<f32>,
+    /// Per-channel RGB absorption coefficients (m⁻¹) for colored light
+    /// attenuation through transparent materials (Beer-Lambert law).
+    /// `[α_R, α_G, α_B]` — higher values mean more absorption on that channel.
+    /// Water absorbs red strongly, giving blue tint: `[0.45, 0.07, 0.02]`.
+    /// `None` = derive from scalar absorption_coefficient (equal on all channels).
+    #[serde(default)]
+    pub absorption_rgb: Option<[f32; 3]>,
 
     // --- Phase transition targets ---
     /// Material name this becomes when heated above melting_point (solid → liquid).
@@ -163,6 +170,27 @@ pub struct MaterialData {
     /// Material name this becomes when cooled below boiling_point (gas → liquid).
     #[serde(default)]
     pub condensed_into: Option<String>,
+}
+
+impl MaterialData {
+    /// Get per-channel RGB absorption coefficients for light transport.
+    ///
+    /// Returns `Some([α_R, α_G, α_B])` for transparent/semi-transparent
+    /// materials, `None` for fully opaque. Falls back from `absorption_rgb`
+    /// to scalar `absorption_coefficient` (broadcast to all channels).
+    pub fn light_absorption_rgb(&self) -> Option<[f32; 3]> {
+        if let Some(rgb) = self.absorption_rgb {
+            return Some(rgb);
+        }
+        if self.transparent {
+            if let Some(alpha) = self.absorption_coefficient {
+                return Some([alpha, alpha, alpha]);
+            }
+            // Transparent but no absorption specified → fully transparent.
+            return Some([0.0, 0.0, 0.0]);
+        }
+        None // Opaque
+    }
 }
 
 /// Global resource holding handles to loaded data assets.

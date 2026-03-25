@@ -14,7 +14,7 @@ use image::{Rgb, RgbImage};
 use serde::Deserialize;
 
 use crate::data::MaterialRegistry;
-use crate::world::voxel::Voxel;
+use crate::world::voxel::{MaterialId, Voxel};
 
 /// Which axis to slice along when using `ViewMode::Slice`.
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -323,6 +323,14 @@ fn render_perspective(
     let eye = [cam.eye.x, cam.eye.y, cam.eye.z];
     let to_light = [-light_dir.x, -light_dir.y, -light_dir.z];
 
+    // Beer-Lambert absorption lookup from registry.
+    let absorption_fn = |mat: MaterialId| -> Option<[f32; 3]> {
+        if mat.is_air() {
+            return Some([0.0; 3]);
+        }
+        registry.get(mat).and_then(|d| d.light_absorption_rgb())
+    };
+
     for py in 0..cam.height {
         for px in 0..cam.width {
             let u = (2.0 * px as f32 / cam.width as f32 - 1.0) * half_w;
@@ -349,12 +357,28 @@ fn render_perspective(
                 // Lambertian diffuse.
                 let n_dot_l = blended.dot(light_dir.scale(-1.0)).max(0.0);
 
-                // Shadow test.
+                // Beer-Lambert shadow: per-channel transmittance to light.
                 let hit_pos = [hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5];
-                let in_shadow = raycast::is_shadowed(voxels, size, hit_pos, to_light);
-                let shadow_factor = if in_shadow { 0.0 } else { 1.0 };
+                let shadow_origin = [
+                    hit_pos[0] + to_light[0] * 0.5,
+                    hit_pos[1] + to_light[1] * 0.5,
+                    hit_pos[2] + to_light[2] * 0.5,
+                ];
+                let shadow_rgb = match raycast::dda_march_ray_attenuated(
+                    voxels,
+                    size,
+                    shadow_origin,
+                    to_light,
+                    max_march,
+                    absorption_fn,
+                ) {
+                    Some(_opaque_hit) => [0.0, 0.0, 0.0], // Opaque blocker
+                    None => [1.0, 1.0, 1.0],               // Clear sky
+                };
 
-                let diffuse = n_dot_l * light.intensity * shadow_factor;
+                let diffuse_r = n_dot_l * light.intensity * shadow_rgb[0];
+                let diffuse_g = n_dot_l * light.intensity * shadow_rgb[1];
+                let diffuse_b = n_dot_l * light.intensity * shadow_rgb[2];
 
                 // Depth fog.
                 let fog_start = size as f32 * 0.5;
@@ -363,9 +387,12 @@ fn render_perspective(
 
                 let bg = sky_color(dir, light_dir);
 
-                let r = (base.0[0] as f32 * (light.ambient + diffuse * light_col.0)).min(255.0);
-                let g = (base.0[1] as f32 * (light.ambient + diffuse * light_col.1)).min(255.0);
-                let b = (base.0[2] as f32 * (light.ambient + diffuse * light_col.2)).min(255.0);
+                let r =
+                    (base.0[0] as f32 * (light.ambient + diffuse_r * light_col.0)).min(255.0);
+                let g =
+                    (base.0[1] as f32 * (light.ambient + diffuse_g * light_col.1)).min(255.0);
+                let b =
+                    (base.0[2] as f32 * (light.ambient + diffuse_b * light_col.2)).min(255.0);
 
                 Rgb([
                     (r * (1.0 - fog) + bg.0[0] as f32 * fog) as u8,
@@ -514,6 +541,15 @@ mod tests {
             name: "Water".into(),
             color: [0.0, 0.3, 0.8],
             transparent: true,
+            absorption_rgb: Some([0.45, 0.07, 0.02]),
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 12,
+            name: "Glass".into(),
+            color: [0.85, 0.9, 0.92],
+            transparent: true,
+            absorption_rgb: Some([0.05, 0.03, 0.04]),
             ..Default::default()
         });
         reg
@@ -780,6 +816,31 @@ mod tests {
             center_px.0[0] > 10 || center_px.0[1] > 10 || center_px.0[2] > 10,
             "ground should be visible, got {:?}",
             center_px
+        );
+    }
+
+    #[test]
+    fn beer_lambert_water_absorption_is_per_channel() {
+        // The light_absorption_rgb method should return per-channel values for
+        // water with absorption_rgb set.
+        let reg = test_registry();
+        let water_data = reg.get(MaterialId::WATER).unwrap();
+        let rgb = water_data.light_absorption_rgb();
+        assert!(rgb.is_some(), "Water should be transparent");
+        let [ar, ag, ab] = rgb.unwrap();
+        assert!(
+            ar > ag && ag > ab,
+            "Water should absorb red > green > blue: [{ar}, {ag}, {ab}]"
+        );
+    }
+
+    #[test]
+    fn beer_lambert_opaque_returns_none() {
+        let reg = test_registry();
+        let stone_data = reg.get(MaterialId::STONE).unwrap();
+        assert!(
+            stone_data.light_absorption_rgb().is_none(),
+            "Opaque stone should return None"
         );
     }
 }
