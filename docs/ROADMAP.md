@@ -836,10 +836,9 @@ it only depends on the existing temperature field and material emissivity
 - **View factor / ray-cast** ✅ — radiative flux between surfaces depends on
   line-of-sight and solid angle. A discrete 3D grid ray march
   (`src/world/raycast.rs`) casts 26 directions from each hot surface voxel.
-  Opaque voxels block radiation. View factor uses far-field approximation
-  F ≈ A/(πd²), capped at 0.20 for close pairs. Semi-transparent
-  materials (glass, water) attenuate by `absorption_coefficient` (new field,
-  not yet added)
+  Opaque voxels block radiation. Semi-transparent materials (water, ice, steam)
+  attenuate via Beer-Lambert law using `absorption_coefficient` ✅. View factor
+  uses far-field approximation F ≈ A/(πd²), capped at 0.20 for close pairs.
 - **Absorption** ✅ — receiving surfaces absorb radiation proportional to
   emissivity ε via the gray-body effective emissivity formula
   ε_eff = 1/(1/ε₁ + 1/ε₂ − 1). Reflected fraction = (1 − ε) is re-emitted
@@ -861,12 +860,12 @@ it only depends on the existing temperature field and material emissivity
 - **Use cases** — warming by campfire/lava at distance, forge/kiln radiation,
   solar heating, metal glow, thermal hazards for creatures
 
-New `MaterialData` fields still needed: `absorption_coefficient: Option<f32>`
-(m⁻¹) for semi-transparent attenuation, `albedo: Option<f32>` (0–1) for solar
-reflection.
+New `MaterialData` fields still needed: `albedo: Option<f32>` (0–1) for solar
+reflection. `absorption_coefficient` ✅ added (water 100 m⁻¹, ice 50 m⁻¹,
+steam 0.5 m⁻¹).
 
-Priority: medium. Core radiation ✅. Remaining: absorption coefficient, albedo,
-Planck color, solar insolation.
+Priority: medium. Core radiation ✅, absorption coefficient ✅. Remaining:
+albedo, Planck color, solar insolation.
 Depends on: Phase 2 (materials ✅), Phase 3 (temperature field ✅).
 Unlocks: Phase 9b (solar optics), thermal visualization.
 
