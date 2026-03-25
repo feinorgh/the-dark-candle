@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use super::chunk::{ChunkCoord, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, ChunkCoord};
 use super::chunk_manager::ChunkMap;
 use bevy::prelude::*;
 
@@ -71,8 +71,8 @@ mod tests {
 
     #[test]
     fn terrain_spawn_height_returns_above_surface() {
-        let gen = TerrainGenerator::new(TerrainConfig::default());
-        let h = terrain_spawn_height(0.0, 0.0, &gen);
+        let generator = TerrainGenerator::new(TerrainConfig::default());
+        let h = terrain_spawn_height(0.0, 0.0, &generator);
         let sea = TerrainConfig::default().sea_level as f32;
         let scale = TerrainConfig::default().height_scale as f32;
         // Should be somewhere near sea level ± scale
@@ -85,9 +85,9 @@ mod tests {
 
     #[test]
     fn terrain_spawn_height_is_deterministic() {
-        let gen = TerrainGenerator::new(TerrainConfig::default());
-        let h1 = terrain_spawn_height(50.0, 50.0, &gen);
-        let h2 = terrain_spawn_height(50.0, 50.0, &gen);
+        let generator = TerrainGenerator::new(TerrainConfig::default());
+        let h1 = terrain_spawn_height(50.0, 50.0, &generator);
+        let h2 = terrain_spawn_height(50.0, 50.0, &generator);
         assert_eq!(h1, h2);
     }
 }

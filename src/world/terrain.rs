@@ -14,7 +14,7 @@
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
-use super::chunk::{Chunk, CHUNK_SIZE};
+use super::chunk::{CHUNK_SIZE, Chunk};
 use super::voxel::MaterialId;
 
 /// Configuration for terrain generation, stored as a Bevy resource.
@@ -174,11 +174,11 @@ mod tests {
 
     #[test]
     fn sample_height_returns_near_sea_level() {
-        let gen = default_generator();
+        let generator = default_generator();
         // At any point, height should be within sea_level ± height_scale
-        let h = gen.sample_height(100.0, 200.0);
-        let sea = gen.config.sea_level as f64;
-        let scale = gen.config.height_scale;
+        let h = generator.sample_height(100.0, 200.0);
+        let sea = generator.config.sea_level as f64;
+        let scale = generator.config.height_scale;
         assert!(
             h > sea - scale * 1.5 && h < sea + scale * 1.5,
             "Height {} outside expected range [{}, {}]",
@@ -190,9 +190,9 @@ mod tests {
 
     #[test]
     fn sample_height_is_deterministic() {
-        let gen = default_generator();
-        let h1 = gen.sample_height(42.0, 99.0);
-        let h2 = gen.sample_height(42.0, 99.0);
+        let generator = default_generator();
+        let h1 = generator.sample_height(42.0, 99.0);
+        let h2 = generator.sample_height(42.0, 99.0);
         assert_eq!(h1, h2);
     }
 
@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn height_varies_across_space() {
-        let gen = default_generator();
+        let generator = default_generator();
         let mut heights = Vec::new();
         for x in (0..500).step_by(50) {
-            heights.push(gen.sample_height(x as f64, 0.0));
+            heights.push(generator.sample_height(x as f64, 0.0));
         }
         // Not all heights should be the same
         let min = heights.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -232,11 +232,11 @@ mod tests {
 
     #[test]
     fn generate_chunk_at_surface_has_mixed_materials() {
-        let gen = default_generator();
+        let generator = default_generator();
         // Chunk at Y=2 → voxels 64..95, straddles sea level (64) and terrain surface
         let coord = ChunkCoord::new(0, 2, 0);
         let mut chunk = Chunk::new_empty(coord);
-        gen.generate_chunk(&mut chunk);
+        generator.generate_chunk(&mut chunk);
 
         let mut air_count = 0usize;
         let mut solid_count = 0usize;
@@ -254,11 +254,11 @@ mod tests {
 
     #[test]
     fn generate_chunk_deep_underground_is_mostly_stone() {
-        let gen = default_generator();
+        let generator = default_generator();
         // Y=-3 → voxels -96..-65, well below sea level
         let coord = ChunkCoord::new(0, -3, 0);
         let mut chunk = Chunk::new_empty(coord);
-        gen.generate_chunk(&mut chunk);
+        generator.generate_chunk(&mut chunk);
 
         let stone_count = chunk
             .voxels()
@@ -277,11 +277,11 @@ mod tests {
 
     #[test]
     fn generate_chunk_high_up_is_all_air() {
-        let gen = default_generator();
+        let generator = default_generator();
         // Y=10 → voxels 320..351, well above any terrain
         let coord = ChunkCoord::new(0, 10, 0);
         let mut chunk = Chunk::new_empty(coord);
-        gen.generate_chunk(&mut chunk);
+        generator.generate_chunk(&mut chunk);
 
         assert!(
             chunk.is_empty(),
@@ -292,14 +292,14 @@ mod tests {
 
     #[test]
     fn cave_carving_creates_air_underground() {
-        let gen = TerrainGenerator::new(TerrainConfig {
+        let generator = TerrainGenerator::new(TerrainConfig {
             cave_threshold: 0.5, // Very aggressive cave carving
             ..Default::default()
         });
         // Underground chunk
         let coord = ChunkCoord::new(0, -2, 0);
         let mut chunk = Chunk::new_empty(coord);
-        gen.generate_chunk(&mut chunk);
+        generator.generate_chunk(&mut chunk);
 
         let air_count = chunk.voxels().iter().filter(|v| v.is_air()).count();
         assert!(
@@ -310,10 +310,10 @@ mod tests {
 
     #[test]
     fn generate_chunk_marks_dirty() {
-        let gen = default_generator();
+        let generator = default_generator();
         let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
         chunk.clear_dirty();
-        gen.generate_chunk(&mut chunk);
+        generator.generate_chunk(&mut chunk);
         assert!(chunk.is_dirty());
     }
 }

@@ -1,7 +1,12 @@
 [package]
 name = "the_dark_candle"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+description = "A data-driven voxel game built on Bevy with real-world SI physics and procedural generation"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/feinorgh/the-dark-candle"
+keywords = ["game", "bevy", "voxel", "ecs", "procedural-generation"]
+categories = ["games", "game-engines", "simulation"]
 
 [dependencies]
 # Core engine — default features only; platform-specific display backends below.
