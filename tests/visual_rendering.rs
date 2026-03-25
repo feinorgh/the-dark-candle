@@ -630,3 +630,170 @@ fn daynight_terrain_video() {
     eprintln!("  ✓ Day-night 3D terrain video → {path}");
     assert!(std::path::Path::new(path).exists());
 }
+
+// ---------------------------------------------------------------------------
+// Test 5: Optics — Colored Light Through Transparent Media
+// ---------------------------------------------------------------------------
+
+/// Registry with optical properties for transparent materials.
+fn optics_registry() -> MaterialRegistry {
+    let mut reg = MaterialRegistry::new();
+    reg.insert(MaterialData {
+        id: 0,
+        name: "Air".into(),
+        color: [0.8, 0.9, 1.0],
+        transparent: true,
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 1,
+        name: "Stone".into(),
+        color: [0.55, 0.55, 0.55],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 3,
+        name: "Water".into(),
+        color: [0.2, 0.45, 0.85],
+        transparent: true,
+        absorption_rgb: Some([0.45, 0.07, 0.02]),
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 12,
+        name: "Glass".into(),
+        color: [0.85, 0.92, 0.88],
+        transparent: true,
+        absorption_rgb: Some([0.05, 0.03, 0.04]),
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 2,
+        name: "Dirt".into(),
+        color: [0.45, 0.32, 0.18],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 7,
+        name: "Grass".into(),
+        color: [0.3, 0.6, 0.2],
+        ..Default::default()
+    });
+    reg
+}
+
+/// Build a 32³ scene with transparent columns on a terrain floor:
+/// - Water column (5 voxels tall)
+/// - Glass column (5 voxels tall)
+/// - Open-air reference area
+/// - Stone floor with grass top layer
+fn build_optics_scene(size: usize) -> Vec<Voxel> {
+    let mut voxels = vec![Voxel::default(); size * size * size];
+
+    // Flat stone floor with grass top at y=8
+    for x in 0..size {
+        for z in 0..size {
+            for y in 0..8 {
+                let i = idx(x, y, z, size);
+                voxels[i].material = MaterialId::STONE;
+            }
+            let i = idx(x, 8, z, size);
+            voxels[i].material = MaterialId(7); // Grass
+        }
+    }
+
+    // Water column: x=6..12, z=6..12, y=9..14 (5 voxels tall)
+    for x in 6..12 {
+        for z in 6..12 {
+            for y in 9..14 {
+                let i = idx(x, y, z, size);
+                voxels[i].material = MaterialId::WATER;
+            }
+        }
+    }
+
+    // Glass column: x=18..24, z=6..12, y=9..14 (5 voxels tall)
+    for x in 18..24 {
+        for z in 6..12 {
+            for y in 9..14 {
+                let i = idx(x, y, z, size);
+                voxels[i].material = MaterialId(12); // Glass
+            }
+        }
+    }
+
+    voxels
+}
+
+/// Renders a video showing light passing through transparent media:
+/// - Water column produces blue-tinted shadows (red absorbed)
+/// - Glass column produces nearly neutral shadows
+/// - Camera orbits the scene under noon sun with Rayleigh sky
+#[test]
+fn optics_colored_shadows_video() {
+    let _ = std::fs::create_dir_all("test_output");
+    let path = "test_output/optics_colored_shadows.mp4";
+
+    let size = 32;
+    let img_w = 640;
+    let img_h = 480;
+    let fps = 30;
+    let duration_s = 12.0_f32;
+    let total_frames = (duration_s * fps as f32) as u32;
+
+    let registry = optics_registry();
+    let voxels = build_optics_scene(size);
+    let mut encoder = FrameEncoder::new(path, img_w, img_h, fps).expect("encoder");
+
+    let center = size as f32 / 2.0;
+    let cam_radius = size as f32 * 1.3;
+    let cam_height = size as f32 * 0.7;
+
+    for frame in 0..total_frames {
+        let t = frame as f32 / total_frames as f32;
+
+        // Camera slowly orbits the scene.
+        let angle = t * std::f32::consts::TAU;
+        let cam_x = center + cam_radius * angle.cos();
+        let cam_z = center + cam_radius * angle.sin();
+
+        let view = ViewMode::Perspective {
+            eye: (cam_x, cam_height, cam_z),
+            target: (center, center * 0.35, center),
+            fov_degrees: 55.0,
+            width: img_w,
+            height: img_h,
+        };
+
+        // High sun (noon-ish) — good for showing shadows below columns.
+        // Sun sweeps slightly across the sky for shadow movement.
+        let sun_elevation = 1.0 + 0.2 * (t * std::f32::consts::PI).sin();
+        let sun_azimuth = 0.5 + t * 0.8;
+        let sun_y = -sun_elevation.sin();
+        let sun_xz = sun_elevation.cos();
+        let sun_x = -sun_xz * sun_azimuth.cos();
+        let sun_z = -sun_xz * sun_azimuth.sin();
+
+        let light = SceneLight {
+            direction: (sun_x, sun_y, sun_z),
+            color: (1.0, 1.0, 0.95),
+            intensity: 1.0,
+            ambient: 0.2,
+        };
+
+        let frame_img = render_frame_lit(
+            &voxels,
+            size,
+            &registry,
+            &view,
+            &ColorMode::Material,
+            1,
+            &light,
+        );
+        encoder.push_frame(&frame_img).expect("frame");
+    }
+
+    encoder.finish().expect("finalize");
+    eprintln!("  ✓ Optics colored shadows video → {path}");
+    assert!(std::path::Path::new(path).exists());
+}
