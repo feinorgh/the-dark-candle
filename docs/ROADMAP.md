@@ -83,8 +83,8 @@ identity and territory. Reputation from observed actions. Group behaviors
 ## Current State
 
 **All 7 original phases are complete.** The codebase has:
-- 86 source files, ~24,900 lines of Rust (edition 2024)
-- 742 passing tests
+- 90+ source files, ~26,000 lines of Rust (edition 2024)
+- 761 passing tests
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -99,6 +99,9 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `79904af` | FLIP/PIC particle simulation |
 | `e7e180f` | Remove legacy CA fluid simulation |
 | `e420fb8` | Simulation test framework + water freezing scenario |
+| `06e0ccd` | ECS state dump + screenshot capture diagnostics |
+| `40ba85b` | Debugging and diagnostics documentation |
+| `a65d972` | Simulation video visualization pipeline (ffmpeg) |
 
 ### LOD / Octree Realism Overhaul (latest)
 
@@ -665,6 +668,43 @@ not yet planned in detail — each will get a session plan when started.
 - **Plugin activation** — wire AmrFluidPlugin, LbmGasPlugin, FlipPicPlugin into
   PhysicsPlugin::build() for runtime use (currently test-only). Physics are also
   validated by the [simulation test framework](simulation-test-system.md).
+
+### Rigid Body Physics
+The existing entity physics (`PhysicsBody`, `Mass`, `DragProfile`, `Collider`)
+handles entity-vs-voxel forces and AABB terrain collision. A full rigid body
+system needs:
+
+- **Entity-vs-entity collision** — broad phase (spatial hash / sweep-and-prune)
+  + narrow phase (AABB or GJK) between dynamic entities
+- **Restitution & friction coefficients** — per-material bounce and slide
+  behavior on collision response (impulse-based)
+- **Angular dynamics** — `AngularVelocity`, `MomentOfInertia`, `Torque`
+  components. Rotational integration in `FixedUpdate`. Coupled with linear
+  response at contact points
+- **Contact resolution** — sequential impulse solver or position-based correction
+  for penetration, stacking, and resting contact
+- **Collision shapes** — extend `Collider` beyond AABB: sphere, capsule, convex
+  hull for entity-entity narrow phase
+- **Spatial partitioning** — uniform grid or dynamic BVH for efficient
+  broad-phase entity queries
+
+Design constraint: all collision properties (restitution, friction) derive from
+`MaterialData` in RON files. No magic numbers — emergent behavior from SI
+material properties.
+
+### Simulation Video Demos
+The video visualization pipeline (`src/diagnostics/video.rs` +
+`visualization.rs`) can render per-tick frames from headless simulations and
+encode via ffmpeg. Planned demos to exercise and validate both physics and
+visualization:
+
+- **Bouncing balls** — 3 rubber spheres in an enclosed cube. Requires entity-vs-
+  entity collision (rigid body physics above). Validates restitution, gravity,
+  drag, energy conservation
+- **Fluid flow** — water filling a basin, visualized with temperature/pressure
+  color modes. Validates AMR fluid + video pipeline integration
+- **Thermal conduction** — iron bar heated at one end, temperature gradient
+  spreading over time. Validates heat diffusion + temperature color mode
 
 ### Performance & Scaling
 - **Chunk-parallel simulation** — run physics per-chunk on thread pool

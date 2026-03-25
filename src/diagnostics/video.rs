@@ -177,7 +177,7 @@ impl FrameEncoder {
             Self::PngFallback { dir, frame_count } => {
                 eprintln!("  Saved {frame_count} PNG frames to {}/", dir.display());
                 eprintln!(
-                    "  To encode: ffmpeg -framerate 30 -i {}/%05d.png \
+                    "  To encode: ffmpeg -framerate 30 -i {}/frame_%%05d.png \
                      -c:v libx264 -pix_fmt yuv420p output.mp4",
                     dir.display()
                 );
