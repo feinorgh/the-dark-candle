@@ -16,7 +16,9 @@ use image::{Rgb, RgbImage};
 
 use the_dark_candle::data::{MaterialData, MaterialRegistry};
 use the_dark_candle::diagnostics::video::FrameEncoder;
-use the_dark_candle::diagnostics::visualization::{ColorMode, ViewMode, render_frame};
+use the_dark_candle::diagnostics::visualization::{
+    ColorMode, SceneLight, ViewMode, render_frame, render_frame_lit,
+};
 use the_dark_candle::lighting::DayNightConfig;
 use the_dark_candle::world::meshing::incandescence_color;
 use the_dark_candle::world::voxel::{MaterialId, Voxel};
@@ -420,79 +422,176 @@ fn time_of_day_cycle_video() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Combined Day-Night with Terrain
+// Test 4: Combined Day-Night with 3D Terrain (Perspective Raymarcher)
 // ---------------------------------------------------------------------------
 
-/// Renders a terrain-like voxel grid under day-night lighting changes,
-/// showing how material colors shift with ambient light color temperature.
+/// Full material registry for terrain rendering.
+fn terrain_registry() -> MaterialRegistry {
+    let mut reg = MaterialRegistry::new();
+    reg.insert(MaterialData {
+        id: 0,
+        name: "Air".into(),
+        color: [0.8, 0.9, 1.0],
+        transparent: true,
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 1,
+        name: "Stone".into(),
+        color: [0.5, 0.5, 0.5],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 2,
+        name: "Dirt".into(),
+        color: [0.45, 0.32, 0.18],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 3,
+        name: "Water".into(),
+        color: [0.2, 0.4, 0.8],
+        transparent: true,
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 5,
+        name: "Iron".into(),
+        color: [0.7, 0.55, 0.1],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 6,
+        name: "Sand".into(),
+        color: [0.85, 0.78, 0.55],
+        ..Default::default()
+    });
+    reg.insert(MaterialData {
+        id: 7,
+        name: "Grass".into(),
+        color: [0.3, 0.6, 0.2],
+        ..Default::default()
+    });
+    reg
+}
+
+/// Build a 32³ terrain grid with Perlin-like hills, multi-material layers.
+fn build_terrain(size: usize) -> Vec<Voxel> {
+    let mut voxels = vec![Voxel::default(); size * size * size];
+
+    for x in 0..size {
+        for z in 0..size {
+            // Multi-octave procedural height (no external crate needed).
+            let fx = x as f32 / size as f32;
+            let fz = z as f32 / size as f32;
+
+            // Large-scale hills
+            let h1 = ((fx * 2.5).sin() * (fz * 3.0).cos()) * 4.0;
+            // Medium detail
+            let h2 = ((fx * 7.0 + 1.3).sin() * (fz * 6.0 + 0.7).cos()) * 1.5;
+            // Fine detail
+            let h3 = ((fx * 13.0 + 2.7).sin() * (fz * 11.0 + 3.1).cos()) * 0.6;
+
+            let base_height = (size as f32 * 0.35) + h1 + h2 + h3;
+            let height = (base_height as usize).clamp(2, size - 2);
+
+            for y in 0..=height {
+                let i = idx(x, y, z, size);
+                if y == height {
+                    // Top layer: grass
+                    voxels[i].material = MaterialId(7);
+                } else if y > height.saturating_sub(3) {
+                    // Soil layer: dirt
+                    voxels[i].material = MaterialId(2);
+                } else {
+                    // Bedrock: stone
+                    voxels[i].material = MaterialId::STONE;
+                }
+                voxels[i].temperature = 288.15;
+            }
+        }
+    }
+
+    voxels
+}
+
+/// Renders terrain from a 3D perspective camera under cycling day-night
+/// lighting. Features: Perlin-like hills with grass/dirt/stone layers,
+/// Lambertian shading, shadow casting, depth fog, and a sky background.
 #[test]
 fn daynight_terrain_video() {
     let _ = std::fs::create_dir_all("test_output");
     let path = "test_output/daynight_terrain.mp4";
 
-    let size = 16;
-    let scale = 8_u32;
-    let dim = size as u32 * scale;
+    let size = 32;
+    let img_w = 640;
+    let img_h = 480;
     let fps = 30;
     let duration_s = 12.0_f32;
     let total_frames = (duration_s * fps as f32) as u32;
 
-    let registry = test_registry();
-    let mut encoder = FrameEncoder::new(path, dim, dim, fps).expect("encoder");
+    let registry = terrain_registry();
+    let voxels = build_terrain(size);
+    let mut encoder = FrameEncoder::new(path, img_w, img_h, fps).expect("encoder");
 
-    // Build a static terrain: stone hills
-    let mut base_voxels = vec![Voxel::default(); size * size * size];
-    for x in 0..size {
-        for z in 0..size {
-            // Simple hill: height varies with position
-            let h = 4 + ((x as f32 * 0.5).sin() * 2.0 + (z as f32 * 0.7).cos() * 1.5) as usize;
-            let h = h.min(size - 1);
-            for y in 0..=h {
-                let i = idx(x, y, z, size);
-                base_voxels[i].material = MaterialId::STONE;
-                base_voxels[i].temperature = 288.15;
-            }
-        }
-    }
+    // Camera orbits the terrain, looking at the center.
+    let center = size as f32 / 2.0;
+    let cam_radius = size as f32 * 1.1;
+    let cam_height = size as f32 * 0.75;
 
     for frame in 0..total_frames {
         let t = frame as f32 / total_frames as f32;
         let hour = t * 24.0;
 
-        let elevation = sun_elevation(hour);
-        let brightness_norm = {
-            let config = DayNightConfig::default();
-            ambient_factor(elevation, &config) / config.noon_ambient
+        // Camera slowly orbits (one full revolution per video).
+        let angle = t * std::f32::consts::TAU;
+        let cam_x = center + cam_radius * angle.cos();
+        let cam_z = center + cam_radius * angle.sin();
+
+        let view = ViewMode::Perspective {
+            eye: (cam_x, cam_height, cam_z),
+            target: (center, center * 0.4, center),
+            fov_degrees: 55.0,
+            width: img_w,
+            height: img_h,
         };
 
-        // Modulate terrain colors by ambient brightness to simulate lighting
-        let mut voxels = base_voxels.clone();
-        for v in &mut voxels {
-            if !v.material.is_air() {
-                // Simulate ambient light effect: darker at night
-                // We encode this in temperature for the visualization to pick up
-                // via a creative use of Temperature color mode with adjusted range
-                v.temperature = 288.15 + brightness_norm * 200.0;
-            }
-        }
+        // Sun direction follows time-of-day (elevation + azimuth).
+        let elevation = sun_elevation(hour);
+        let azimuth = hour / 24.0 * std::f32::consts::TAU;
+        let sun_y = -elevation.sin();
+        let sun_xz = elevation.cos();
+        let sun_x = -sun_xz * azimuth.cos();
+        let sun_z = -sun_xz * azimuth.sin();
 
-        // Render with material colors (the brightness is baked into the
-        // voxel visualization by tinting)
-        let frame_img = render_frame(
-            &voxels,
-            size,
-            &registry,
-            &ViewMode::TopDown,
-            &ColorMode::Temperature {
-                min_k: 280.0,
-                max_k: 500.0,
-            },
-            scale,
+        // Sun color from elevation
+        let sun_rgb = sun_color_rgb(elevation);
+        let sc = (
+            sun_rgb.0[0] as f32 / 255.0,
+            sun_rgb.0[1] as f32 / 255.0,
+            sun_rgb.0[2] as f32 / 255.0,
+        );
+
+        // Ambient scales with elevation
+        let config = DayNightConfig::default();
+        let amb = (ambient_factor(elevation, &config) / config.noon_ambient)
+            .clamp(0.05, 1.0)
+            * 0.2;
+
+        let light = SceneLight {
+            direction: (sun_x, sun_y, sun_z),
+            color: sc,
+            intensity: if elevation > 0.0 { 1.0 } else { 0.0 },
+            ambient: amb,
+        };
+
+        let frame_img = render_frame_lit(
+            &voxels, size, &registry, &view, &ColorMode::Material, 1, &light,
         );
         encoder.push_frame(&frame_img).expect("frame");
     }
 
     encoder.finish().expect("finalize");
-    eprintln!("  ✓ Day-night terrain video → {path}");
+    eprintln!("  ✓ Day-night 3D terrain video → {path}");
     assert!(std::path::Path::new(path).exists());
 }
