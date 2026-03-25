@@ -1,0 +1,42 @@
+SimulationScenario(
+    name: "Radiation across air gap",
+    description: "A 2-voxel-thick stone wall heated to 1200 K faces a cold stone wall across a 4-voxel air gap. Stefan-Boltzmann radiative transfer should warm the target well above ambient (288.15 K), despite air's negligible thermal conductivity (k = 0.026 W/(m·K)).",
+
+    grid_size: 12,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Containment shell
+        Shell(material: "Stone", min: (0, 0, 0), max: (11, 11, 11), thickness: 1),
+
+        // Hot source wall (2 voxels thick for thermal mass)
+        Fill(material: "Stone", min: (2, 2, 2), max: (3, 9, 9)),
+
+        // Cold target wall
+        Fill(material: "Stone", min: (8, 2, 2), max: (8, 9, 9)),
+
+        // Air gap x=4..7 is implicit (grid default is air)
+    ],
+
+    ignition: [
+        // Heat source wall to 1200 K (below stone melting point of 1473 K)
+        HeatRegion(min: (2, 2, 2), max: (3, 9, 9), temperature: 1200.0),
+    ],
+
+    dt: 100.0,
+    ticks: 500,
+
+    assertions: [
+        // Target stone should warm above ambient via radiation across the gap.
+        // At d=5, F≈0.013, ε_eff≈0.87: expect ~30 K warming over 500 ticks.
+        RegionAvgTempGt(min: (8, 3, 3), max: (8, 8, 8), threshold: 295.0),
+
+        // Pure thermal scenario — no chemical reactions
+        NoReactions,
+    ],
+)

@@ -1,0 +1,46 @@
+SimulationScenario(
+    name: "Radiation blocked by wall",
+    description: "Same geometry as 'radiation across air gap' but with an opaque stone wall at x=6 blocking line-of-sight. The target wall at x=8 should stay near ambient because the blocking wall (below the 500 K emission threshold) absorbs radiation without re-emitting.",
+
+    grid_size: 12,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Containment shell
+        Shell(material: "Stone", min: (0, 0, 0), max: (11, 11, 11), thickness: 1),
+
+        // Hot source wall (2 voxels thick)
+        Fill(material: "Stone", min: (2, 2, 2), max: (3, 9, 9)),
+
+        // Opaque blocking wall — absorbs radiation from source
+        Fill(material: "Stone", min: (6, 2, 2), max: (6, 9, 9)),
+
+        // Cold target wall (same position as unblocked scenario)
+        Fill(material: "Stone", min: (8, 2, 2), max: (8, 9, 9)),
+    ],
+
+    ignition: [
+        HeatRegion(min: (2, 2, 2), max: (3, 9, 9), temperature: 1200.0),
+    ],
+
+    dt: 100.0,
+    ticks: 500,
+
+    assertions: [
+        // Target wall should stay near ambient — wall blocks radiation.
+        // Blocking wall reaches ~370 K (below 500 K emission threshold),
+        // so it does not re-radiate toward the target.
+        RegionAvgTempLt(min: (8, 3, 3), max: (8, 8, 8), threshold: 295.0),
+
+        // Blocking wall itself should warm above ambient (absorbing radiation)
+        RegionAvgTempGt(min: (6, 3, 3), max: (6, 8, 8), threshold: 289.0),
+
+        // Pure thermal scenario
+        NoReactions,
+    ],
+)
