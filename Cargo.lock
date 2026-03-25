@@ -4602,6 +4602,7 @@ dependencies = [
  "bevy",
  "bevy_common_assets",
  "glob",
+ "image",
  "noise",
  "ron 0.8.1",
  "serde",

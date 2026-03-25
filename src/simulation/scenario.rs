@@ -18,6 +18,8 @@ use crate::chemistry::heat::thermal_conductivity;
 use crate::chemistry::reactions::ReactionData;
 use crate::data::{MaterialData, MaterialRegistry};
 use crate::diagnostics::state_dump::{dump_grid_state, dump_to_ron};
+use crate::diagnostics::video::{FrameEncoder, VideoConfig};
+use crate::diagnostics::visualization::render_frame;
 use crate::simulation::assertions::{Assertion, evaluate};
 use crate::simulation::geometry::{Region, apply_regions};
 use crate::simulation::{SimulationStats, simulate_tick};
@@ -168,6 +170,12 @@ pub struct SimulationScenario {
     /// default), no dump is emitted.
     #[serde(default)]
     pub emit_dump: Option<String>,
+
+    /// Optional video visualization config. When set, the simulation tick
+    /// loop renders one frame per tick and encodes them as an MP4 video
+    /// (via ffmpeg) or PNG sequence (fallback).
+    #[serde(default)]
+    pub emit_video: Option<VideoConfig>,
 }
 
 fn default_ambient_temperature() -> f32 {
@@ -430,6 +438,18 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
     let mut stats = SimulationStats::default();
     let mut converged_at: Option<u32> = None;
 
+    // Set up optional video encoder
+    let mut video_encoder = scenario.emit_video.as_ref().and_then(|vc| {
+        let dim = (size as u32) * vc.scale;
+        match FrameEncoder::new(&vc.path, dim, dim, vc.fps) {
+            Ok(enc) => Some(enc),
+            Err(e) => {
+                eprintln!("  Warning: failed to create video encoder: {e}");
+                None
+            }
+        }
+    });
+
     for tick_num in 0..scenario.ticks {
         // Compute time-varying ambient temperature
         let elapsed = tick_num as f32 * scenario.dt;
@@ -452,6 +472,15 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
         let tick = simulate_tick(&mut voxels, size, &rules, &registry, scenario.dt);
         stats.accumulate(&tick);
 
+        // Capture video frame (if configured)
+        if let (Some(vc), Some(enc)) = (&scenario.emit_video, video_encoder.as_mut()) {
+            let frame = render_frame(&voxels, size, &registry, &vc.view, &vc.color_mode, vc.scale);
+            if let Err(e) = enc.push_frame(&frame) {
+                eprintln!("  Warning: video frame {tick_num} failed: {e}");
+                video_encoder = None; // stop trying
+            }
+        }
+
         // For UntilAllPass: check assertions each tick
         if scenario.stop_condition == StopCondition::UntilAllPass {
             let all_pass = scenario
@@ -463,6 +492,13 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
                 break;
             }
         }
+    }
+
+    // Finalize video
+    if let Some(enc) = video_encoder
+        && let Err(e) = enc.finish()
+    {
+        eprintln!("  Warning: video finalization failed: {e}");
     }
 
     if let Some(tick) = converged_at {
@@ -573,6 +609,7 @@ mod tests {
             stop_condition: StopCondition::FixedTicks,
             assertions: vec![Assertion::NoReactions],
             emit_dump: None,
+            emit_video: None,
         };
         assert!(run_scenario(&scenario).is_ok());
     }
@@ -599,6 +636,7 @@ mod tests {
                 min_count: 1,
             }],
             emit_dump: None,
+            emit_video: None,
         };
         assert!(run_scenario(&scenario).is_err());
     }
@@ -635,6 +673,7 @@ mod tests {
             stop_condition: StopCondition::UntilAllPass,
             assertions: vec![Assertion::NoReactions],
             emit_dump: None,
+            emit_video: None,
         };
         // Should pass on the very first tick (no reactions in empty grid)
         assert!(run_scenario(&scenario).is_ok());

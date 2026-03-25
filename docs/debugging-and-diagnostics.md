@@ -11,6 +11,7 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Run simulation tests | `cargo test --test simulations` | Scenario pass/fail |
 | Dump ECS state (in-game) | Press **F11** | `diagnostics/<timestamp>.dump.ron` |
 | Capture screenshot | Press **F12** | `screenshots/<timestamp>.png` |
+| Produce simulation video | Add `emit_video` to `.simulation.ron` | MP4 video or PNG frames |
 | Enable verbose logging | `RUST_LOG=info cargo run --features bevy/dynamic_linking` | Bevy + game logs on stderr |
 | Enable debug logging | `RUST_LOG=debug,bevy=info cargo run --features bevy/dynamic_linking` | Game debug logs without Bevy noise |
 | See test stderr output | `cargo test -- --nocapture` | Prints `eprintln!` messages from tests |
@@ -159,6 +160,76 @@ println!("{ron_text}");
 ```
 
 Set the fifth argument (`include_voxels`) to `true` to include every non-air voxel with full coordinates, material name, temperature, pressure, damage, and latent heat buffer values. This produces much larger output.
+
+---
+
+## 2b. Simulation Video Visualization
+
+Simulations can produce per-tick video output, encoding each tick as a frame. This is useful for visually verifying heat diffusion, phase transitions, and reaction fronts.
+
+### Enabling Video Output
+
+Add `emit_video` to any `.simulation.ron` scenario file:
+
+```ron
+SimulationScenario(
+    name: "Water freezing",
+    // ... other fields ...
+    emit_video: Some(VideoConfig(
+        path: "output/water_freezing.mp4",
+        view: Slice(axis: Y, depth: 4),
+        color_mode: Temperature(min_k: 250.0, max_k: 300.0),
+        fps: 30,
+        scale: 8,
+    )),
+)
+```
+
+### Video Configuration
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `path` | String | (required) | Output video path (`.mp4`) |
+| `view` | `Slice { axis, depth }` or `TopDown` | `Slice(axis: Y, depth: 0)` | How to project the 3D grid into 2D |
+| `color_mode` | `Material`, `Temperature { min_k, max_k }`, or `Pressure { min_pa, max_pa }` | `Material` | What quantity to visualize |
+| `fps` | u32 | 30 | Frames per second in output video |
+| `scale` | u32 | 4 | Pixel scale per voxel (e.g. 8× for a 32³ grid → 256×256) |
+
+### View Modes
+
+- **`Slice`**: A 2D cross-section through the grid. `axis` is `X`, `Y`, or `Z`; `depth` is the index along that axis.
+- **`TopDown`**: Raycasts down the Y axis; the first opaque (non-air) voxel determines pixel color.
+
+### Color Modes
+
+- **`Material`**: Uses the material's base RGB color from `.material.ron` files. Air renders black.
+- **`Temperature`**: Blue → cyan → green → yellow → red heatmap across the `[min_k, max_k]` range.
+- **`Pressure`**: Same gradient across `[min_pa, max_pa]`.
+
+### How It Works
+
+1. Before the tick loop, a `FrameEncoder` is created
+2. If **ffmpeg** is available on the system, raw RGB frames are piped directly to `ffmpeg` via stdin — no intermediate files
+3. If ffmpeg is **not found**, individual PNG frames are saved to `<stem>_frames/` and a command to encode them is printed
+4. After the simulation, the encoder is finalized (closes the ffmpeg pipe or prints the PNG frame count)
+
+### Running
+
+```bash
+# Run a specific scenario that has emit_video configured
+cargo test --test simulations -- water_freezing --nocapture
+
+# The video is written to the configured path
+# If ffmpeg is missing, check stderr for the PNG fallback directory
+```
+
+### Requirements
+
+- **With ffmpeg** (recommended): Install ffmpeg (`apt install ffmpeg`, `brew install ffmpeg`, or `pacman -S ffmpeg`). The encoder uses `libx264` + `yuv420p` for broad compatibility.
+- **Without ffmpeg**: PNG frames are saved; encode manually:
+  ```bash
+  ffmpeg -framerate 30 -i video_frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p output.mp4
+  ```
 
 ---
 

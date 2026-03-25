@@ -13,6 +13,8 @@
 //    demand (F12 key) and saves to `screenshots/` directory.
 
 pub mod state_dump;
+pub mod video;
+pub mod visualization;
 
 use std::collections::BTreeMap;
 
