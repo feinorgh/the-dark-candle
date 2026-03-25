@@ -662,6 +662,11 @@ atmosphere simulation designed (Phase 9), and structural construction designed
 (Phase 10), the project also needs integration, polish, and gameplay. These are
 not yet planned in detail — each will get a session plan when started.
 
+**Near-term visual integration (Phase 9b–9d):** The chemistry/heat physics are
+fully implemented and tested but not yet running in-game or visible to the
+player. Phases 9b (chemistry runtime), 9c (thermal glow), and 9d (time-of-day)
+will bridge this gap — see their detailed sections below Phase 9a.
+
 ### Coupling & Integration
 - **Cross-model fluid coupling** — AMR ↔ LBM mass/heat exchange at liquid-gas
   interfaces; FLIP particles entering/leaving LBM gas fields
@@ -868,6 +873,108 @@ Priority: medium. Core radiation ✅, absorption coefficient ✅. Remaining:
 albedo, Planck color, solar insolation.
 Depends on: Phase 2 (materials ✅), Phase 3 (temperature field ✅).
 Unlocks: Phase 9b (solar optics), thermal visualization.
+
+### Chemistry Runtime Activation (Phase 9b)
+Wire the existing simulation pipeline (`simulate_tick`) into the Bevy
+`FixedUpdate` schedule so that heat transfer, chemical reactions, and material
+state transitions run per-chunk during live gameplay — not just in headless
+tests.
+
+Currently, `ChemistryPlugin` only loads reaction data from RON files.
+`simulate_tick()` in `src/simulation/mod.rs` integrates conduction, radiation,
+reactions, state transitions, and pressure diffusion but is only called by the
+test harness. This phase bridges that gap.
+
+- **`ChunkSimulation` system** — new `FixedUpdate` system that iterates loaded
+  chunks, calls `simulate_tick()` on each, and marks dirty chunks for remeshing.
+  Needs mutable access to `Chunk` voxels (add `voxels_mut()` accessor)
+- **Activity tracking** — maintain a `ChunkActivity` component or resource to
+  skip simulation on thermally inert chunks (all voxels near ambient, no
+  reactions possible). Only chunks containing voxels above a temperature
+  threshold or adjacent to active reactions are ticked
+- **Throttled execution** — run chemistry at a lower frequency than physics
+  (e.g. every 0.5–1.0 s) via a cooldown timer. Full `simulate_tick` on a 32³
+  chunk is ~32 K voxels × 6 neighbors — affordable at low frequency but too
+  expensive at 60 Hz
+- **Cross-chunk boundary** — initial implementation is intra-chunk only (heat
+  and reactions don't cross chunk boundaries). Future work: boundary ghost layers
+  copied from neighboring chunks before each tick
+- **Dirty propagation** — if `TickResult.reactions_fired > 0` or
+  `TickResult.transitions > 0`, mark the chunk dirty so the meshing system
+  regenerates geometry. Temperature-only changes need a visual threshold (e.g.
+  ΔT > 50 K from last mesh) to avoid excessive remeshing
+- **Reaction & material loading** — ensure `ReactionData` assets and
+  `MaterialRegistry` are available as Bevy resources before the simulation
+  system runs. Gate with a `run_if` condition on resource existence
+
+Priority: high. This is the prerequisite for all visual physics feedback.
+Depends on: Phase 3 (temperature field ✅), Phase 9a (radiation ✅).
+Unlocks: thermal glow, fire visualization, dynamic terrain (melting, freezing).
+
+### Thermal Glow Rendering (Phase 9c)
+Make the temperature field visible to the player. Hot voxels glow with
+incandescent colors; Bevy's bloom post-process creates a halo effect around
+heat sources.
+
+- **Temperature-aware vertex colors** — extend the meshing `material_color`
+  function to also accept voxel temperature. Above a glow threshold (~800 K),
+  blend the base material color toward an incandescent ramp:
+  - 800 K → faint dark red
+  - 1200 K → cherry red
+  - 1500 K → bright orange
+  - 1800 K+ → yellow-white
+  Reuse the `heatmap_rgb()` function from `src/diagnostics/visualization.rs`
+  (blue→cyan→green→yellow→red) for a debug "thermal vision" toggle, and a
+  separate physically-motivated incandescence ramp for normal rendering
+- **HDR emissive encoding** — for bloom to work, hot vertex colors must exceed
+  1.0 in HDR. Encode emissive intensity as a multiplier on the color channels:
+  `color * (1.0 + emissive_factor)` where `emissive_factor` scales with T⁴.
+  Alternatively, pack emissive strength in the vertex alpha channel and use a
+  custom `Material` impl that reads alpha as emissive weight
+- **Bloom post-process** — add `Bloom` component to the camera entity
+  (`bevy::core_pipeline::bloom::Bloom`). Tune `intensity`, `threshold`, and
+  `composite_mode` so only genuinely hot surfaces trigger bloom (not the sun
+  or bright terrain). This is a one-line addition to camera spawn
+- **Debug thermal overlay** — bind a key (T) to toggle between normal rendering
+  and full thermal-vision mode (all voxels colored by temperature). Useful for
+  debugging heat propagation in-game
+- **Chunk remesh on temperature change** — tie into the dirty system from
+  Phase 9b. Only regenerate mesh when a voxel's temperature crosses a visual
+  threshold (e.g. enters or leaves the 800 K+ glow band)
+
+Priority: high. Transforms invisible physics into dramatic visual feedback.
+Depends on: Phase 9b (chemistry runtime — need live temperature changes).
+Unlocks: fire looks like fire, lava glows, forges radiate visible heat.
+
+### Time-of-Day & Dynamic Lighting (Phase 9d)
+Rotate the sun (`DirectionalLight`) through a day-night cycle. Adjusts light
+color, intensity, and ambient brightness. Foundation for Phase 9 solar heating.
+
+- **`TimeOfDay` resource** — `f32` in hours (0.0–24.0), advanced each frame by
+  `dt × time_scale`. Default cycle: 20 real minutes = 1 game day
+  (`time_scale ≈ 72`). Configurable via a `DayNightConfig` RON asset
+- **Sun position** — derive `DirectionalLight` rotation from `TimeOfDay`:
+  azimuth rotates 360° over 24 h, elevation follows a sinusoidal arc (sunrise
+  at 6:00, zenith at 12:00, sunset at 18:00). Below horizon → disable direct
+  light
+- **Color temperature shift** — dawn/dusk: warm orange (~3500 K color temp →
+  Bevy color (1.0, 0.7, 0.4)). Noon: neutral white (~6500 K → (1.0, 1.0,
+  0.95)). Night: cool blue moonlight (~10000 K → (0.3, 0.35, 0.5) at very low
+  intensity)
+- **Ambient light** — scales with sun elevation. Peak brightness at noon,
+  minimum at midnight. A small ambient floor (~5% of daytime) prevents total
+  blackness at night
+- **Shadow updates** — `DirectionalLight` shadow direction follows sun rotation.
+  Shadow quality can be reduced at low sun angles (long shadows) for performance
+- **Phase 9 solar heating prep** — expose the computed surface insolation factor
+  (sun elevation × time-of-day) as a resource for future use by the solar
+  heating system. No thermal effect yet, just the geometric calculation
+
+Priority: medium. High visual impact, relatively low effort. Independent of
+chemistry runtime — can be implemented in any order relative to 9b/9c.
+Depends on: nothing (lighting system already exists).
+Unlocks: Phase 9 atmosphere (solar heating), visual atmosphere (sky color),
+diurnal gameplay cycles.
 
 ### Fluid–Terrain Interaction (Future)
 Bridge the AMR fluid simulation with the voxel terrain grid so that liquid
