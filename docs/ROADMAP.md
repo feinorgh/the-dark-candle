@@ -687,6 +687,11 @@ system needs:
   hull for entity-entity narrow phase
 - **Spatial partitioning** — uniform grid or dynamic BVH for efficient
   broad-phase entity queries
+- **Sleep system** — deactivate rigid bodies whose linear and angular velocities
+  stay below a threshold for N consecutive frames. Sleeping bodies skip force
+  integration, broad/narrow phase, and solver work. Wake on: external impulse,
+  nearby collision, or explicit event. Eliminates residual micro-bounce on
+  resting contacts and saves CPU for large entity counts
 
 Design constraint: all collision properties (restitution, friction) derive from
 `MaterialData` in RON files. No magic numbers — emergent behavior from SI
