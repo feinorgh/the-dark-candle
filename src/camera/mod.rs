@@ -3,6 +3,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::game_state::GameState;
 use crate::physics::constants;
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
@@ -13,13 +14,16 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, cursor_grab)
+            .add_systems(Update, cursor_grab.run_if(in_state(GameState::Playing)))
             .add_systems(
                 Update,
                 (camera_look, camera_move, camera_gravity)
                     .chain()
-                    .after(cursor_grab),
-            );
+                    .after(cursor_grab)
+                    .run_if(in_state(GameState::Playing)),
+            )
+            .add_systems(OnEnter(GameState::Playing), grab_cursor)
+            .add_systems(OnEnter(GameState::Paused), release_cursor);
     }
 }
 
@@ -89,10 +93,9 @@ fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGenerator
     ));
 }
 
-/// Grab cursor on left-click, release on Escape.
+/// Grab cursor on left-click (while Playing).
 fn cursor_grab(
     mouse: Res<ButtonInput<MouseButton>>,
-    key: Res<ButtonInput<KeyCode>>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     let Ok(mut cursor) = cursor_q.single_mut() else {
@@ -102,10 +105,24 @@ fn cursor_grab(
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
-    if key.just_pressed(KeyCode::Escape) {
-        cursor.grab_mode = CursorGrabMode::None;
-        cursor.visible = true;
-    }
+}
+
+/// Lock cursor and hide it when entering Playing state.
+fn grab_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+    let Ok(mut cursor) = cursor_q.single_mut() else {
+        return;
+    };
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+/// Unlock cursor and show it when entering Paused state.
+fn release_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+    let Ok(mut cursor) = cursor_q.single_mut() else {
+        return;
+    };
+    cursor.grab_mode = CursorGrabMode::None;
+    cursor.visible = true;
 }
 
 /// Rotate camera based on accumulated mouse movement (only when cursor is grabbed).

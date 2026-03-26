@@ -8,6 +8,7 @@ use the_dark_candle::{
     data::DataPlugin,
     diagnostics::DiagnosticsPlugin,
     entities::EntityPlugin,
+    game_state::GameStatePlugin,
     lighting::LightingPlugin,
     persistence::PersistencePlugin,
     physics::PhysicsPlugin,
@@ -59,6 +60,7 @@ fn main() {
     }))
     .add_plugins((
         DataPlugin,
+        GameStatePlugin,
         CameraPlugin,
         LightingPlugin,
         DiagnosticsPlugin,
