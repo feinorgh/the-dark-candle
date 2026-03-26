@@ -1599,33 +1599,53 @@ lit by the day-night sun cycle with terrain self-shadowing.
 - The world feels inhabited and textured with scattered natural objects
 - Lighting sells the scene with depth via shadows
 
-### Gap 1 — Procedural Valley & Channel Carving
+### Gap 1 — Procedural Valley & Channel Carving *(in progress)*
 
 **Problem:** Terrain is pure Perlin noise — no valleys, ridges, or river
 channels. Noise alone cannot produce the directed, branching drainage patterns
 that define real landscapes.
 
-**Approach:** Overlay a channel carving pass on the existing heightmap:
+**Approach:** D8 flow-accumulation on a coarse heightmap grid, cached on the
+terrain generator, with valley carving applied during `generate_chunk()`.
 
-1. **Ridge-line seeding** — identify local maxima in the continental noise
-   field. These become watershed boundaries.
-2. **Flow accumulation** — for each surface cell, trace the steepest-descent
-   path downhill. Accumulate flow count. Cells with high flow accumulation
-   become river channels.
-3. **Channel carving** — lower the heightmap along high-accumulation paths
-   by a depth proportional to `log(flow_count)`. Width widens with
-   accumulation (tributaries are narrow, main channel is wide).
-4. **Valley shaping** — apply a smooth falloff (cosine or Gaussian) from
-   the channel center outward, creating V-shaped or U-shaped valley
-   cross-sections depending on a configurable profile parameter.
-5. **Erosion texturing** — set material in carved areas: channel bed →
-   gravel/sand, valley walls → exposed stone where slope exceeds threshold,
-   valley floor → dirt/grass.
+1. **Coarse heightmap sampling** — evaluate `sample_height()` on a 512×512
+   grid at 8 m resolution covering a 4096×4096 m region centered at world
+   origin. Cost: ~0.3 ms (262 K Perlin evaluations).
+2. **Sink filling** — iterative priority-queue flooding (Planchon & Darboux
+   2002) eliminates closed depressions where flow would pool artificially.
+3. **D8 flow direction** — each cell flows to its steepest downhill neighbor
+   (8 directions). Flat cells flow toward the nearest lower cell.
+4. **Flow accumulation** — traverse cells in topological order (highest
+   first). Each cell passes its accumulation (1 + upstream total) to its
+   downstream neighbor. Cells with high accumulation become channels.
+5. **Channel carving** — lower the heightmap along high-accumulation paths
+   by depth proportional to `ln(flow_count)`. Width widens with
+   `√(flow_count)`. Cross-section profile is configurable (V-shaped vs
+   U-shaped via cosine/Gaussian falloff).
+6. **Erosion texturing** — channel bed → SAND (id 6), valley walls →
+   exposed STONE where slope exceeds threshold, valley floor → DIRT.
 
-**Location:** New `src/world/erosion.rs` module, called during
-`generate_chunk()` after base noise but before material assignment.
+**Caching:** `FlowMap` stored in `OnceLock` on `TerrainGenerator`. Computed
+once on first chunk generation. Fully deterministic from world seed.
 
-**Dependencies:** Terrain system (Phase 1), spherical terrain (Phase 8).
+**Configuration (`ErosionConfig`, embedded in `TerrainConfig`):**
+- `flow_threshold`: 50 (min accumulation to carve)
+- `depth_scale`: 3.0 (channel depth = `min(12 m, 3 × ln(flow))`)
+- `width_scale`: 2.0 (valley width = `2 × √flow`)
+- `valley_shape`: 0.3 (0 = V-shaped, 1 = U-shaped)
+- `region_size`: 4096 m, `cell_size`: 8 m
+
+**Integration point:** Inside `TerrainGenerator::generate_chunk()`, after
+`sample_height()` returns the base height and before material assignment.
+Channels carved below `sea_level` auto-fill with water via existing placement
+logic.
+
+**Location:** New `src/world/erosion.rs` module.
+
+**Dependencies:** Terrain system (Phase 1).
+
+**Scope:** Flat terrain mode only (Phase 1). Spherical mode support deferred
+to a future pass (requires tangent-plane projection for flow routing).
 
 ### Gap 2 — AMR Fluid Visual Surface & Plugin Activation
 
@@ -1660,132 +1680,54 @@ New `src/world/fluid_surface.rs` for extraction. Meshing changes in
 **Dependencies:** AMR fluid (Phase 3), terrain carving (Gap 1), meshing
 (Phase 1).
 
-### Gap 3 — Static Prop System (`PropData` + Scattering)
+### Gap 3 — Static Prop System (`PropData` + Scattering) ✅
 
-**Problem:** No data type for non-living, non-inventory world objects
-(rocks, pebbles, boulders, logs). `ItemData` is for inventory. `CreatureData`
-is for living entities. Biome spawn planning (`plan_chunk_spawns`) exists but
-never creates entities.
+**Completed** in commit `5245945`. Implemented `PropData` struct with RON
+loading, `PropRegistry`, biome `prop_spawns` tables, chunk decoration system
+(`NeedsDecoration`/`ChunkProps`), and the `decorate_chunks()` scatter system
+in `src/procgen/props.rs`. Six prop RON files created (boulder, rock, pebble,
+cobble, log, stick). All four biomes updated with `prop_spawns` tables.
 
-**Approach:**
+**Files:** `src/procgen/props.rs`, `src/data/mod.rs`, `assets/data/props/*.prop.ron`,
+`assets/data/biomes/*.biome.ron`.
 
-1. **`PropData` struct** — new data container in `src/data/mod.rs`:
-   ```
-   PropData { name, display_name, category (Rock/Vegetation/Debris/Misc),
-   material (MaterialId reference), base_scale (Vec3), scale_variation (f32),
-   collision_shape (Aabb/Sphere/None), spawn_weight (f32),
-   slope_preference (flat/moderate/steep/any), min_altitude, max_altitude }
-   ```
-   Derives `Deserialize`, `Asset`, `TypePath`. Loaded via
-   `RonAssetPlugin<PropData>` from `assets/data/props/*.prop.ron`.
+### Gap 4 — Terrain Shadow Casting ✅
 
-2. **Prop RON files** — define natural scenery:
-   - `boulder.prop.ron` — granite, scale 1–3m, steep slopes OK
-   - `rock.prop.ron` — granite/limestone, scale 0.3–1m
-   - `pebble.prop.ron` — mixed stone, scale 0.05–0.2m
-   - `cobble.prop.ron` — river-rounded stone, scale 0.1–0.3m, river beds
-   - `log.prop.ron` — wood, scale 0.3×0.3×2m, flat ground
-   - `stick.prop.ron` — wood, scale 0.02×0.02×0.5m
+**Completed** in commits `1e537de` + `4fef32f`. Implemented `SunDirection`
+resource, `ShadowConfig` (angle threshold, cone samples, half-angle),
+`compute_terrain_shadows()` with DDA ray-cast + golden-spiral cone sampling
+for soft penumbra edges, and `update_terrain_shadows()` system with
+`LastShadowAngles` caching. Added `shadow: Vec<f32>` field to `ChunkLightMap`
+with `apply_light_map()` multiplying `sun_transmittance × shadow_factor`.
+Performance fix: `update_chunk_light_maps` skips non-dirty chunks.
 
-3. **Biome prop tables** — extend `BiomeData` with `prop_spawns:
-   Vec<SpawnEntry>` (or reuse existing `item_spawns` renamed to
-   `prop_spawns`). Each biome specifies which props appear and at what
-   density.
+**Files:** `src/lighting/shadows.rs`, `src/lighting/light_map.rs`,
+`src/lighting/mod.rs`.
 
-4. **Prop scatter system** — new `src/procgen/props.rs`:
-   - Runs when a chunk is generated or loaded.
-   - Queries `plan_chunk_spawns()` prop entries.
-   - For each planned prop: raycast downward to find terrain surface,
-     check slope against `slope_preference`, apply scale jitter, spawn
-     entity with `(Prop, Transform, CollisionShape)` components.
-   - Density falloff near water (fewer rocks in the river, more cobbles
-     on the bank).
+### Gap 5 — Prop Spawn ECS Integration ✅
 
-5. **Prop rendering** — props are small enough that individual voxel
-   meshes are wasteful. Instead, render props as simple geometric
-   primitives (Bevy `Mesh` with a few faces) colored by material. At
-   distance, props fade or are culled by the LOD system.
-
-**Location:** `src/data/mod.rs` for `PropData`, `src/procgen/props.rs` for
-scatter, `assets/data/props/` for RON files.
-
-**Dependencies:** Data system (Phase 2), biome system (Phase 4), terrain
-surface (Phase 1).
-
-### Gap 4 — Terrain Shadow Casting
-
-**Problem:** Current lighting has per-voxel sunlight propagation (top-down)
-and cloud shadows, but no terrain self-shadowing. A valley lit without
-shadows from its own walls looks flat and unconvincing.
-
-**Approach:**
-
-1. **Shadow ray-cast** — extend `propagate_sunlight()` in
-   `src/lighting/light_map.rs` to cast rays toward the sun direction
-   (not just straight down). For each surface voxel, march a ray from
-   the voxel toward `SunDirection` using `dda_march_ray()` from
-   `src/world/raycast.rs`. If the ray hits opaque terrain before exiting
-   the loaded chunk radius → voxel is in shadow.
-2. **Shadow map update** — store shadow factor (0.0 = full shadow, 1.0 =
-   full sun) per surface voxel in `ChunkLightMap`. Multiply with existing
-   sunlight transmittance. Update when sun angle changes significantly
-   (not every frame — threshold on sun elevation delta).
-3. **Soft shadow edges** — use a small cone of rays (3–5 samples) around
-   the sun direction to produce penumbra at shadow boundaries. Or apply a
-   spatial blur pass on the shadow map.
-4. **Performance budget** — shadow ray-casts are expensive. Limit to
-   surface voxels only (skip interior). Use the LOD level to reduce
-   ray-cast density at distance. Cache shadow maps and invalidate only
-   when sun angle changes by more than a configurable threshold (e.g.,
-   2° of elevation).
-
-**Location:** Extend `src/lighting/light_map.rs` and
-`src/lighting/shadows.rs`. Uses `src/world/raycast.rs` DDA infrastructure.
-
-**Dependencies:** Lighting system (Phase 9d), ray-cast (Phase 9a).
-
-### Gap 5 — Prop Spawn ECS Integration
-
-**Problem:** `plan_chunk_spawns()` in `src/procgen/spawning.rs` plans spawn
-positions for creatures and items, but no ECS system reads the plan and
-actually creates entities for items or props. Only creature spawning may
-be partially wired.
-
-**Approach:**
-
-1. **`spawn_chunk_props` system** — runs after chunk terrain generation.
-   Queries chunks that have been generated but not yet decorated. Calls
-   `plan_chunk_spawns()`, filters for prop entries, spawns prop entities.
-2. **`spawn_chunk_items` system** — same pattern for world items (if
-   items-on-ground is desired for this milestone, otherwise defer).
-3. **Chunk decoration marker** — add a `ChunkDecorated` component to
-   track which chunks have had props spawned. Prevents duplicate spawning
-   on chunk reload.
-4. **Despawn on unload** — when chunks are unloaded by `ChunkManagerPlugin`,
-   despawn associated prop entities.
-
-**Location:** New `src/procgen/props.rs` (shared with Gap 3 scatter logic).
-
-**Dependencies:** Gap 3 (PropData), chunk manager (Phase 1).
+**Completed** as part of Gap 3 (commit `5245945`). The `decorate_chunks()`
+system queries chunks with `NeedsDecoration` marker, calls
+`plan_chunk_prop_spawns()`, spawns `Prop` entities with `Transform` and
+collision shapes, and stores entity handles in `ChunkProps` for cleanup on
+chunk despawn. Duplicate decoration prevented by component lifecycle.
 
 ### Implementation Order
 
 ```
+Gap 3 (PropData) ──→ Gap 5 (Spawn ECS) ──────────────────── ✅ Done
+Gap 4 (Terrain shadows) ─────────────────────────────────── ✅ Done
 Gap 1 (Valley carving) ──→ Gap 2 (Water surface) ──→ Scene integration
-         │
-         └──→ Gap 3 (PropData) ──→ Gap 5 (Spawn ECS) ──→ Scene integration
-                                                              │
-Gap 4 (Terrain shadows) ─────────────────────────────────────┘
+         ↑ in progress           ↑ remaining
 ```
 
-- **Gap 1** and **Gap 4** have no mutual dependency and can proceed in
-  parallel.
-- **Gap 3** can start immediately (data-only, no terrain dependency).
-- **Gap 2** requires Gap 1 (needs carved channels to seed fluid).
-- **Gap 5** requires Gap 3 (needs `PropData` to spawn).
-- **Scene integration** is the final step: a test scene or gameplay
-  spawn point that generates a planetary chunk region containing a valley,
-  seeds the river, scatters props, and lets the player observe.
+- **Gap 3 + 5** completed: prop data, scattering, and ECS spawning.
+- **Gap 4** completed: terrain shadow casting with soft penumbra.
+- **Gap 1** in progress: D8 flow accumulation + valley carving. Plan
+  finalized, implementation ready.
+- **Gap 2** remaining: AMR fluid activation + visual surface extraction.
+  Requires Gap 1 (carved channels to seed fluid).
+- **Scene integration** is the final step once all gaps are closed.
 
 ### Success Criteria
 
