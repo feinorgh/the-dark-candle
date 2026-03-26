@@ -43,6 +43,30 @@ impl Default for ChunkLoadRadius {
     }
 }
 
+/// Minimum horizontal chunk radius. Never go below this.
+const MIN_CHUNK_RADIUS: i32 = 2;
+
+/// Maximum horizontal chunk radius. Never exceed this.
+const MAX_CHUNK_RADIUS: i32 = 12;
+
+/// Number of consecutive frames over/under budget before adjusting radius.
+const ADAPTATION_HYSTERESIS: u32 = 60;
+
+/// Headroom threshold below which we shrink (negative = over budget).
+const SHRINK_THRESHOLD: f32 = -0.05;
+
+/// Headroom threshold above which we grow.
+const GROW_THRESHOLD: f32 = 0.30;
+
+/// Tracks consecutive frames for hysteresis-based view distance adaptation.
+#[derive(Resource, Debug, Default)]
+pub struct ViewDistanceState {
+    /// Consecutive frames where headroom < SHRINK_THRESHOLD.
+    pub frames_over_budget: u32,
+    /// Consecutive frames where headroom > GROW_THRESHOLD.
+    pub frames_under_budget: u32,
+}
+
 /// Maps chunk coordinates to their ECS entity for O(1) lookup.
 #[derive(Resource, Default)]
 pub struct ChunkMap {
@@ -235,6 +259,50 @@ pub fn update_chunks(
     }
 }
 
+/// Adjusts `ChunkLoadRadius` based on frame budget headroom.
+///
+/// Uses hysteresis to avoid thrashing: radius only changes after
+/// `ADAPTATION_HYSTERESIS` consecutive frames over/under budget.
+pub fn adapt_view_distance(
+    budget: Option<Res<crate::diagnostics::frame_budget::FrameBudget>>,
+    mut radius: ResMut<ChunkLoadRadius>,
+    mut state: ResMut<ViewDistanceState>,
+) {
+    let Some(budget) = budget else { return };
+
+    if budget.headroom < SHRINK_THRESHOLD {
+        state.frames_over_budget += 1;
+        state.frames_under_budget = 0;
+    } else if budget.headroom > GROW_THRESHOLD {
+        state.frames_under_budget += 1;
+        state.frames_over_budget = 0;
+    } else {
+        // In the "OK" zone — reset both counters
+        state.frames_over_budget = 0;
+        state.frames_under_budget = 0;
+    }
+
+    if state.frames_over_budget >= ADAPTATION_HYSTERESIS && radius.horizontal > MIN_CHUNK_RADIUS {
+        radius.horizontal -= 1;
+        state.frames_over_budget = 0;
+        info!(
+            "View distance reduced to {} chunks (headroom: {:.0}%)",
+            radius.horizontal,
+            budget.headroom * 100.0
+        );
+    }
+
+    if state.frames_under_budget >= ADAPTATION_HYSTERESIS && radius.horizontal < MAX_CHUNK_RADIUS {
+        radius.horizontal += 1;
+        state.frames_under_budget = 0;
+        info!(
+            "View distance increased to {} chunks (headroom: {:.0}%)",
+            radius.horizontal,
+            budget.headroom * 100.0
+        );
+    }
+}
+
 /// Wrapper resource holding the terrain generator.
 #[derive(Resource)]
 pub struct TerrainGeneratorRes(pub UnifiedTerrainGenerator);
@@ -254,10 +322,15 @@ impl Plugin for ChunkManagerPlugin {
         let generator = UnifiedTerrainGenerator::from_planet_config(&planet);
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
+            .init_resource::<ViewDistanceState>()
             .insert_resource(TerrainGeneratorRes(generator))
             .add_systems(
                 Update,
-                update_chunks.in_set(super::WorldSet::ChunkManagement),
+                (
+                    adapt_view_distance,
+                    update_chunks.in_set(super::WorldSet::ChunkManagement),
+                )
+                    .chain(),
             );
     }
 }
@@ -510,5 +583,101 @@ mod tests {
         // Should be a reasonable number — not the full sphere
         assert!(chunks.len() > 10, "Too few chunks: {}", chunks.len());
         assert!(chunks.len() < 500, "Too many chunks: {}", chunks.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Adaptive view distance tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn adapt_shrinks_after_hysteresis() {
+        let mut radius = ChunkLoadRadius {
+            horizontal: 6,
+            ..Default::default()
+        };
+        let mut state = ViewDistanceState {
+            frames_over_budget: ADAPTATION_HYSTERESIS,
+            frames_under_budget: 0,
+        };
+
+        if state.frames_over_budget >= ADAPTATION_HYSTERESIS && radius.horizontal > MIN_CHUNK_RADIUS
+        {
+            radius.horizontal -= 1;
+            state.frames_over_budget = 0;
+        }
+        assert_eq!(radius.horizontal, 5);
+        assert_eq!(state.frames_over_budget, 0);
+    }
+
+    #[test]
+    fn adapt_grows_after_hysteresis() {
+        let mut radius = ChunkLoadRadius {
+            horizontal: 4,
+            ..Default::default()
+        };
+        let mut state = ViewDistanceState {
+            frames_over_budget: 0,
+            frames_under_budget: ADAPTATION_HYSTERESIS,
+        };
+
+        if state.frames_under_budget >= ADAPTATION_HYSTERESIS
+            && radius.horizontal < MAX_CHUNK_RADIUS
+        {
+            radius.horizontal += 1;
+            state.frames_under_budget = 0;
+        }
+        assert_eq!(radius.horizontal, 5);
+        assert_eq!(state.frames_under_budget, 0);
+    }
+
+    #[test]
+    fn adapt_respects_min_radius() {
+        let mut radius = ChunkLoadRadius {
+            horizontal: MIN_CHUNK_RADIUS,
+            ..Default::default()
+        };
+        let state = ViewDistanceState {
+            frames_over_budget: ADAPTATION_HYSTERESIS,
+            frames_under_budget: 0,
+        };
+
+        if state.frames_over_budget >= ADAPTATION_HYSTERESIS && radius.horizontal > MIN_CHUNK_RADIUS
+        {
+            radius.horizontal -= 1;
+        }
+        assert_eq!(
+            radius.horizontal, MIN_CHUNK_RADIUS,
+            "Should not go below minimum"
+        );
+    }
+
+    #[test]
+    fn adapt_respects_max_radius() {
+        let mut radius = ChunkLoadRadius {
+            horizontal: MAX_CHUNK_RADIUS,
+            ..Default::default()
+        };
+        let state = ViewDistanceState {
+            frames_over_budget: 0,
+            frames_under_budget: ADAPTATION_HYSTERESIS,
+        };
+
+        if state.frames_under_budget >= ADAPTATION_HYSTERESIS
+            && radius.horizontal < MAX_CHUNK_RADIUS
+        {
+            radius.horizontal += 1;
+        }
+        assert_eq!(
+            radius.horizontal, MAX_CHUNK_RADIUS,
+            "Should not exceed maximum"
+        );
+    }
+
+    #[test]
+    fn hysteresis_constants_are_sensible() {
+        const { assert!(MIN_CHUNK_RADIUS >= 1) };
+        const { assert!(MAX_CHUNK_RADIUS > MIN_CHUNK_RADIUS) };
+        const { assert!(ADAPTATION_HYSTERESIS > 0) };
+        const { assert!(SHRINK_THRESHOLD < GROW_THRESHOLD,) };
     }
 }
