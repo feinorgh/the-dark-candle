@@ -48,6 +48,28 @@ impl Plugin for WorldPlugin {
             .insert_resource(lod::MaterialColorMap::from_defaults())
             .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)
-            .add_plugins(RefinementPlugin);
+            .add_plugins(RefinementPlugin)
+            .add_systems(Update, sync_color_map_from_registry);
+    }
+}
+
+/// Populates `MaterialColorMap` from `MaterialRegistry` once after startup.
+fn sync_color_map_from_registry(
+    registry: Option<Res<crate::data::MaterialRegistry>>,
+    mut color_map: ResMut<lod::MaterialColorMap>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    if let Some(registry) = registry
+        && !registry.is_empty()
+    {
+        color_map.populate_from_registry(&registry);
+        info!(
+            "MaterialColorMap populated from registry ({} materials)",
+            registry.len()
+        );
+        *done = true;
     }
 }

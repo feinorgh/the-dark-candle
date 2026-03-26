@@ -91,9 +91,9 @@ fn chunk_simulation(
 
     let dt = timer.timer.duration().as_secs_f32();
 
-    for (mut chunk, mut activity) in &mut query {
+    query.par_iter_mut().for_each(|(mut chunk, mut activity)| {
         if !activity.active {
-            continue;
+            return;
         }
 
         let voxels = chunk.voxels_mut();
@@ -117,15 +117,15 @@ fn chunk_simulation(
                 chunk.clear_dirty();
             }
         }
-    }
+    });
 }
 
 /// One-time scan that marks chunks as active if they contain voxels with
 /// temperatures significantly above ambient.
 fn activate_hot_chunks(mut query: Query<(&Chunk, &mut ChunkActivity)>) {
-    for (chunk, mut activity) in &mut query {
+    query.par_iter_mut().for_each(|(chunk, mut activity)| {
         if activity.active {
-            continue;
+            return;
         }
         let max_temp = chunk
             .voxels()
@@ -137,7 +137,7 @@ fn activate_hot_chunks(mut query: Query<(&Chunk, &mut ChunkActivity)>) {
             activity.active = true;
             activity.last_max_temp = max_temp;
         }
-    }
+    });
 }
 
 /// Build `ReactionRules` by reading `.reaction.ron` files from disk.

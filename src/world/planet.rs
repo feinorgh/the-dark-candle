@@ -77,6 +77,21 @@ pub struct PlanetConfig {
     #[serde(default = "default_rotation_axis")]
     pub rotation_axis: [f64; 3],
 
+    /// Axial tilt (obliquity) in radians. Earth: 23.44° ≈ 0.4091 rad.
+    /// Tilts the spin axis relative to the orbital plane, producing seasons.
+    #[serde(default)]
+    pub axial_tilt: f64,
+
+    /// Libration amplitude in radians. Produces a periodic wobble in the
+    /// apparent sun position. Moon: ~7° ≈ 0.122 rad. Default: 0.0 (none).
+    #[serde(default)]
+    pub libration_amplitude: f64,
+
+    /// Libration period in game-days. Default: 0.0 (disabled).
+    /// Set to 1.0 for diurnal libration (wobble once per day).
+    #[serde(default)]
+    pub libration_period: f64,
+
     /// Amplitude of surface displacement noise in meters.
     /// Terrain height varies from `mean_radius - height_scale` to
     /// `mean_radius + height_scale`.
@@ -147,6 +162,9 @@ impl Default for PlanetConfig {
             surface_gravity: 9.806_65,
             rotation_rate: 7.292e-5, // Earth sidereal
             rotation_axis: default_rotation_axis(),
+            axial_tilt: 0.0,
+            libration_amplitude: 0.0,
+            libration_period: 0.0,
             height_scale: 32.0,
             layers: default_layers(),
             seed: 42,

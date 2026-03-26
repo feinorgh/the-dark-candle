@@ -12,6 +12,7 @@
 // 3. **Screenshot capture** — captures the rendered frame as a PNG file on
 //    demand (F12 key) and saves to `screenshots/` directory.
 
+pub mod frame_budget;
 pub mod state_dump;
 pub mod video;
 pub mod visualization;
@@ -34,7 +35,17 @@ pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (ecs_dump_system, screenshot_system));
+        app.init_resource::<frame_budget::FrameBudget>()
+            .add_systems(
+                Update,
+                (
+                    ecs_dump_system,
+                    screenshot_system,
+                    frame_budget::update_frame_budget,
+                    frame_budget::toggle_overlay,
+                    frame_budget::update_overlay_text,
+                ),
+            );
     }
 }
 

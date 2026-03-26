@@ -6,6 +6,7 @@
 
 pub mod clouds;
 pub mod light_map;
+pub mod orbital;
 pub mod scattering;
 pub mod shadows;
 pub mod sky;

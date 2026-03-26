@@ -68,6 +68,28 @@ impl MaterialColorMap {
         self.colors.insert(id.0, [rgb[0], rgb[1], rgb[2], alpha]);
     }
 
+    /// Populate colors from a `MaterialRegistry`. Each material's `color` field
+    /// provides RGB; alpha is 0.8 for transparent materials, 1.0 for solids,
+    /// and 0.0 for air (id 0).
+    pub fn populate_from_registry(&mut self, registry: &crate::data::MaterialRegistry) {
+        // Scan IDs 0..256 (well beyond the current ~12 materials).
+        // This avoids depending on private registry internals.
+        for id in 0..256u16 {
+            let mat_id = MaterialId(id);
+            if let Some(data) = registry.get(mat_id) {
+                let alpha = if id == 0 {
+                    0.0
+                } else if data.transparent {
+                    0.8
+                } else {
+                    1.0
+                };
+                self.colors
+                    .insert(id, [data.color[0], data.color[1], data.color[2], alpha]);
+            }
+        }
+    }
+
     /// Look up the RGBA color for a material, falling back to the hardcoded table.
     pub fn get(&self, id: MaterialId) -> [f32; 4] {
         self.colors
@@ -623,5 +645,63 @@ mod tests {
         let map = MaterialColorMap::from_defaults();
         let unknown = map.get(MaterialId(999));
         assert_eq!(unknown, [0.8, 0.0, 0.8, 1.0]);
+    }
+
+    #[test]
+    fn populate_from_registry_overrides_defaults() {
+        use crate::data::{MaterialData, MaterialRegistry};
+        let mut registry = MaterialRegistry::new();
+        registry.insert(MaterialData {
+            id: 1,
+            name: "Stone".into(),
+            color: [0.6, 0.6, 0.6],
+            transparent: false,
+            ..Default::default()
+        });
+
+        let mut map = MaterialColorMap::from_defaults();
+        let before = map.get(MaterialId(1));
+        map.populate_from_registry(&registry);
+        let after = map.get(MaterialId(1));
+
+        // Should have changed to registry color
+        assert_eq!(after, [0.6, 0.6, 0.6, 1.0]);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn populate_from_registry_transparent_alpha() {
+        use crate::data::{MaterialData, MaterialRegistry};
+        let mut registry = MaterialRegistry::new();
+        registry.insert(MaterialData {
+            id: 3,
+            name: "Water".into(),
+            color: [0.2, 0.4, 0.8],
+            transparent: true,
+            ..Default::default()
+        });
+
+        let mut map = MaterialColorMap::from_defaults();
+        map.populate_from_registry(&registry);
+        let color = map.get(MaterialId(3));
+        assert_eq!(color[3], 0.8, "Transparent material should have alpha 0.8");
+    }
+
+    #[test]
+    fn populate_from_registry_air_invisible() {
+        use crate::data::{MaterialData, MaterialRegistry};
+        let mut registry = MaterialRegistry::new();
+        registry.insert(MaterialData {
+            id: 0,
+            name: "Air".into(),
+            color: [1.0, 1.0, 1.0],
+            transparent: true,
+            ..Default::default()
+        });
+
+        let mut map = MaterialColorMap::from_defaults();
+        map.populate_from_registry(&registry);
+        let color = map.get(MaterialId(0));
+        assert_eq!(color[3], 0.0, "Air should always be invisible (alpha 0)");
     }
 }
