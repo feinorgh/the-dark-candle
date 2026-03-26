@@ -14,6 +14,7 @@
 
 pub mod frame_budget;
 pub mod state_dump;
+pub mod system_timings;
 pub mod video;
 pub mod visualization;
 
@@ -29,13 +30,19 @@ use state_dump::{GridSummary, MaterialStats, RangeStats, StateDump};
 
 /// Bevy plugin that registers on-demand diagnostics systems.
 ///
+/// - **F3**: Toggle performance overlay (FPS, system timings, chunk stats)
 /// - **F11**: Dump ECS world state to `diagnostics/<timestamp>.dump.ron`
 /// - **F12**: Capture a screenshot to `screenshots/<timestamp>.png`
 pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {
     fn build(&self, app: &mut App) {
+        use crate::world::WorldSet;
+        use system_timings::*;
+
         app.init_resource::<frame_budget::FrameBudget>()
+            .init_resource::<SystemTimings>()
+            .init_resource::<ChunkStats>()
             .add_systems(
                 Update,
                 (
@@ -45,7 +52,23 @@ impl Plugin for DiagnosticsPlugin {
                     frame_budget::toggle_overlay,
                     frame_budget::update_overlay_text,
                 ),
-            );
+            )
+            // Bracket systems around WorldSet for per-category timing.
+            .add_systems(
+                Update,
+                (
+                    begin_world_timing.before(WorldSet::ChunkManagement),
+                    end_world_timing
+                        .after(WorldSet::ChunkManagement)
+                        .before(WorldSet::Meshing),
+                    begin_meshing_timing.before(WorldSet::Meshing),
+                    end_meshing_timing.after(WorldSet::Meshing),
+                    update_chunk_stats.after(WorldSet::Meshing),
+                ),
+            )
+            // Bracket the FixedUpdate schedule for physics timing.
+            .add_systems(FixedFirst, begin_physics_timing)
+            .add_systems(FixedLast, end_physics_timing);
     }
 }
 

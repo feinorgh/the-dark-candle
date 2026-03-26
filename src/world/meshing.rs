@@ -613,7 +613,7 @@ struct ChunkMeshResult {
 /// Component holding a pending async mesh task along with dispatch-time
 /// metadata needed when the result is applied.
 #[derive(Component)]
-pub(super) struct MeshTask {
+pub struct MeshTask {
     task: Task<ChunkMeshResult>,
     previous_level: LodLevel,
     lod_changed: bool,

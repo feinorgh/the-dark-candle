@@ -5,6 +5,7 @@
 use bevy::prelude::*;
 
 use crate::camera::FpsCamera;
+use crate::diagnostics::system_timings::{ChunkStats, SystemTimings};
 use crate::lighting::TimeOfDay;
 use crate::lighting::orbital::OrbitalState;
 use crate::world::chunk::ChunkCoord;
@@ -85,6 +86,7 @@ pub fn toggle_overlay(
 }
 
 /// Refreshes the overlay text with debug HUD information.
+#[allow(clippy::too_many_arguments)]
 pub fn update_overlay_text(
     budget: Res<FrameBudget>,
     cam_q: Query<(&Transform, &FpsCamera)>,
@@ -92,6 +94,8 @@ pub fn update_overlay_text(
     load_radius: Option<Res<ChunkLoadRadius>>,
     orbital: Option<Res<OrbitalState>>,
     tod: Option<Res<TimeOfDay>>,
+    timings: Option<Res<SystemTimings>>,
+    chunk_stats: Option<Res<ChunkStats>>,
     mut query: Query<&mut Text, With<FrameBudgetOverlay>>,
 ) {
     for mut text in &mut query {
@@ -109,7 +113,15 @@ pub fn update_overlay_text(
             budget.headroom * 100.0,
         );
 
-        // Line 2-3: Player info
+        // Line 2: System timings
+        if let Some(t) = &timings {
+            lines.push_str(&format!(
+                "\nSystems: world {:.1}ms  mesh {:.1}ms  phys {:.1}ms",
+                t.world_ms, t.meshing_ms, t.physics_ms,
+            ));
+        }
+
+        // Line 3-4: Player info
         if let Ok((transform, cam)) = cam_q.single() {
             let pos = transform.translation;
             let cc = ChunkCoord::from_voxel_pos(pos.x as i32, pos.y as i32, pos.z as i32);
@@ -125,16 +137,20 @@ pub fn update_overlay_text(
             ));
         }
 
-        // Line 4: World state
+        // Line 5: Chunk pipeline stats
         let chunks = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
         let view = load_radius.as_ref().map(|r| r.horizontal).unwrap_or(0);
+        let meshing = chunk_stats
+            .as_ref()
+            .map(|s| s.meshing_in_flight)
+            .unwrap_or(0);
         let time_scale = orbital.as_ref().map(|o| o.time_scale).unwrap_or(0.0);
         let hour = tod.as_ref().map(|t| t.0).unwrap_or(0.0);
         let hour_int = hour as u32;
         let minute = ((hour - hour_int as f32) * 60.0) as u32;
         lines.push_str(&format!(
-            "\nChunks: {}  View: {}  Time: {:.0}x ({:02}:{:02})",
-            chunks, view, time_scale, hour_int, minute,
+            "\nChunks: {} (meshing {})  View: {}  Time: {:.0}x ({:02}:{:02})",
+            chunks, meshing, view, time_scale, hour_int, minute,
         ));
 
         **text = lines;
