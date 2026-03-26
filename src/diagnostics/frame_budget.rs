@@ -1,8 +1,14 @@
 // Frame budget diagnostics: tracks frame time via exponential moving average,
 // computes headroom relative to a target FPS, and provides an optional F3-toggled
-// HUD overlay showing live FPS / budget metrics.
+// HUD overlay showing live FPS / budget metrics and debug information.
 
 use bevy::prelude::*;
+
+use crate::camera::FpsCamera;
+use crate::lighting::TimeOfDay;
+use crate::lighting::orbital::OrbitalState;
+use crate::world::chunk::ChunkCoord;
+use crate::world::chunk_manager::{ChunkLoadRadius, ChunkMap};
 
 /// Tracks per-frame timing using an exponential moving average (EMA) and
 /// reports how much of the per-frame budget is consumed.
@@ -61,9 +67,9 @@ pub fn toggle_overlay(
     } else {
         commands.spawn((
             FrameBudgetOverlay,
-            Text::new("FPS: -- (--ms)  Budget: --%"),
+            Text::new("FPS: -- (--ms)  Budget: --%\nPos: --\nGrounded: --\nChunks: --"),
             TextFont {
-                font_size: 16.0,
+                font_size: 14.0,
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -73,13 +79,19 @@ pub fn toggle_overlay(
                 top: Val::Px(10.0),
                 ..default()
             },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
         ));
     }
 }
 
-/// Refreshes the overlay text with the latest [`FrameBudget`] values.
+/// Refreshes the overlay text with debug HUD information.
 pub fn update_overlay_text(
     budget: Res<FrameBudget>,
+    cam_q: Query<(&Transform, &FpsCamera)>,
+    chunk_map: Option<Res<ChunkMap>>,
+    load_radius: Option<Res<ChunkLoadRadius>>,
+    orbital: Option<Res<OrbitalState>>,
+    tod: Option<Res<TimeOfDay>>,
     mut query: Query<&mut Text, With<FrameBudgetOverlay>>,
 ) {
     for mut text in &mut query {
@@ -88,12 +100,44 @@ pub fn update_overlay_text(
         } else {
             0.0
         };
-        **text = format!(
+
+        // Line 1: FPS and budget
+        let mut lines = format!(
             "FPS: {:.0} ({:.1}ms)  Budget: {:.0}%",
             fps,
             budget.avg_frame_ms,
             budget.headroom * 100.0,
         );
+
+        // Line 2-3: Player info
+        if let Ok((transform, cam)) = cam_q.single() {
+            let pos = transform.translation;
+            let cc = ChunkCoord::from_voxel_pos(pos.x as i32, pos.y as i32, pos.z as i32);
+            lines.push_str(&format!(
+                "\nPos: ({:.1}, {:.1}, {:.1})  Chunk: ({}, {}, {})",
+                pos.x, pos.y, pos.z, cc.x, cc.y, cc.z,
+            ));
+            let grav = if cam.gravity_enabled { "on" } else { "off" };
+            let ground = if cam.grounded { "yes" } else { "no" };
+            lines.push_str(&format!(
+                "\nGrounded: {}  Gravity: {}  Speed: {:.0} m/s",
+                ground, grav, cam.speed,
+            ));
+        }
+
+        // Line 4: World state
+        let chunks = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
+        let view = load_radius.as_ref().map(|r| r.horizontal).unwrap_or(0);
+        let time_scale = orbital.as_ref().map(|o| o.time_scale).unwrap_or(0.0);
+        let hour = tod.as_ref().map(|t| t.0).unwrap_or(0.0);
+        let hour_int = hour as u32;
+        let minute = ((hour - hour_int as f32) * 60.0) as u32;
+        lines.push_str(&format!(
+            "\nChunks: {}  View: {}  Time: {:.0}x ({:02}:{:02})",
+            chunks, view, time_scale, hour_int, minute,
+        ));
+
+        **text = lines;
     }
 }
 
