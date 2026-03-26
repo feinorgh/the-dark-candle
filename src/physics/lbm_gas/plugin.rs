@@ -10,12 +10,14 @@ use std::collections::HashMap;
 use crate::data::{FluidConfig, MaterialRegistry};
 use crate::lighting::{SolarInsolation, TimeOfDay};
 use crate::physics::atmosphere::AtmosphereConfig;
+use crate::physics::flip_pic::plugin::ParticleState;
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
 use crate::world::chunk_manager::ChunkMap;
 use crate::world::planet::PlanetConfig;
 use crate::world::voxel::MaterialId;
 
 use super::moisture;
+use super::precipitation;
 use super::step;
 use super::sync;
 use super::types::LbmGrid;
@@ -109,6 +111,7 @@ impl Plugin for LbmGasPlugin {
                     init_lbm_grids,
                     lbm_gas_step,
                     process_moisture,
+                    emit_precipitation,
                     cleanup_empty_lbm_grids,
                 )
                     .chain(),
@@ -453,6 +456,86 @@ fn apply_latent_heat(chunk: &mut Chunk, grid: &LbmGrid, temp_deltas: &[f32]) {
                 }
             }
         }
+    }
+}
+
+/// Emit precipitation particles from clouds into the FLIP/PIC system.
+///
+/// Scans LBM grids for cloud cells above the coalescence threshold.
+/// Converts excess cloud LWC into rain (warm) or snow (cold) particles.
+/// Also applies virga (sub-cloud evaporation) to falling particles.
+#[allow(clippy::too_many_arguments)]
+fn emit_precipitation(
+    chunks: Query<&Chunk>,
+    chunk_map: Option<Res<ChunkMap>>,
+    mut lbm_state: ResMut<LbmState>,
+    mut particle_state: ResMut<ParticleState>,
+    atmosphere_config: Option<Res<AtmosphereConfig>>,
+    config: Res<LbmConfigRes>,
+    tick: Res<LbmTick>,
+    time: Res<Time>,
+) {
+    if !config.0.lbm_enabled {
+        return;
+    }
+
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+
+    let chunk_map = match chunk_map {
+        Some(cm) => cm,
+        None => return,
+    };
+
+    let atm_config = atmosphere_config.as_deref().cloned().unwrap_or_default();
+
+    let coords: Vec<ChunkCoord> = lbm_state.grids.keys().cloned().collect();
+
+    for coord in coords {
+        let Some(grid) = lbm_state.grids.get_mut(&coord) else {
+            continue;
+        };
+
+        // Extract temperatures from chunk
+        let temps = if let Some(entity) = chunk_map.get(&coord)
+            && let Ok(chunk) = chunks.get(entity)
+        {
+            chunk
+                .voxels()
+                .iter()
+                .map(|v| v.temperature)
+                .collect::<Vec<_>>()
+        } else {
+            let n = grid.size() * grid.size() * grid.size();
+            vec![atm_config.surface_temperature; n]
+        };
+
+        // Get or create particle buffer for this chunk
+        let buf = particle_state
+            .buffers
+            .entry(coord)
+            .or_insert_with(|| crate::physics::flip_pic::types::ParticleBuffer::new(coord));
+
+        // Emit precipitation particles from cloud cells
+        precipitation::precipitate(grid, &temps, &atm_config, &mut buf.particles, dt, tick.0);
+
+        // Apply virga (sub-cloud evaporation) to existing particles
+        let pressures = if let Some(entity) = chunk_map.get(&coord)
+            && let Ok(chunk) = chunks.get(entity)
+        {
+            chunk
+                .voxels()
+                .iter()
+                .map(|v| v.pressure)
+                .collect::<Vec<_>>()
+        } else {
+            let n = grid.size() * grid.size() * grid.size();
+            vec![101_325.0_f32; n]
+        };
+
+        precipitation::apply_virga(&mut buf.particles, grid, &temps, &pressures, dt);
     }
 }
 

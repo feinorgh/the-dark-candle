@@ -10,6 +10,7 @@ pub mod macroscopic;
 pub mod moisture;
 pub mod octree_bridge;
 pub mod plugin;
+pub mod precipitation;
 pub mod step;
 pub mod streaming;
 pub mod sync;
