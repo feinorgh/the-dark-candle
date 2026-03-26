@@ -17,6 +17,8 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::erosion::ErosionConfig;
+
 /// Gravitational constant G in m³/(kg·s²). NIST CODATA 2018.
 pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;
 
@@ -107,6 +109,11 @@ pub struct PlanetConfig {
     /// Soil/regolith depth in meters above bedrock.
     #[serde(default = "default_soil_depth")]
     pub soil_depth: f64,
+
+    /// Erosion and valley carving configuration. When present, overrides the
+    /// default `ErosionConfig` used by the flat terrain generator.
+    #[serde(default)]
+    pub erosion: Option<ErosionConfig>,
 }
 
 fn default_rotation_axis() -> [f64; 3] {
@@ -148,6 +155,7 @@ impl Default for PlanetConfig {
             cave_freq: 0.03,
             cave_threshold: -0.3,
             soil_depth: 4.0,
+            erosion: None,
         }
     }
 }

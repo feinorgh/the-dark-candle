@@ -11,6 +11,8 @@ categories = ["games", "game-engines", "simulation"]
 [dependencies]
 # Core engine — default features only; platform-specific display backends below.
 bevy = { version = "0.18" }
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
 # Data-driven pipeline dependencies
 serde = { version = "1.0", features = ["derive"] }
 # Allows loading .ron and .yaml files directly as Bevy Assets

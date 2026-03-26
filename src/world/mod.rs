@@ -9,6 +9,7 @@ pub mod octree;
 pub mod planet;
 pub mod raycast;
 pub mod refinement;
+pub mod scene_presets;
 pub mod terrain;
 pub mod voxel;
 pub mod voxel_access;
@@ -35,9 +36,15 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.configure_sets(Update, WorldSet::Meshing.after(WorldSet::ChunkManagement))
-            .add_plugins(RonAssetPlugin::<PlanetConfig>::new(&["planet_config.ron"]))
-            .insert_resource(PlanetConfig::default())
-            .insert_resource(lod::LodConfig::default())
+            .add_plugins(RonAssetPlugin::<PlanetConfig>::new(&["planet_config.ron"]));
+
+        // Only insert default PlanetConfig if one was not already provided
+        // (e.g. by a scene preset inserted in main before adding plugins).
+        if !app.world().contains_resource::<PlanetConfig>() {
+            app.insert_resource(PlanetConfig::default());
+        }
+
+        app.insert_resource(lod::LodConfig::default())
             .insert_resource(lod::MaterialColorMap::from_defaults())
             .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)

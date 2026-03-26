@@ -396,7 +396,7 @@ impl UnifiedTerrainGenerator {
                     cave_freq: planet.cave_freq,
                     cave_threshold: planet.cave_threshold,
                     soil_depth: planet.soil_depth as i32,
-                    erosion: ErosionConfig::default(),
+                    erosion: planet.erosion.clone().unwrap_or_default(),
                 };
                 Self::Flat(TerrainGenerator::new(config))
             }
