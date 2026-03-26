@@ -154,11 +154,19 @@ mod tests {
             lbm_step(&mut grid, &config, gravity_lattice, rho_ambient);
         }
 
-        // The lighter gas should develop upward velocity
-        let _u = grid.get(4, 2, 4).velocity();
-        // Due to buoyancy, upward motion should develop near the heated cell
-        // Note: with bounce-back boundaries and small grid, the effect may be subtle
-        // Just verify the simulation didn't crash and mass is roughly conserved
+        // The lighter gas should develop upward velocity.
+        // Check cells above the hot spot for net upward motion.
+        let mut total_uy = 0.0_f32;
+        for y in 2..size - 1 {
+            let u = grid.get(4, y, 4).velocity();
+            total_uy += u[1];
+        }
+        assert!(
+            total_uy > 1e-6,
+            "Buoyancy should produce net upward velocity in column, got {total_uy}"
+        );
+
+        // Also verify mass conservation
         let mass = grid.total_mass();
         assert!(mass > 0.0, "Grid lost all mass");
     }

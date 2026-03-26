@@ -1,0 +1,11 @@
+AtmosphereConfig(
+    surface_temperature: 288.15,
+    lapse_rate: 6.5,
+    tropopause_altitude: 11000.0,
+    humidity_baseline: 0.01,
+    coriolis_enabled: true,
+    cloud_coalescence_threshold: 0.0003,
+    rayleigh_scatter_coeff: 0.0000058,
+    mie_scatter_coeff: 0.000021,
+    solar_constant: 1361.0,
+)

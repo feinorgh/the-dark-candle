@@ -1,4 +1,5 @@
 pub mod amr_fluid;
+pub mod atmosphere;
 pub mod broad_phase;
 pub mod collision;
 pub mod constants;
@@ -26,10 +27,15 @@ impl Plugin for PhysicsPlugin {
         .add_plugins(RonAssetPlugin::<constants::WorldConstants>::new(&[
             "world_constants.ron",
         ]))
+        .add_plugins(RonAssetPlugin::<atmosphere::AtmosphereConfig>::new(&[
+            "atmosphere_config.ron",
+        ]))
         .add_plugins((
             gravity::GravityPlugin,
             collision::CollisionPlugin,
             RigidBodyPlugin,
+            lbm_gas::LbmGasPlugin,
+            flip_pic::FlipPicPlugin,
         ));
     }
 }
@@ -71,3 +77,5 @@ impl Plugin for RigidBodyPlugin {
             );
     }
 }
+
+pub use atmosphere::AtmosphereConfig;
