@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod entities;
 pub mod game_state;
 pub mod gpu;
+pub mod hud;
 pub mod lighting;
 pub mod persistence;
 pub mod physics;

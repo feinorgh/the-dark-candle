@@ -62,12 +62,15 @@ fn main() {
         DataPlugin,
         GameStatePlugin,
         CameraPlugin,
+        the_dark_candle::hud::HudPlugin,
         LightingPlugin,
         DiagnosticsPlugin,
         EntityPlugin,
         WorldPlugin,
         PhysicsPlugin,
         ChemistryPlugin,
+    ))
+    .add_plugins((
         BiologyPlugin,
         ProcgenPlugin,
         BehaviorPlugin,

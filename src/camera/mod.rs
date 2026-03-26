@@ -3,7 +3,9 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::biology::health::Health;
 use crate::game_state::GameState;
+use crate::hud::{FallTracker, Player};
 use crate::physics::constants;
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
@@ -90,6 +92,9 @@ fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGenerator
             .looking_at(Vec3::new(10.0, spawn_y - 1.0, 10.0), Vec3::Y),
         Bloom::NATURAL,
         FpsCamera::default(),
+        Player,
+        Health::new(100.0),
+        FallTracker::default(),
     ));
 }
 
