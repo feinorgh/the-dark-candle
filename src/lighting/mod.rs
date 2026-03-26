@@ -62,6 +62,49 @@ impl Default for DayNightConfig {
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct SolarInsolation(pub f32);
 
+/// Unit vector pointing toward the sun in world space.
+/// Computed from TimeOfDay each frame. When sun is below horizon,
+/// defaults to straight up (vertical shadows only).
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct SunDirection(pub [f32; 3]);
+
+impl Default for SunDirection {
+    fn default() -> Self {
+        Self([0.0, 1.0, 0.0])
+    }
+}
+
+/// Configuration for terrain shadow casting.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct ShadowConfig {
+    /// Minimum sun elevation change (degrees) before recomputing shadows.
+    pub angle_threshold_degrees: f32,
+    /// Number of jittered rays for soft shadow edges. 1 = hard shadows.
+    pub shadow_samples: u32,
+    /// Half-angle of the jitter cone in degrees.
+    pub cone_half_angle_degrees: f32,
+    /// Whether terrain shadows are enabled.
+    pub enabled: bool,
+}
+
+impl Default for ShadowConfig {
+    fn default() -> Self {
+        Self {
+            angle_threshold_degrees: 2.0,
+            shadow_samples: 3,
+            cone_half_angle_degrees: 1.5,
+            enabled: true,
+        }
+    }
+}
+
+/// Tracks the last sun angles used for shadow computation.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct LastShadowAngles {
+    pub elevation: f32,
+    pub azimuth: f32,
+}
+
 /// System: advance the clock each frame.
 fn advance_time(mut tod: ResMut<TimeOfDay>, config: Res<DayNightConfig>, time: Res<Time>) {
     let dt_hours = time.delta_secs() * config.time_scale / 3600.0;
@@ -106,6 +149,7 @@ fn update_sun(
     tod: Res<TimeOfDay>,
     config: Res<DayNightConfig>,
     mut insolation: ResMut<SolarInsolation>,
+    mut sun_dir: ResMut<SunDirection>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
 ) {
     let elevation = sun_elevation(tod.0);
@@ -113,6 +157,18 @@ fn update_sun(
 
     // Insolation factor: cosine of zenith when above horizon, else 0.
     insolation.0 = elevation.sin().max(0.0);
+
+    // Compute sun direction vector for terrain shadow casting.
+    if elevation > 0.0 {
+        sun_dir.0 = [
+            azimuth.cos() * elevation.cos(),
+            elevation.sin(),
+            azimuth.sin() * elevation.cos(),
+        ];
+    } else {
+        // Night: straight up (vertical shadows only).
+        sun_dir.0 = [0.0, 1.0, 0.0];
+    }
 
     for (mut light, mut transform) in &mut sun_q {
         // Sun direction: rotate around Y (azimuth) then tilt by elevation.
@@ -195,6 +251,51 @@ fn spawn_lights(mut commands: Commands, config: Res<DayNightConfig>, tod: Res<Ti
     ));
 }
 
+/// System: recompute terrain shadows when the sun moves significantly.
+fn update_terrain_shadows(
+    sun_dir: Res<SunDirection>,
+    shadow_config: Res<ShadowConfig>,
+    mut last_angles: ResMut<LastShadowAngles>,
+    tod: Res<TimeOfDay>,
+    registry: Option<Res<crate::data::MaterialRegistry>>,
+    mut chunk_q: Query<(
+        &mut crate::world::chunk::Chunk,
+        &mut light_map::ChunkLightMap,
+    )>,
+) {
+    if !shadow_config.enabled {
+        return;
+    }
+    let Some(_registry) = registry else { return };
+
+    let elevation = sun_elevation(tod.0);
+    let azimuth = sun_azimuth(tod.0);
+
+    // Check angle threshold.
+    let elev_delta = (elevation - last_angles.elevation).abs().to_degrees();
+    let azim_delta = (azimuth - last_angles.azimuth).abs().to_degrees();
+    if elev_delta < shadow_config.angle_threshold_degrees
+        && azim_delta < shadow_config.angle_threshold_degrees
+    {
+        return;
+    }
+
+    last_angles.elevation = elevation;
+    last_angles.azimuth = azimuth;
+
+    for (mut chunk, mut light_map) in &mut chunk_q {
+        shadows::compute_terrain_shadows(
+            chunk.voxels(),
+            light_map.size(),
+            sun_dir.0,
+            shadow_config.shadow_samples,
+            shadow_config.cone_half_angle_degrees,
+            &mut light_map,
+        );
+        chunk.mark_dirty();
+    }
+}
+
 /// Plugin for the day-night cycle and dynamic lighting.
 pub struct LightingPlugin;
 
@@ -203,6 +304,9 @@ impl Plugin for LightingPlugin {
         app.init_resource::<TimeOfDay>()
             .init_resource::<DayNightConfig>()
             .init_resource::<SolarInsolation>()
+            .init_resource::<SunDirection>()
+            .init_resource::<ShadowConfig>()
+            .init_resource::<LastShadowAngles>()
             .add_systems(Startup, spawn_lights)
             .add_systems(
                 Update,
@@ -211,6 +315,7 @@ impl Plugin for LightingPlugin {
                     update_sun,
                     update_ambient,
                     update_chunk_light_maps,
+                    update_terrain_shadows,
                 )
                     .chain(),
             );
@@ -225,15 +330,27 @@ impl Plugin for LightingPlugin {
 fn update_chunk_light_maps(
     mut commands: Commands,
     registry: Option<Res<crate::data::MaterialRegistry>>,
+    sun_dir: Res<SunDirection>,
+    shadow_config: Res<ShadowConfig>,
     chunk_q: Query<(Entity, &crate::world::chunk::Chunk), Changed<crate::world::chunk::Chunk>>,
 ) {
     let Some(registry) = registry else { return };
     for (entity, chunk) in &chunk_q {
-        let lm = light_map::propagate_sunlight_from_registry(
+        let mut lm = light_map::propagate_sunlight_from_registry(
             chunk.voxels(),
             crate::world::chunk::CHUNK_SIZE,
             &registry,
         );
+        if shadow_config.enabled {
+            shadows::compute_terrain_shadows(
+                chunk.voxels(),
+                crate::world::chunk::CHUNK_SIZE,
+                sun_dir.0,
+                shadow_config.shadow_samples,
+                shadow_config.cone_half_angle_degrees,
+                &mut lm,
+            );
+        }
         commands.entity(entity).insert(lm);
     }
 }
@@ -320,5 +437,44 @@ mod tests {
         let srgba = c.to_srgba();
         assert!(srgba.red > 0.9, "Noon should be near-white red channel");
         assert!(srgba.green > 0.9, "Noon should be near-white green channel");
+    }
+
+    #[test]
+    fn sun_direction_at_noon_points_up() {
+        let elevation = sun_elevation(12.0);
+        let azimuth = sun_azimuth(12.0);
+        let dir = [
+            azimuth.cos() * elevation.cos(),
+            elevation.sin(),
+            azimuth.sin() * elevation.cos(),
+        ];
+        assert!(
+            dir[1] > 0.99,
+            "Noon sun should point nearly straight up, got {dir:?}"
+        );
+    }
+
+    #[test]
+    fn sun_direction_at_dawn_is_low() {
+        let elevation = sun_elevation(7.0);
+        let azimuth = sun_azimuth(7.0);
+        let dir = [
+            azimuth.cos() * elevation.cos(),
+            elevation.sin(),
+            azimuth.sin() * elevation.cos(),
+        ];
+        assert!(
+            dir[1] > 0.0 && dir[1] < 0.5,
+            "Dawn sun should be low, y={}",
+            dir[1]
+        );
+    }
+
+    #[test]
+    fn shadow_config_defaults_are_sensible() {
+        let cfg = ShadowConfig::default();
+        assert!(cfg.angle_threshold_degrees > 0.0);
+        assert!(cfg.shadow_samples >= 1);
+        assert!(cfg.enabled);
     }
 }

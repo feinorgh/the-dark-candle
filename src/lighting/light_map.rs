@@ -25,6 +25,8 @@ const VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 pub struct ChunkLightMap {
     size: usize,
     sun: Vec<[u8; 3]>,
+    /// Per-voxel shadow factor: 0.0 = full shadow, 1.0 = full sun.
+    shadow: Vec<f32>,
 }
 
 impl Default for ChunkLightMap {
@@ -32,6 +34,7 @@ impl Default for ChunkLightMap {
         Self {
             size: CHUNK_SIZE,
             sun: vec![[255, 255, 255]; VOLUME],
+            shadow: vec![1.0; VOLUME],
         }
     }
 }
@@ -46,6 +49,7 @@ impl ChunkLightMap {
         Self {
             size,
             sun: vec![[255, 255, 255]; size * size * size],
+            shadow: vec![1.0; size * size * size],
         }
     }
 
@@ -89,6 +93,42 @@ impl ChunkLightMap {
             (rgb[2] * 255.0).round().clamp(0.0, 255.0) as u8,
         ];
     }
+
+    /// Get shadow factor at a voxel position.
+    pub fn get_shadow(&self, x: usize, y: usize, z: usize) -> f32 {
+        self.shadow[self.idx(x, y, z)]
+    }
+
+    /// Set shadow factor at a voxel position.
+    pub fn set_shadow(&mut self, x: usize, y: usize, z: usize, factor: f32) {
+        let i = self.idx(x, y, z);
+        self.shadow[i] = factor.clamp(0.0, 1.0);
+    }
+
+    /// Get shadow factor with bounds checking. Returns 1.0 (fully lit) for out-of-bounds.
+    pub fn shadow_clamped(&self, x: i32, y: i32, z: i32) -> f32 {
+        if x >= 0
+            && y >= 0
+            && z >= 0
+            && (x as usize) < self.size
+            && (y as usize) < self.size
+            && (z as usize) < self.size
+        {
+            self.get_shadow(x as usize, y as usize, z as usize)
+        } else {
+            1.0
+        }
+    }
+
+    /// Expose the size for external systems.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Reset all shadow factors to 1.0 (fully lit).
+    pub fn clear_shadows(&mut self) {
+        self.shadow.fill(1.0);
+    }
 }
 
 /// Propagate sunlight top-down through a flat voxel array.
@@ -107,6 +147,7 @@ where
     let mut map = ChunkLightMap {
         size,
         sun: vec![[0, 0, 0]; size * size * size],
+        shadow: vec![1.0; size * size * size],
     };
 
     for x in 0..size {
@@ -161,9 +202,10 @@ pub fn apply_light_map(positions: &[[f32; 3]], colors: &mut [[f32; 4]], light_ma
     for (i, color) in colors.iter_mut().enumerate() {
         let [px, py, pz] = positions[i];
         let light = light_map.get_clamped(px as i32, py as i32, pz as i32);
-        color[0] *= light[0];
-        color[1] *= light[1];
-        color[2] *= light[2];
+        let shadow = light_map.shadow_clamped(px as i32, py as i32, pz as i32);
+        color[0] *= light[0] * shadow;
+        color[1] *= light[1] * shadow;
+        color[2] *= light[2] * shadow;
     }
 }
 
@@ -403,5 +445,60 @@ mod tests {
             "Blue through 7m water should be bright: {}",
             bottom[2]
         );
+    }
+
+    #[test]
+    fn shadow_defaults_to_fully_lit() {
+        let map = ChunkLightMap::new();
+        assert!((map.get_shadow(0, 0, 0) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn shadow_set_and_get() {
+        let mut map = ChunkLightMap::with_size(4);
+        map.set_shadow(1, 2, 1, 0.3);
+        assert!((map.get_shadow(1, 2, 1) - 0.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn shadow_clamped_returns_one_outside() {
+        let map = ChunkLightMap::new();
+        assert!((map.shadow_clamped(-1, 0, 0) - 1.0).abs() < 0.001);
+        assert!((map.shadow_clamped(0, 0, CHUNK_SIZE as i32) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn shadow_clamps_value_range() {
+        let mut map = ChunkLightMap::with_size(4);
+        map.set_shadow(0, 0, 0, -0.5);
+        assert!(map.get_shadow(0, 0, 0) >= 0.0);
+        map.set_shadow(0, 0, 0, 1.5);
+        assert!(map.get_shadow(0, 0, 0) <= 1.0);
+    }
+
+    #[test]
+    fn apply_light_with_shadow_modulates_correctly() {
+        let mut map = ChunkLightMap::with_size(4);
+        map.set_shadow(0, 0, 0, 0.5);
+
+        let positions = [[0.0, 0.0, 0.0]];
+        let mut colors = [[1.0_f32, 1.0, 1.0, 1.0]];
+        apply_light_map(&positions, &mut colors, &map);
+
+        // Expected: sun(1.0) * shadow(0.5) = 0.5
+        assert!((colors[0][0] - 0.5).abs() < 0.01);
+        assert!(
+            (colors[0][3] - 1.0).abs() < 0.001,
+            "Alpha should be preserved"
+        );
+    }
+
+    #[test]
+    fn clear_shadows_resets_all() {
+        let mut map = ChunkLightMap::with_size(4);
+        map.set_shadow(1, 1, 1, 0.0);
+        assert!(map.get_shadow(1, 1, 1) < 0.01);
+        map.clear_shadows();
+        assert!((map.get_shadow(1, 1, 1) - 1.0).abs() < 0.001);
     }
 }
