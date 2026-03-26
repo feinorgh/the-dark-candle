@@ -1,8 +1,8 @@
 // Chunk manager: loads and unloads chunks around the camera.
 //
 // Each frame the manager compares the set of currently loaded chunks against
-// the set that *should* be loaded. New chunks are spawned and far-away chunks
-// are despawned. Terrain generation fills newly created chunks.
+// the set that *should* be loaded. New chunks are dispatched for async terrain
+// generation on the `AsyncComputeTaskPool`, and far-away chunks are despawned.
 //
 // Two loading modes:
 //   **Flat** (legacy): cylindrical loading around camera in XZ plane.
@@ -10,7 +10,9 @@
 //     are loaded, skipping deep interior and outer space.
 
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkOctree};
 use super::planet::{PlanetConfig, TerrainMode};
@@ -58,6 +60,9 @@ const SHRINK_THRESHOLD: f32 = -0.05;
 /// Headroom threshold above which we grow.
 const GROW_THRESHOLD: f32 = 0.30;
 
+/// Maximum number of terrain generation tasks dispatched per frame.
+const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 8;
+
 /// Tracks consecutive frames for hysteresis-based view distance adaptation.
 #[derive(Resource, Debug, Default)]
 pub struct ViewDistanceState {
@@ -66,6 +71,54 @@ pub struct ViewDistanceState {
     /// Consecutive frames where headroom > GROW_THRESHOLD.
     pub frames_under_budget: u32,
 }
+
+/// Set of chunk coordinates whose terrain generation is in flight.
+/// Prevents double-dispatch while an async task is still running.
+#[derive(Resource, Default)]
+pub struct PendingChunks {
+    coords: HashSet<ChunkCoord>,
+}
+
+impl PendingChunks {
+    pub fn contains(&self, coord: &ChunkCoord) -> bool {
+        self.coords.contains(coord)
+    }
+
+    pub fn insert(&mut self, coord: ChunkCoord) {
+        self.coords.insert(coord);
+    }
+
+    pub fn remove(&mut self, coord: &ChunkCoord) {
+        self.coords.remove(coord);
+    }
+
+    pub fn len(&self) -> usize {
+        self.coords.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.coords.is_empty()
+    }
+}
+
+/// Output of an async terrain generation task.
+struct TerrainGenResult {
+    coord: ChunkCoord,
+    chunk: Chunk,
+    octree: ChunkOctree,
+}
+
+/// Component holding an in-flight async terrain generation task.
+#[derive(Component)]
+pub struct TerrainGenTask(Task<TerrainGenResult>);
+
+/// Thread-safe handle to the terrain generator for async tasks.
+#[derive(Resource, Clone)]
+pub struct SharedTerrainGen(pub Arc<UnifiedTerrainGenerator>);
+
+/// Thread-safe handle to the subdivision config for async tasks.
+#[derive(Resource, Clone)]
+pub struct SharedSubdivConfig(pub Arc<SubdivisionConfig>);
 
 /// Maps chunk coordinates to their ECS entity for O(1) lookup.
 #[derive(Resource, Default)]
@@ -189,14 +242,16 @@ pub fn desired_chunks_spherical(
     set
 }
 
-/// System: spawns and despawns chunks to keep the loaded set matching the camera position.
+/// System: despawns out-of-range chunks and dispatches async terrain generation
+/// for newly needed chunks, prioritized by distance to the camera.
 #[allow(clippy::too_many_arguments)]
 pub fn update_chunks(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
+    mut pending: ResMut<PendingChunks>,
     radius: Res<ChunkLoadRadius>,
-    terrain_gen: Res<TerrainGeneratorRes>,
-    subdiv_config: Res<SubdivisionConfig>,
+    shared_gen: Res<SharedTerrainGen>,
+    shared_subdiv: Res<SharedSubdivConfig>,
     planet: Res<PlanetConfig>,
     camera_q: Query<&Transform, With<FpsCamera>>,
     chunk_props_q: Query<&crate::procgen::props::ChunkProps>,
@@ -228,34 +283,93 @@ pub fn update_chunks(
         }
     }
 
-    // Spawn new chunks that are in range but not yet loaded
-    for &coord in &desired {
-        if !chunk_map.contains(&coord) {
+    // Cancel pending generation for chunks that left the desired set.
+    let stale: Vec<ChunkCoord> = pending
+        .coords
+        .iter()
+        .filter(|c| !desired.contains(c))
+        .copied()
+        .collect();
+    for coord in stale {
+        pending.remove(&coord);
+    }
+
+    // Collect coords that need generation, sorted closest-to-camera first.
+    let cam_pos = cam_transform.translation;
+    let mut to_generate: Vec<ChunkCoord> = desired
+        .iter()
+        .filter(|c| !chunk_map.contains(c) && !pending.contains(c))
+        .copied()
+        .collect();
+    to_generate.sort_by(|a, b| {
+        let da = a.world_center().distance_squared(cam_pos);
+        let db = b.world_center().distance_squared(cam_pos);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Dispatch async terrain generation for the closest chunks.
+    let pool = AsyncComputeTaskPool::get();
+
+    for coord in to_generate
+        .into_iter()
+        .take(MAX_TERRAIN_DISPATCHES_PER_FRAME)
+    {
+        let terrain_gen = shared_gen.0.clone();
+        let subdiv = shared_subdiv.0.clone();
+
+        let task = pool.spawn(async move {
             let mut chunk = Chunk::new_empty(coord);
-            terrain_gen.0.generate_chunk(&mut chunk);
-
-            // Build refined octree: analyze for surface crossings and material
-            // boundaries, then construct a sparse representation that preserves
-            // detail at features while compressing uniform interiors.
-            let analysis = analyze_chunk(&chunk, &subdiv_config);
+            terrain_gen.generate_chunk(&mut chunk);
+            let analysis = analyze_chunk(&chunk, &subdiv);
             let octree = build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis);
-            let chunk_octree = ChunkOctree(octree);
+            TerrainGenResult {
+                coord,
+                chunk,
+                octree: ChunkOctree(octree),
+            }
+        });
 
-            let origin = coord.world_origin();
-            let entity = commands
-                .spawn((
-                    chunk,
-                    coord,
-                    chunk_octree,
-                    ChunkActivity::default(),
-                    crate::procgen::props::NeedsDecoration,
-                    crate::procgen::props::ChunkProps::default(),
-                    crate::physics::amr_fluid::injection::NeedsFluidSeeding,
-                    Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
-                ))
-                .id();
-            chunk_map.insert(coord, entity);
+        commands.spawn(TerrainGenTask(task));
+        pending.insert(coord);
+    }
+}
+
+/// System: collects completed async terrain generation tasks and spawns the
+/// chunk entities with all required components.
+pub fn collect_terrain_results(
+    mut commands: Commands,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut pending: ResMut<PendingChunks>,
+    mut task_q: Query<(Entity, &mut TerrainGenTask)>,
+) {
+    for (task_entity, mut gen_task) in task_q.iter_mut() {
+        let Some(result) = block_on(poll_once(&mut gen_task.0)) else {
+            continue;
+        };
+
+        // Task entity is just a carrier — despawn it.
+        commands.entity(task_entity).despawn();
+        pending.remove(&result.coord);
+
+        // Skip if chunk was already loaded (e.g. race between despawn/respawn).
+        if chunk_map.contains(&result.coord) {
+            continue;
         }
+
+        let origin = result.coord.world_origin();
+        let entity = commands
+            .spawn((
+                result.chunk,
+                result.coord,
+                result.octree,
+                ChunkActivity::default(),
+                crate::procgen::props::NeedsDecoration,
+                crate::procgen::props::ChunkProps::default(),
+                crate::physics::amr_fluid::injection::NeedsFluidSeeding,
+                Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
+            ))
+            .id();
+        chunk_map.insert(result.coord, entity);
     }
 }
 
@@ -320,15 +434,28 @@ impl Plugin for ChunkManagerPlugin {
             .cloned()
             .unwrap_or_default();
         let generator = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let subdiv = app
+            .world()
+            .get_resource::<SubdivisionConfig>()
+            .cloned()
+            .unwrap_or_default();
+
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
             .init_resource::<ViewDistanceState>()
+            .init_resource::<PendingChunks>()
             .insert_resource(TerrainGeneratorRes(generator))
+            .insert_resource(SharedTerrainGen(Arc::new(
+                UnifiedTerrainGenerator::from_planet_config(&planet),
+            )))
+            .insert_resource(SharedSubdivConfig(Arc::new(subdiv)))
             .add_systems(
                 Update,
                 (
                     adapt_view_distance,
-                    update_chunks.in_set(super::WorldSet::ChunkManagement),
+                    (update_chunks, collect_terrain_results)
+                        .chain()
+                        .in_set(super::WorldSet::ChunkManagement),
                 )
                     .chain(),
             );

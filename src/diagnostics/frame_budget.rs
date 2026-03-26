@@ -144,13 +144,14 @@ pub fn update_overlay_text(
             .as_ref()
             .map(|s| s.meshing_in_flight)
             .unwrap_or(0);
+        let generating = chunk_stats.as_ref().map(|s| s.generating).unwrap_or(0);
         let time_scale = orbital.as_ref().map(|o| o.time_scale).unwrap_or(0.0);
         let hour = tod.as_ref().map(|t| t.0).unwrap_or(0.0);
         let hour_int = hour as u32;
         let minute = ((hour - hour_int as f32) * 60.0) as u32;
         lines.push_str(&format!(
-            "\nChunks: {} (meshing {})  View: {}  Time: {:.0}x ({:02}:{:02})",
-            chunks, meshing, view, time_scale, hour_int, minute,
+            "\nChunks: {} (gen {} mesh {})  View: {}  Time: {:.0}x ({:02}:{:02})",
+            chunks, generating, meshing, view, time_scale, hour_int, minute,
         ));
 
         **text = lines;

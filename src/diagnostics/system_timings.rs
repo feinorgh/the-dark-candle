@@ -93,19 +93,23 @@ pub struct ChunkStats {
     pub meshing_in_flight: usize,
     /// Number of loaded chunk entities in `ChunkMap`.
     pub loaded: usize,
+    /// Number of chunks awaiting async terrain generation.
+    pub generating: usize,
 }
 
 /// System that refreshes [`ChunkStats`] each frame from the ECS world.
 ///
-/// Counts entities with the `MeshTask` component (in-flight meshing) and
-/// reads the chunk map size.
+/// Counts entities with the `MeshTask` component (in-flight meshing),
+/// reads the chunk map size, and checks pending terrain generation count.
 pub fn update_chunk_stats(
     mut stats: ResMut<ChunkStats>,
     chunk_map: Option<Res<ChunkMap>>,
+    pending: Option<Res<crate::world::chunk_manager::PendingChunks>>,
     mesh_task_q: Query<(), With<crate::world::meshing::MeshTask>>,
 ) {
     stats.loaded = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
     stats.meshing_in_flight = mesh_task_q.iter().count();
+    stats.generating = pending.as_ref().map(|p| p.len()).unwrap_or(0);
 }
 
 // -------------------------------------------------------------------------
