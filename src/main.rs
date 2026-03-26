@@ -13,6 +13,7 @@ use the_dark_candle::{
     physics::PhysicsPlugin,
     procgen::ProcgenPlugin,
     social::SocialPlugin,
+    weather::WeatherPlugin,
     world::{WorldPlugin, scene_presets::ScenePreset},
 };
 
@@ -70,6 +71,7 @@ fn main() {
         BehaviorPlugin,
         SocialPlugin,
         PersistencePlugin,
+        WeatherPlugin,
     ))
     .run();
 }

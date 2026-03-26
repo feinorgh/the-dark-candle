@@ -15,4 +15,5 @@ pub mod physics;
 pub mod procgen;
 pub mod simulation;
 pub mod social;
+pub mod weather;
 pub mod world;

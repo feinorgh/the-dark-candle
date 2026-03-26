@@ -57,6 +57,11 @@ impl LbmState {
     pub fn is_empty(&self) -> bool {
         self.grids.is_empty()
     }
+
+    /// Iterate over all `(ChunkCoord, LbmGrid)` pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&ChunkCoord, &LbmGrid)> {
+        self.grids.iter()
+    }
 }
 
 /// Wrapper resource for FluidConfig (shared with AMR fluid plugin).
