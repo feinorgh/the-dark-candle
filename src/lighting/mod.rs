@@ -336,6 +336,11 @@ fn update_chunk_light_maps(
 ) {
     let Some(registry) = registry else { return };
     for (entity, chunk) in &chunk_q {
+        // Skip chunks that were only touched by update_terrain_shadows
+        // (mark_dirty triggers Changed<Chunk> but voxels didn't actually change).
+        if !chunk.is_dirty() {
+            continue;
+        }
         let mut lm = light_map::propagate_sunlight_from_registry(
             chunk.voxels(),
             crate::world::chunk::CHUNK_SIZE,
