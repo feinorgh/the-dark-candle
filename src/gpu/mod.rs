@@ -1,0 +1,12 @@
+//! GPU-accelerated rendering via wgpu compute shaders.
+//!
+//! Provides a headless GPU rendering path that replicates the CPU software
+//! renderer (DDA voxel raymarching, sky scattering, volumetric clouds, fog,
+//! cloud shadows) using WGSL compute shaders. Expected speedup: 100-1000×
+//! over the single-threaded CPU path.
+
+mod context;
+mod renderer;
+
+pub use context::GpuContext;
+pub use renderer::{GpuRenderParams, GpuRenderer};
