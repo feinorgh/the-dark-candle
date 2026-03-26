@@ -1,6 +1,7 @@
 pub mod chunk;
 pub mod chunk_manager;
 pub mod collision;
+pub mod erosion;
 pub mod interpolation;
 pub mod lod;
 pub mod meshing;

@@ -130,6 +130,7 @@ pub fn load_game(
         cave_freq: tc.cave_freq,
         cave_threshold: tc.cave_threshold,
         soil_depth: tc.soil_depth,
+        ..Default::default()
     }));
 
     // --- Restore chunks --------------------------------------------------
