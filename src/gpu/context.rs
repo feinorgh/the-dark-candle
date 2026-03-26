@@ -43,7 +43,7 @@ impl GpuContext {
                     max_storage_buffer_binding_size: 256 * 1024 * 1024, // 256 MB
                     max_buffer_size: 256 * 1024 * 1024,
                     max_compute_invocations_per_workgroup: 256,
-                    max_compute_workgroup_size_x: 16,
+                    max_compute_workgroup_size_x: 256,
                     max_compute_workgroup_size_y: 16,
                     max_compute_workgroup_size_z: 1,
                     ..Default::default()

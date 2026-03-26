@@ -6,6 +6,7 @@
 //! over the single-threaded CPU path.
 
 mod context;
+pub mod particles;
 mod renderer;
 
 pub use context::GpuContext;
