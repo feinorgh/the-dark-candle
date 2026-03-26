@@ -368,10 +368,15 @@ where
         (3, 7), // Z edges
     ];
 
-    let mut vertex_map: HashMap<(i32, i32, i32), u32> = HashMap::new();
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
+    // Pre-allocate with estimated capacity: surface vertices scale as O(grid²).
+    // Typical terrain chunks use ~2000 vertices for a 32³ grid.
+    let estimated_vertices = (grid_size * grid_size) as usize;
+    let estimated_indices = estimated_vertices * 3;
+
+    let mut vertex_map: HashMap<(i32, i32, i32), u32> = HashMap::with_capacity(estimated_vertices);
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(estimated_vertices);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(estimated_vertices);
+    let mut colors: Vec<[f32; 4]> = Vec::with_capacity(estimated_vertices);
 
     // Phase 1: Vertex placement
     for cz in 0..grid_size {
@@ -445,7 +450,7 @@ where
     }
 
     // Phase 2: Quad emission
-    let mut indices: Vec<u32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::with_capacity(estimated_indices);
 
     for (&(cx, cy, cz), &v0) in &vertex_map {
         // X-edge
@@ -562,16 +567,17 @@ fn compute_normals(positions: &[[f32; 3]], indices: &[u32], normals: &mut [[f32;
     }
 }
 
-/// Convert a ChunkMesh into a Bevy Mesh asset.
-pub fn chunk_mesh_to_bevy_mesh(chunk_mesh: &ChunkMesh) -> Mesh {
+/// Convert a ChunkMesh into a Bevy Mesh asset, consuming the mesh data
+/// to avoid cloning the position/normal/color/index buffers.
+pub fn chunk_mesh_to_bevy_mesh(chunk_mesh: ChunkMesh) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, chunk_mesh.positions.clone());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, chunk_mesh.normals.clone());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, chunk_mesh.colors.clone());
-    mesh.insert_indices(Indices::U32(chunk_mesh.indices.clone()));
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, chunk_mesh.positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, chunk_mesh.normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, chunk_mesh.colors);
+    mesh.insert_indices(Indices::U32(chunk_mesh.indices));
     mesh
 }
 
@@ -791,7 +797,7 @@ pub(super) fn collect_mesh_results(
                 commands.entity(entity).insert(ChunkLod(new_level));
             }
         } else {
-            let bevy_mesh = chunk_mesh_to_bevy_mesh(&result.mesh);
+            let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
             let mesh_handle = meshes.add(bevy_mesh);
             let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
             let mut cmds = commands.entity(entity);
@@ -1056,7 +1062,7 @@ mod tests {
         let chunk_mesh = generate_mesh(&chunk);
 
         // This should not panic
-        let _bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
+        let _bevy_mesh = chunk_mesh_to_bevy_mesh(chunk_mesh);
     }
 
     #[test]
