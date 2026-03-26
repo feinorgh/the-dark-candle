@@ -449,7 +449,29 @@ tests/
     ├── inert_gas_no_reaction.simulation.ron
     ├── water_freezing.simulation.ron
     ├── radiation_across_air_gap.simulation.ron
-    └── radiation_blocked_by_wall.simulation.ron
+    ├── radiation_blocked_by_wall.simulation.ron
+    └── thermal_glow_visual.simulation.ron
 ```
 
 The simulation harness (`simulate_tick`) is also used by `src/chemistry/fire_propagation.rs` unit tests, ensuring consistency between inline tests and data-driven scenarios.
+
+## Atmosphere Physics Tests
+
+Phase 9 added 14 integration tests for atmospheric phenomena in
+`src/physics/atmosphere.rs`, `src/physics/lbm_gas/moisture.rs`, and
+`src/physics/lbm_gas/precipitation.rs`. These test:
+
+- Clausius-Clapeyron saturation vapor pressure (known values at 20 °C, 100 °C)
+- Dew point computation from humidity and pressure
+- Humidity passive scalar advection in LBM
+- Evaporation from water surfaces into adjacent LBM cells
+- Condensation when humidity exceeds saturation → cloud LWC formation
+- Coriolis deflection of eastward wind at mid-latitudes
+- Solar surface heating proportional to insolation and albedo
+- Precipitation emission when cloud LWC exceeds coalescence threshold
+- Rain/snow particle classification by temperature (273.15 K boundary)
+- Virga evaporation of precipitation in dry sub-cloud air
+
+These tests use the headless simulation tick loop and verify emergent physics
+outcomes — not hardcoded values. They run as part of `cargo test` (unit tests
+within library modules).

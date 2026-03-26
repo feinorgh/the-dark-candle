@@ -13,6 +13,8 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Capture screenshot | Press **F12** | `screenshots/<timestamp>.png` |
 | Produce simulation video | Add `emit_video` to `.simulation.ron` | MP4 video or PNG frames |
 | Run visual rendering tests | `cargo test --test visual_rendering` | MP4 videos in `test_output/` |
+| Run atmosphere visual tests (CPU) | `cargo test --test atmosphere_visual --release -- --ignored` | MP4 videos in `test_output/` |
+| Run atmosphere visual tests (GPU) | `cargo test --test atmosphere_visual_gpu` | MP4 videos in `test_output/` |
 | Enable verbose logging | `RUST_LOG=info cargo run --features bevy/dynamic_linking` | Bevy + game logs on stderr |
 | Enable debug logging | `RUST_LOG=debug,bevy=info cargo run --features bevy/dynamic_linking` | Game debug logs without Bevy noise |
 | See test stderr output | `cargo test -- --nocapture` | Prints `eprintln!` messages from tests |
@@ -503,3 +505,61 @@ cargo test --test visual_rendering -- --nocapture
 | `optics_colored_shadows_video` | `optics_colored_shadows.mp4` | Beer-Lambert absorption through water/glass columns |
 
 Each test renders frames via `render_perspective()` from `src/diagnostics/visualization.rs`, then encodes to MP4 via ffmpeg. The videos are meant for human visual inspection — there are no automated pixel-level assertions.
+
+## 10. Atmosphere Visualization Tests
+
+Two test suites render atmosphere features: a CPU version (`tests/atmosphere_visual.rs`) and a GPU-accelerated version (`tests/atmosphere_visual_gpu.rs`). The GPU version is ~1000× faster and runs as part of `cargo test` by default.
+
+### GPU tests (fast — seconds)
+
+```bash
+cargo test --test atmosphere_visual_gpu -- --nocapture
+```
+
+| Test | Output | What it shows |
+|------|--------|---------------|
+| `gpu_sky_panorama_video` | `gpu_sky_panorama.mp4` | Full day/night sky cycle with Rayleigh + Mie scattering |
+| `gpu_volumetric_clouds_video` | `gpu_volumetric_clouds.mp4` | Volumetric cloud layer with Beer-Lambert + HG phase function |
+| `gpu_atmosphere_showcase_video` | `gpu_atmosphere_showcase.mp4` | Integrative: terrain + clouds + fog + shadows + scattering + day/night cycle |
+
+### CPU tests (slow — minutes to hours, `#[ignore]`d)
+
+```bash
+cargo test --test atmosphere_visual --release -- --ignored --nocapture
+```
+
+| Test | Output | What it shows |
+|------|--------|---------------|
+| `sky_panorama_video` | `sky_panorama.mp4` | Rayleigh + Mie sky over full day cycle |
+| `volumetric_clouds_video` | `volumetric_clouds.mp4` | Cloud ray-march with silver-lining and dark bases |
+| `cloud_shadows_video` | `cloud_shadows.mp4` | Cloud shadow map projected onto terrain |
+| `valley_fog_video` | `valley_fog.mp4` | Exponential height fog in a terrain valley |
+| `atmosphere_showcase_video` | `atmosphere_showcase.mp4` | Everything combined: terrain, clouds, fog, shadows, scattering |
+
+The CPU tests exist as a reference implementation. For routine work, use the GPU tests.
+
+## 11. GPU Compute Renderer
+
+The `src/gpu/` module provides a headless wgpu compute shader renderer for offscreen visualization. It reproduces the CPU software renderer's output using a single uber-compute-shader dispatched per frame.
+
+**Architecture:**
+- `GpuContext` — headless wgpu adapter/device/queue initialization
+- `GpuRenderer` — buffer upload (voxels, materials, cloud field, humidity/temp), compute dispatch, RGBA readback to `RgbImage`
+- `atmosphere_render.wgsl` — WGSL compute shader implementing: sky scattering, volumetric cloud ray-march, DDA terrain raycast, Lambertian shading, shadow rays, cloud shadows, fog, incandescence, star field, Reinhard tonemapping
+
+**Usage in tests:**
+```rust
+use the_dark_candle::gpu::{GpuContext, GpuRenderer, GpuRenderParams};
+
+let ctx = GpuContext::new().expect("GPU not available");
+let mut renderer = GpuRenderer::new(&ctx, width, height);
+renderer.upload_voxels(&ctx, &voxels, chunk_size);
+renderer.upload_materials(&ctx, &registry, max_material_id);
+
+let image: image::RgbImage = renderer.render_frame(&ctx, &params);
+```
+
+**Buffer layout conventions:**
+- Voxels packed as `[material_id: u32, temperature_bits: u32]` (8 bytes/voxel, Z-major index)
+- GPU uniform structs use `#[repr(C)]` + `bytemuck::Pod` with 16-byte alignment
+- Materials as `vec4<f32>` (r, g, b, transparent_flag) per material ID

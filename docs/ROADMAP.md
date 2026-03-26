@@ -162,7 +162,7 @@ sunlight propagation.
 
 ---
 
-## Phase 8 — Spherical Planetary Terrain (planned)
+## Phase 8 — Spherical Planetary Terrain ✅
 
 Transform the flat-plane terrain into a spherical planetary model. The planet is
 a sphere centered at world origin `(0, 0, 0)` with configurable radius. Surface
@@ -277,7 +277,7 @@ Once spherical terrain is in place, subsequent phases can layer on:
 
 ---
 
-## Phase 9 — Atmosphere Simulation (planned)
+## Phase 9 — Atmosphere Simulation ✅
 
 A physics-driven atmosphere model that builds on the existing LBM gas simulation,
 barometric pressure functions, and FLIP/PIC particle system. Weather, wind, and
@@ -455,6 +455,37 @@ LBM core (collision, streaming, macroscopic recovery), FLIP/PIC core (P2G, G2P,
 advection, accumulation), pressure diffusion, barometric formula, material system,
 chunk/voxel infrastructure. These are extended (humidity scalar, Coriolis force)
 but not rewritten.
+
+### Completion
+
+All 10 implementation steps completed. Commits:
+
+| Commit | Description |
+|--------|-------------|
+| `0073040` | AtmosphereConfig resource + wire LBM/FLIP into `PhysicsPlugin` gameplay loop |
+| `412135a` | Humidity transport (passive scalar advection), Coriolis Guo forcing, solar surface heating |
+| `0f20748` | Cloud formation (Clausius-Clapeyron condensation cycle) + atmospheric Rayleigh/Mie scattering |
+| `6066811` | Precipitation pipeline (rain/snow FLIP particles, virga) + volumetric cloud ray-marcher |
+| `c8122ef` | 14 atmosphere physics integration tests + cloud shadow maps / exponential height fog |
+| `a511f06` | 5 CPU atmosphere visualization video tests (sky, clouds, shadows, fog, integrative showcase) |
+| `cfea4ce` | GPU-accelerated compute shader renderer (WGSL uber shader, 1000× speedup over CPU) |
+
+**Key modules added:**
+- `src/physics/atmosphere.rs` — AtmosphereConfig, Clausius-Clapeyron, dew point
+- `src/physics/lbm_gas/moisture.rs` — evaporation, condensation, scalar advection
+- `src/physics/lbm_gas/precipitation.rs` — cloud-to-rain/snow emission, virga evaporation
+- `src/lighting/scattering.rs` — Rayleigh + Mie CPU ray-marcher, sky LUT
+- `src/lighting/clouds.rs` — volumetric cloud ray-march (Beer-Lambert + Henyey-Greenstein)
+- `src/lighting/shadows.rs` — cloud shadow projection, exponential height fog
+- `src/gpu/` — headless wgpu compute shader renderer (`GpuRenderer`)
+
+**GPU renderer performance** (512×384 output, 30 fps video):
+
+| Test | CPU (release) | GPU | Speedup |
+|------|--------------|-----|---------|
+| Sky panorama (360 frames) | 349 s | 1.0 s | 342× |
+| Volumetric clouds (300 frames) | 931 s | 0.9 s | 1 070× |
+| Full showcase (900 frames) | 4 052 s | 2.5 s | 1 608× |
 
 ---
 
