@@ -11,6 +11,8 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::tasks::futures_lite::future;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use std::collections::HashMap;
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
@@ -598,6 +600,26 @@ pub struct LodTransition {
 /// Duration of an LOD transition in seconds.
 const LOD_TRANSITION_DURATION: f32 = 0.4;
 
+/// Maximum number of mesh tasks dispatched in a single frame to limit
+/// the cost of snapshotting voxel data on the main thread.
+const MAX_MESH_DISPATCHES_PER_FRAME: usize = 8;
+
+/// Result from an async mesh computation.
+struct ChunkMeshResult {
+    mesh: ChunkMesh,
+    lod_level: u8,
+}
+
+/// Component holding a pending async mesh task along with dispatch-time
+/// metadata needed when the result is applied.
+#[derive(Component)]
+pub(super) struct MeshTask {
+    task: Task<ChunkMeshResult>,
+    previous_level: LodLevel,
+    lod_changed: bool,
+    had_mesh: bool,
+}
+
 /// Compute the mesh stride for a given LOD level.
 /// L0 = 1 (full 32³), L1 = 2 (16³), L2 = 4 (8³), etc.
 fn lod_step(level: LodLevel) -> usize {
@@ -640,17 +662,15 @@ fn generate_chunk_mesh(
     mesh
 }
 
-/// System: generates or updates meshes for dirty chunks, respecting LOD levels.
+/// System: dispatches async mesh generation tasks for dirty or LOD-changed chunks.
 ///
-/// Queries the camera position to compute per-chunk LOD. When a `ChunkOctree`
-/// component is present, meshes from the sparse octree for better cache locality
-/// and compression-aware LOD. Falls back to flat-array meshing otherwise.
-/// LOD transitions trigger remeshing with a smooth opacity fade via `LodTransition`.
+/// Computes per-chunk LOD from camera distance (fast, stays on main thread),
+/// snapshots voxel data, and spawns `AsyncComputeTaskPool` tasks. At most
+/// `MAX_MESH_DISPATCHES_PER_FRAME` tasks are dispatched per frame to limit the
+/// cost of snapshotting voxel data.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn mesh_dirty_chunks(
+pub(super) fn dispatch_mesh_tasks(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     lod_config: Option<Res<LodConfig>>,
     color_map: Option<Res<MaterialColorMap>>,
     thermal_mode: Option<Res<ThermalVisionMode>>,
@@ -661,30 +681,15 @@ pub fn mesh_dirty_chunks(
             &mut Chunk,
             &super::chunk::ChunkCoord,
             Option<&ChunkOctree>,
-            Option<&Mesh3d>,
             Option<&ChunkLod>,
-            Option<&ChunkActivity>,
             Option<&ChunkLightMap>,
+            Has<ChunkMeshMarker>,
         ),
-        Without<ChunkMeshMarker>,
-    >,
-    mut remesh_q: Query<
-        (
-            Entity,
-            &mut Chunk,
-            &super::chunk::ChunkCoord,
-            Option<&ChunkOctree>,
-            &Mesh3d,
-            Option<&ChunkLod>,
-            Option<&ChunkActivity>,
-            Option<&ChunkLightMap>,
-        ),
-        With<ChunkMeshMarker>,
+        Without<MeshTask>,
     >,
 ) {
     let default_config = LodConfig::default();
     let config = lod_config.as_deref().unwrap_or(&default_config);
-    let colors = color_map.as_deref();
     let thermal_vision = thermal_mode.as_ref().is_some_and(|m| m.0);
     let camera_pos = camera_q
         .iter()
@@ -692,80 +697,101 @@ pub fn mesh_dirty_chunks(
         .map(|t| t.translation)
         .unwrap_or(Vec3::ZERO);
 
-    // Default material for chunk meshes (vertex colored, no emissive)
+    let pool = AsyncComputeTaskPool::get();
+    let mut dispatched = 0usize;
+
+    for (entity, mut chunk, coord, octree, current_lod, light_map, had_mesh) in chunk_q.iter_mut() {
+        if dispatched >= MAX_MESH_DISPATCHES_PER_FRAME {
+            break;
+        }
+
+        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
+        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
+        let lod_changed = if had_mesh {
+            new_level != current_level
+        } else {
+            current_lod.is_some() && new_level != current_level
+        };
+
+        if !chunk.is_dirty() && !lod_changed {
+            continue;
+        }
+
+        let step = lod_step(new_level);
+
+        // Snapshot all data the async task needs (owned copies).
+        let voxel_snapshot = chunk.flat_snapshot();
+        let chunk_coord = chunk.coord;
+        let octree_snapshot = octree.map(|o| ChunkOctree(o.0.clone()));
+        let color_map_clone = color_map.as_deref().cloned();
+        let light_map_clone = light_map.cloned();
+        let lod_level = new_level.0;
+
+        chunk.clear_dirty();
+
+        let task = pool.spawn(async move {
+            let snap_chunk = Chunk::from_snapshot(chunk_coord, voxel_snapshot);
+            let mesh = generate_chunk_mesh(
+                &snap_chunk,
+                octree_snapshot.as_ref(),
+                step,
+                color_map_clone.as_ref(),
+                thermal_vision,
+                light_map_clone.as_ref(),
+            );
+            ChunkMeshResult { mesh, lod_level }
+        });
+
+        commands.entity(entity).insert(MeshTask {
+            task,
+            previous_level: current_level,
+            lod_changed,
+            had_mesh,
+        });
+        dispatched += 1;
+    }
+}
+
+/// System: collects completed async mesh tasks and applies the results.
+///
+/// Polls each pending `MeshTask`. On completion, converts the `ChunkMesh` into
+/// a Bevy `Mesh` asset, inserts rendering components, and removes the task.
+#[allow(clippy::type_complexity)]
+pub(super) fn collect_mesh_results(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut task_q: Query<(Entity, &mut MeshTask, Option<&ChunkActivity>)>,
+) {
+    // Default material for chunk meshes (vertex colored, no emissive).
     let chunk_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         ..default()
     });
 
-    // Initial mesh generation for new chunks without a mesh
-    for (entity, mut chunk, coord, octree, _existing_mesh, current_lod, activity, light_map) in
-        chunk_q.iter_mut()
-    {
-        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
-        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
-        let lod_changed = current_lod.is_some() && new_level != current_level;
-
-        if !chunk.is_dirty() && !lod_changed {
+    for (entity, mut mesh_task, activity) in task_q.iter_mut() {
+        let Some(result) = future::block_on(future::poll_once(&mut mesh_task.task)) else {
             continue;
-        }
+        };
 
-        let step = lod_step(new_level);
-        let chunk_mesh =
-            generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision, light_map);
-        chunk.clear_dirty();
+        let new_level = LodLevel(result.lod_level);
+        let lod_changed = mesh_task.lod_changed;
+        let had_mesh = mesh_task.had_mesh;
+        let previous_level = mesh_task.previous_level;
 
-        if chunk_mesh.is_empty() {
-            commands.entity(entity).insert(ChunkLod(new_level));
-            continue;
-        }
-
-        let bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
-        let mesh_handle = meshes.add(bevy_mesh);
-
-        let mut cmds = commands.entity(entity);
-        cmds.insert(Mesh3d(mesh_handle))
-            .insert(ChunkLod(new_level))
-            .insert(ChunkMeshMarker);
-
-        // Hot chunks get an emissive material so bloom activates.
-        let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
-        cmds.insert(MeshMaterial3d(mat));
-
-        if lod_changed {
-            cmds.insert(LodTransition {
-                previous_level: current_level,
-                factor: 0.0,
-            });
-        }
-    }
-
-    // Remesh already-meshed chunks that got dirty or changed LOD
-    for (entity, mut chunk, coord, octree, _mesh, current_lod, activity, light_map) in
-        remesh_q.iter_mut()
-    {
-        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
-        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
-        let lod_changed = new_level != current_level;
-
-        if !chunk.is_dirty() && !lod_changed {
-            continue;
-        }
-
-        let step = lod_step(new_level);
-        let chunk_mesh =
-            generate_chunk_mesh(&chunk, octree, step, colors, thermal_vision, light_map);
-        chunk.clear_dirty();
-
-        if chunk_mesh.is_empty() {
-            commands
-                .entity(entity)
-                .remove::<Mesh3d>()
-                .remove::<MeshMaterial3d<StandardMaterial>>()
-                .remove::<ChunkMeshMarker>()
-                .insert(ChunkLod(new_level));
+        if result.mesh.is_empty() {
+            if had_mesh {
+                commands
+                    .entity(entity)
+                    .remove::<Mesh3d>()
+                    .remove::<MeshMaterial3d<StandardMaterial>>()
+                    .remove::<ChunkMeshMarker>()
+                    .insert(ChunkLod(new_level));
+            } else {
+                commands.entity(entity).insert(ChunkLod(new_level));
+            }
         } else {
-            let bevy_mesh = chunk_mesh_to_bevy_mesh(&chunk_mesh);
+            let bevy_mesh = chunk_mesh_to_bevy_mesh(&result.mesh);
             let mesh_handle = meshes.add(bevy_mesh);
             let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
             let mut cmds = commands.entity(entity);
@@ -773,13 +799,20 @@ pub fn mesh_dirty_chunks(
                 .insert(ChunkLod(new_level))
                 .insert(MeshMaterial3d(mat));
 
+            if !had_mesh {
+                cmds.insert(ChunkMeshMarker);
+            }
+
             if lod_changed {
                 cmds.insert(LodTransition {
-                    previous_level: current_level,
+                    previous_level,
                     factor: 0.0,
                 });
             }
         }
+
+        // Remove the task component so the entity can be re-dispatched later.
+        commands.entity(entity).remove::<MeshTask>();
     }
 }
 
@@ -886,7 +919,7 @@ impl Plugin for MeshingPlugin {
         app.init_resource::<ThermalVisionMode>().add_systems(
             Update,
             (
-                mesh_dirty_chunks,
+                (dispatch_mesh_tasks, collect_mesh_results).chain(),
                 tick_lod_transitions,
                 toggle_thermal_vision,
             )
@@ -1288,6 +1321,103 @@ mod tests {
                 (color[3] - 1.0).abs() < f32::EPSILON,
                 "Heatmap alpha should always be 1.0"
             );
+        }
+    }
+
+    // --- Async meshing dispatch/collect tests ---
+
+    #[test]
+    fn dispatch_respects_budget() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<ThermalVisionMode>();
+        app.insert_resource(LodConfig::default());
+        app.insert_resource(MaterialColorMap::from_defaults());
+        app.add_systems(Update, dispatch_mesh_tasks);
+
+        // Spawn more dirty chunks than the per-frame budget.
+        let count = MAX_MESH_DISPATCHES_PER_FRAME + 4;
+        for i in 0..count as i32 {
+            let chunk = Chunk::new_filled(ChunkCoord::new(i, 0, 0), MaterialId::STONE);
+            app.world_mut().spawn((chunk, ChunkCoord::new(i, 0, 0)));
+        }
+
+        app.update();
+
+        let task_count = app
+            .world_mut()
+            .query::<&MeshTask>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            task_count, MAX_MESH_DISPATCHES_PER_FRAME,
+            "Should dispatch exactly {} tasks, got {}",
+            MAX_MESH_DISPATCHES_PER_FRAME, task_count,
+        );
+    }
+
+    #[test]
+    fn clean_chunks_not_dispatched() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<ThermalVisionMode>();
+        app.insert_resource(LodConfig::default());
+        app.insert_resource(MaterialColorMap::from_defaults());
+        app.add_systems(Update, dispatch_mesh_tasks);
+
+        // Spawn clean (non-dirty) chunks.
+        for i in 0..4i32 {
+            let mut chunk = Chunk::new_filled(ChunkCoord::new(i, 0, 0), MaterialId::STONE);
+            chunk.clear_dirty();
+            app.world_mut().spawn((chunk, ChunkCoord::new(i, 0, 0)));
+        }
+
+        app.update();
+
+        let task_count = app
+            .world_mut()
+            .query::<&MeshTask>()
+            .iter(app.world())
+            .count();
+        assert_eq!(task_count, 0, "Clean chunks should not be dispatched");
+    }
+
+    #[test]
+    fn mesh_result_has_correct_lod() {
+        // Verify that generate_chunk_mesh at various LOD levels produces
+        // meshes consistent with the direct LOD functions, and that the
+        // lod_level field in ChunkMeshResult would carry through correctly.
+        let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE / 2 {
+                    chunk.set_material(x, y, z, MaterialId::STONE);
+                }
+            }
+        }
+
+        for level_val in [0u8, 1, 2] {
+            let level = LodLevel(level_val);
+            let step = lod_step(level);
+            let mesh = generate_chunk_mesh(&chunk, None, step, None, false, None);
+            let direct = if step <= 1 {
+                generate_mesh(&chunk)
+            } else {
+                generate_mesh_lod(&chunk, step)
+            };
+            assert_eq!(
+                mesh.vertex_count(),
+                direct.vertex_count(),
+                "LOD {} mesh vertex count should match direct generation",
+                level_val,
+            );
+
+            // Simulate what ChunkMeshResult would store.
+            let result = ChunkMeshResult {
+                mesh,
+                lod_level: level_val,
+            };
+            assert_eq!(result.lod_level, level_val);
         }
     }
 }

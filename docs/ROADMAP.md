@@ -118,8 +118,10 @@ to an integrated, camera-aware system:
   fallback. All mesh generation paths now accept `Option<&MaterialColorMap>`,
   replacing duplicate color tables.
 - **LOD-aware meshing** — `ChunkLod` component tracks per-chunk LOD level.
-  `mesh_dirty_chunks` queries the camera, computes LOD with hysteresis, and
-  calls `generate_mesh_lod` with stride = 2^level. Remeshes only on LOD change.
+  `dispatch_mesh_tasks` queries the camera, computes LOD with hysteresis, and
+  spawns async tasks via `AsyncComputeTaskPool` with stride = 2^level.
+  `collect_mesh_results` polls completed tasks and inserts Bevy mesh components.
+  Remeshes only on LOD change.
 - **Refinement wired up** — `build_refined_octree` now uses `RefinementAnalysis`:
   candidate cells (surface crossings, material boundaries, gradients) are pinned
   at leaf resolution via `tree.set()`, preventing collapse of feature-rich regions.

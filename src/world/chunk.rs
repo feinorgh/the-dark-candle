@@ -220,6 +220,20 @@ impl Chunk {
     pub fn flat_snapshot(&self) -> Vec<Voxel> {
         self.voxels.clone()
     }
+
+    /// Reconstruct a chunk from a previously-snapshotted voxel array.
+    ///
+    /// Used by async mesh tasks that receive owned voxel data and need a
+    /// `Chunk` to pass to the meshing functions.  The dirty flag is `false`
+    /// because this is a read-only copy, not an authoritative chunk.
+    pub fn from_snapshot(coord: ChunkCoord, voxels: Vec<Voxel>) -> Self {
+        debug_assert_eq!(voxels.len(), CHUNK_VOLUME);
+        Self {
+            coord,
+            voxels,
+            dirty: false,
+        }
+    }
 }
 
 impl VoxelAccess for Chunk {
