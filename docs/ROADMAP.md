@@ -1599,7 +1599,7 @@ lit by the day-night sun cycle with terrain self-shadowing.
 - The world feels inhabited and textured with scattered natural objects
 - Lighting sells the scene with depth via shadows
 
-### Gap 1 — Procedural Valley & Channel Carving *(in progress)*
+### Gap 1 — Procedural Valley & Channel Carving ✅
 
 **Problem:** Terrain is pure Perlin noise — no valleys, ridges, or river
 channels. Noise alone cannot produce the directed, branching drainage patterns
@@ -1647,35 +1647,28 @@ logic.
 **Scope:** Flat terrain mode only (Phase 1). Spherical mode support deferred
 to a future pass (requires tangent-plane projection for flow routing).
 
-### Gap 2 — AMR Fluid Visual Surface & Plugin Activation
+### Gap 2 — AMR Fluid Visual Surface & Plugin Activation ✅
 
 **Problem:** `AmrFluidPlugin` exists but is not registered in `PhysicsPlugin`.
 The AMR simulation runs but its free surface is never extracted into a
 renderable mesh. Water voxels are static blocks with no flow.
 
-**Approach:**
+**Completed:**
 
-1. **Activate `AmrFluidPlugin`** — register it in `PhysicsPlugin::build()`
+1. **Activated `AmrFluidPlugin`** — registered in `PhysicsPlugin::build()`
    alongside `LbmGasPlugin` and `FlipPicPlugin`.
-2. **Seed river flow** — when a chunk contains carved river channel voxels
-   (from Gap 1), initialize the corresponding `FluidGrid` cells as FLUID
-   with a velocity vector pointing downstream (derived from the channel
-   gradient).
-3. **Free surface extraction** — new system that reads `FluidGrid` SURFACE
-   cells and writes their positions into the chunk's voxel data as
-   `MaterialId::WATER` with a fluid-fraction field (0.0–1.0) for partial
-   fill. The meshing system already handles water material.
-4. **Flow-aware vertex animation** (stretch goal) — pass the fluid velocity
-   field to the mesh shader as a per-vertex attribute. Animate UV
-   coordinates or vertex displacement along the flow direction to give
-   visual motion without re-meshing every frame.
-5. **Boundary conditions** — upstream chunk edges inject fluid at a
-   configurable flow rate; downstream edges drain. River flow is sustained
-   by continuous injection, not a finite volume that drains away.
+2. **River flow seeding** — `seed_river_flow` system reads FlowMap direction
+   for each WATER voxel in newly added chunks, sets initial velocity on
+   the corresponding `FluidGrid` cells. Uses `NeedsFluidSeeding` marker
+   component for one-shot execution.
+3. **Boundary injection** — `inject_river_sources` system runs every tick,
+   re-injects fluid at upstream boundary faces where the FlowMap indicates
+   high flow. Sustains river flow without finite-volume drain-away.
+4. **`FluidState::coords()`** accessor for iterating active fluid chunks.
+5. **`UnifiedTerrainGenerator::flow_map()`** accessor for erosion FlowMap.
 
-**Location:** Extend `src/physics/amr_fluid/plugin.rs` for activation.
-New `src/world/fluid_surface.rs` for extraction. Meshing changes in
-`src/world/meshing.rs`.
+**Location:** `src/physics/amr_fluid/injection.rs` (new), changes in
+`plugin.rs`, `mod.rs`, `chunk_manager.rs`, `terrain.rs`.
 
 **Dependencies:** AMR fluid (Phase 3), terrain carving (Gap 1), meshing
 (Phase 1).
@@ -1718,16 +1711,15 @@ chunk despawn. Duplicate decoration prevented by component lifecycle.
 Gap 3 (PropData) ──→ Gap 5 (Spawn ECS) ──────────────────── ✅ Done
 Gap 4 (Terrain shadows) ─────────────────────────────────── ✅ Done
 Gap 1 (Valley carving) ──→ Gap 2 (Water surface) ──→ Scene integration
-         ↑ in progress           ↑ remaining
+         ✅ Done                   ✅ Done              ↑ remaining
 ```
 
 - **Gap 3 + 5** completed: prop data, scattering, and ECS spawning.
 - **Gap 4** completed: terrain shadow casting with soft penumbra.
-- **Gap 1** in progress: D8 flow accumulation + valley carving. Plan
-  finalized, implementation ready.
-- **Gap 2** remaining: AMR fluid activation + visual surface extraction.
-  Requires Gap 1 (carved channels to seed fluid).
-- **Scene integration** is the final step once all gaps are closed.
+- **Gap 1** completed: D8 flow accumulation + valley carving (commit `358f097`).
+- **Gap 2** completed: AMR fluid plugin activation + river seeding + boundary
+  injection.
+- **Scene integration** is the final step — all gaps are now closed.
 
 ### Success Criteria
 

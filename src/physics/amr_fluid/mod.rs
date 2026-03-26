@@ -12,6 +12,7 @@
 
 pub mod advection;
 pub mod diffusion;
+pub mod injection;
 pub mod octree_bridge;
 pub mod plugin;
 pub mod pressure;

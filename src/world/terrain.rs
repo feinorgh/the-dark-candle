@@ -123,7 +123,7 @@ impl TerrainGenerator {
     /// The flow map covers a square region centered at the world origin. It is
     /// built from `sample_height()` on a coarse grid and reused for all
     /// subsequent chunk generations.
-    fn get_or_compute_flow_map(&self) -> &FlowMap {
+    pub fn get_or_compute_flow_map(&self) -> &FlowMap {
         self.flow_map.get_or_init(|| {
             // Build a temporary generator with the same config to avoid
             // borrowing `self` inside the closure (OnceLock requires &self).
@@ -419,6 +419,17 @@ impl UnifiedTerrainGenerator {
         match self {
             Self::Flat(g) => Some(g.config()),
             Self::Spherical(_) => None,
+        }
+    }
+
+    /// Access the cached flow-accumulation map (flat mode only).
+    ///
+    /// Returns `None` in spherical mode or if erosion is disabled.
+    /// Triggers lazy computation on first call.
+    pub fn flow_map(&self) -> Option<&FlowMap> {
+        match self {
+            Self::Flat(g) if g.config().erosion.enabled => Some(g.get_or_compute_flow_map()),
+            _ => None,
         }
     }
 }

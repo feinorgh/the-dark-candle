@@ -226,6 +226,7 @@ pub fn update_chunks(
                     ChunkActivity::default(),
                     crate::procgen::props::NeedsDecoration,
                     crate::procgen::props::ChunkProps::default(),
+                    crate::physics::amr_fluid::injection::NeedsFluidSeeding,
                     Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
                 ))
                 .id();

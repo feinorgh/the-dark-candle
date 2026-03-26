@@ -36,6 +36,7 @@ impl Plugin for PhysicsPlugin {
             RigidBodyPlugin,
             lbm_gas::LbmGasPlugin,
             flip_pic::FlipPicPlugin,
+            amr_fluid::AmrFluidPlugin,
         ));
     }
 }

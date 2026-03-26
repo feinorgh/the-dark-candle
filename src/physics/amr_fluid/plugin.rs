@@ -11,6 +11,7 @@ use crate::world::chunk::{Chunk, ChunkCoord};
 use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
+use super::injection;
 use super::step;
 use super::sync;
 use super::types::FluidGrid;
@@ -50,6 +51,11 @@ impl FluidState {
     pub fn is_empty(&self) -> bool {
         self.grids.is_empty()
     }
+
+    /// Iterate over all chunk coordinates with active fluid grids.
+    pub fn coords(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.grids.keys().copied()
+    }
 }
 
 #[derive(Resource, Default)]
@@ -69,7 +75,14 @@ impl Plugin for AmrFluidPlugin {
             .init_resource::<FluidTick>()
             .add_systems(
                 FixedUpdate,
-                (init_fluid_grids, amr_fluid_step, cleanup_empty_fluid_grids).chain(),
+                (
+                    init_fluid_grids,
+                    injection::seed_river_flow,
+                    injection::inject_river_sources,
+                    amr_fluid_step,
+                    cleanup_empty_fluid_grids,
+                )
+                    .chain(),
             );
     }
 }
