@@ -281,6 +281,8 @@ fn lbm_gas_step(
     time: Res<Time>,
     atmosphere_config: Option<Res<AtmosphereConfig>>,
     planet_config: Option<Res<PlanetConfig>>,
+    lod_config: Res<crate::physics::PhysicsLodConfig>,
+    camera_q: Query<&Transform, With<Camera3d>>,
 ) {
     if !config.0.lbm_enabled {
         return;
@@ -334,7 +336,22 @@ fn lbm_gas_step(
     let coords: Vec<ChunkCoord> = lbm_state.grids.keys().cloned().collect();
     let n_steps = config.0.lbm_steps_per_tick.max(1);
 
+    let camera_chunk = camera_q.iter().next().map(|t| {
+        ChunkCoord::from_voxel_pos(
+            t.translation.x as i32,
+            t.translation.y as i32,
+            t.translation.z as i32,
+        )
+    });
+
     for coord in coords {
+        // Physics LOD: skip chunks outside the active radius.
+        if let Some(ref cam) = camera_chunk
+            && !lod_config.is_active(&coord, cam)
+        {
+            continue;
+        }
+
         let Some(grid) = lbm_state.grids.get_mut(&coord) else {
             continue;
         };

@@ -87,6 +87,10 @@ pub struct ShadowConfig {
     pub cone_half_angle_degrees: f32,
     /// Whether terrain shadows are enabled.
     pub enabled: bool,
+    /// Maximum number of chunk shadow updates per frame. 0 = unlimited.
+    /// Spreads shadow recomputation across multiple frames when the sun
+    /// angle crosses the threshold, avoiding a single-frame spike.
+    pub max_updates_per_frame: usize,
 }
 
 impl Default for ShadowConfig {
@@ -96,6 +100,7 @@ impl Default for ShadowConfig {
             shadow_samples: 3,
             cone_half_angle_degrees: 1.5,
             enabled: true,
+            max_updates_per_frame: 8,
         }
     }
 }
@@ -105,6 +110,13 @@ impl Default for ShadowConfig {
 pub struct LastShadowAngles {
     pub elevation: f32,
     pub azimuth: f32,
+}
+
+/// Entities awaiting shadow recomputation, filled when the sun angle
+/// crosses the threshold and drained over multiple frames.
+#[derive(Resource, Default)]
+struct PendingShadowUpdates {
+    entities: Vec<Entity>,
 }
 
 /// System: advance the orbital state and sync TimeOfDay for backward compatibility.
@@ -267,6 +279,11 @@ fn spawn_lights(
 }
 
 /// System: recompute terrain shadows when the sun moves significantly.
+///
+/// When the sun angle crosses the configured threshold, all chunk entities
+/// are queued into `PendingShadowUpdates`. Each frame, at most
+/// `max_updates_per_frame` chunks are recomputed, spreading the cost.
+#[allow(clippy::too_many_arguments)]
 fn update_terrain_shadows(
     sun_dir: Res<SunDirection>,
     shadow_config: Res<ShadowConfig>,
@@ -274,7 +291,9 @@ fn update_terrain_shadows(
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
     registry: Option<Res<crate::data::MaterialRegistry>>,
+    mut pending: ResMut<PendingShadowUpdates>,
     mut chunk_q: Query<(
+        Entity,
         &mut crate::world::chunk::Chunk,
         &mut light_map::ChunkLightMap,
     )>,
@@ -292,28 +311,43 @@ fn update_terrain_shadows(
     );
     let azimuth = orbital_state.rotation_angle as f32;
 
-    // Check angle threshold.
+    // Check angle threshold — enqueue all chunks when crossed.
     let elev_delta = (elevation - last_angles.elevation).abs().to_degrees();
     let azim_delta = (azimuth - last_angles.azimuth).abs().to_degrees();
-    if elev_delta < shadow_config.angle_threshold_degrees
-        && azim_delta < shadow_config.angle_threshold_degrees
+    if elev_delta >= shadow_config.angle_threshold_degrees
+        || azim_delta >= shadow_config.angle_threshold_degrees
     {
-        return;
+        last_angles.elevation = elevation;
+        last_angles.azimuth = azimuth;
+
+        pending.entities.clear();
+        pending
+            .entities
+            .extend(chunk_q.iter().map(|(entity, _, _)| entity));
     }
 
-    last_angles.elevation = elevation;
-    last_angles.azimuth = azimuth;
+    // Process a batch of pending shadow updates this frame.
+    let limit = if shadow_config.max_updates_per_frame == 0 {
+        pending.entities.len()
+    } else {
+        shadow_config
+            .max_updates_per_frame
+            .min(pending.entities.len())
+    };
+    let batch: Vec<Entity> = pending.entities.drain(..limit).collect();
 
-    for (mut chunk, mut light_map) in &mut chunk_q {
-        shadows::compute_terrain_shadows(
-            chunk.voxels(),
-            light_map.size(),
-            sun_dir.0,
-            shadow_config.shadow_samples,
-            shadow_config.cone_half_angle_degrees,
-            &mut light_map,
-        );
-        chunk.mark_dirty();
+    for entity in batch {
+        if let Ok((_, mut chunk, mut light_map)) = chunk_q.get_mut(entity) {
+            shadows::compute_terrain_shadows(
+                chunk.voxels(),
+                light_map.size(),
+                sun_dir.0,
+                shadow_config.shadow_samples,
+                shadow_config.cone_half_angle_degrees,
+                &mut light_map,
+            );
+            chunk.mark_dirty();
+        }
     }
 }
 
@@ -335,6 +369,7 @@ impl Plugin for LightingPlugin {
             .init_resource::<SunDirection>()
             .init_resource::<ShadowConfig>()
             .init_resource::<LastShadowAngles>()
+            .init_resource::<PendingShadowUpdates>()
             .add_systems(Startup, spawn_lights)
             .add_systems(
                 Update,

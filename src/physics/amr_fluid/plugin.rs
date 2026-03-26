@@ -105,6 +105,7 @@ fn init_fluid_grids(chunks: Query<&Chunk, Added<Chunk>>, mut fluid_state: ResMut
 }
 
 /// Run one AMR fluid simulation step for all active fluid chunks.
+#[allow(clippy::too_many_arguments)]
 fn amr_fluid_step(
     mut chunks: Query<&mut Chunk>,
     chunk_map: Option<Res<ChunkMap>>,
@@ -112,6 +113,8 @@ fn amr_fluid_step(
     mut fluid_state: ResMut<FluidState>,
     mut tick: ResMut<FluidTick>,
     time: Res<Time>,
+    lod_config: Res<crate::physics::PhysicsLodConfig>,
+    camera_q: Query<&Transform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -125,7 +128,22 @@ fn amr_fluid_step(
 
     let coords: Vec<ChunkCoord> = fluid_state.grids.keys().cloned().collect();
 
+    let camera_chunk = camera_q.iter().next().map(|t| {
+        ChunkCoord::from_voxel_pos(
+            t.translation.x as i32,
+            t.translation.y as i32,
+            t.translation.z as i32,
+        )
+    });
+
     for coord in coords {
+        // Physics LOD: skip chunks outside the active radius.
+        if let Some(ref cam) = camera_chunk
+            && !lod_config.is_active(&coord, cam)
+        {
+            continue;
+        }
+
         let Some(grid) = fluid_state.grids.get_mut(&coord) else {
             continue;
         };

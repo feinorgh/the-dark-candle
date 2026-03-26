@@ -84,6 +84,7 @@ fn init_particle_buffers(chunks: Query<&Chunk, Added<Chunk>>, mut state: ResMut<
 }
 
 /// Run FLIP/PIC particle simulation for all active chunks.
+#[allow(clippy::too_many_arguments)]
 fn flip_particle_step(
     mut chunks: Query<&mut Chunk>,
     chunk_map: Option<Res<ChunkMap>>,
@@ -91,6 +92,8 @@ fn flip_particle_step(
     mut state: ResMut<ParticleState>,
     mut tick: ResMut<FlipTick>,
     time: Res<Time>,
+    lod_config: Res<crate::physics::PhysicsLodConfig>,
+    camera_q: Query<&Transform, With<Camera3d>>,
 ) {
     if !config.0.flip_enabled {
         return;
@@ -110,6 +113,14 @@ fn flip_particle_step(
 
     let coords: Vec<ChunkCoord> = state.buffers.keys().cloned().collect();
 
+    let camera_chunk = camera_q.iter().next().map(|t| {
+        ChunkCoord::from_voxel_pos(
+            t.translation.x as i32,
+            t.translation.y as i32,
+            t.translation.z as i32,
+        )
+    });
+
     // Destructure to allow simultaneous mutable borrows of both HashMap fields.
     let ParticleState {
         buffers,
@@ -117,6 +128,13 @@ fn flip_particle_step(
     } = &mut *state;
 
     for coord in coords {
+        // Physics LOD: skip chunks outside the active radius.
+        if let Some(ref cam) = camera_chunk
+            && !lod_config.is_active(&coord, cam)
+        {
+            continue;
+        }
+
         let Some(entity) = chunk_map.get(&coord) else {
             continue;
         };
