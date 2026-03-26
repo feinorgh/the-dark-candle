@@ -5,6 +5,7 @@
 // resource for future solar heating integration.
 
 pub mod light_map;
+pub mod scattering;
 pub mod sky;
 
 use bevy::prelude::*;
