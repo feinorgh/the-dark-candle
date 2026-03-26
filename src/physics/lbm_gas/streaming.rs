@@ -83,7 +83,7 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
         }
     }
 
-    // Preserve material and tag info for gas cells
+    // Preserve material, tag, and scalar fields for gas cells
     for idx in 0..grid.cells().len() {
         let cell = &grid.cells()[idx];
         if cell.is_gas() {
@@ -92,7 +92,95 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
         }
     }
 
+    // Advect moisture and cloud_lwc as passive scalars using upwind scheme.
+    // Each gas cell's scalars move in the direction of its macroscopic velocity.
+    advect_scalars(grid, &mut out);
+
     out
+}
+
+/// Advect moisture and cloud_lwc using first-order upwind from macroscopic velocity.
+///
+/// For each gas cell, the scalar value is distributed to downstream neighbors
+/// proportionally to the velocity-weighted flux through each face. This is
+/// simpler than a full scalar-LBM but sufficient for humidity transport.
+fn advect_scalars(src: &LbmGrid, dst: &mut LbmGrid) {
+    let size = src.size();
+
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let cell = src.get(x, y, z);
+                if !cell.is_gas() {
+                    continue;
+                }
+
+                let u = cell.velocity();
+                let speed = u[0].abs() + u[1].abs() + u[2].abs();
+
+                if speed < 1e-12 || (cell.moisture < 1e-12 && cell.cloud_lwc < 1e-12) {
+                    // No velocity or nothing to transport — keep in place
+                    let idx = src.index(x, y, z);
+                    dst.cells_mut()[idx].moisture += cell.moisture;
+                    dst.cells_mut()[idx].cloud_lwc += cell.cloud_lwc;
+                    continue;
+                }
+
+                // Fraction transported = min(speed, 1.0) to maintain stability
+                let transport_frac = speed.min(1.0);
+                let remain_frac = 1.0 - transport_frac;
+
+                // Keep remainder in place
+                let idx = src.index(x, y, z);
+                dst.cells_mut()[idx].moisture += cell.moisture * remain_frac;
+                dst.cells_mut()[idx].cloud_lwc += cell.cloud_lwc * remain_frac;
+
+                // Distribute transported fraction along velocity components
+                let dirs: [(i32, i32, i32, f32); 6] = [
+                    (1, 0, 0, u[0].max(0.0)),
+                    (-1, 0, 0, (-u[0]).max(0.0)),
+                    (0, 1, 0, u[1].max(0.0)),
+                    (0, -1, 0, (-u[1]).max(0.0)),
+                    (0, 0, 1, u[2].max(0.0)),
+                    (0, 0, -1, (-u[2]).max(0.0)),
+                ];
+
+                for (dx, dy, dz, flux) in dirs {
+                    if flux < 1e-12 {
+                        continue;
+                    }
+                    let weight = flux / speed;
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    let nz = z as i32 + dz;
+
+                    if nx < 0
+                        || nx >= size as i32
+                        || ny < 0
+                        || ny >= size as i32
+                        || nz < 0
+                        || nz >= size as i32
+                    {
+                        // Boundary: keep scalar in place
+                        dst.cells_mut()[idx].moisture += cell.moisture * transport_frac * weight;
+                        dst.cells_mut()[idx].cloud_lwc += cell.cloud_lwc * transport_frac * weight;
+                        continue;
+                    }
+
+                    let neighbor = src.get(nx as usize, ny as usize, nz as usize);
+                    if neighbor.is_wall() {
+                        // Wall: keep scalar in place (no penetration)
+                        dst.cells_mut()[idx].moisture += cell.moisture * transport_frac * weight;
+                        dst.cells_mut()[idx].cloud_lwc += cell.cloud_lwc * transport_frac * weight;
+                    } else {
+                        let nidx = src.index(nx as usize, ny as usize, nz as usize);
+                        dst.cells_mut()[nidx].moisture += cell.moisture * transport_frac * weight;
+                        dst.cells_mut()[nidx].cloud_lwc += cell.cloud_lwc * transport_frac * weight;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

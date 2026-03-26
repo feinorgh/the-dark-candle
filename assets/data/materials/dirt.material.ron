@@ -20,6 +20,7 @@ MaterialData(
     youngs_modulus: Some(50000000.0),
     heat_of_combustion: None,
     molar_mass: None,
+    albedo: 0.20,
     // No liquid dirt material — transition disabled
     melted_into: None,
     boiled_into: None,

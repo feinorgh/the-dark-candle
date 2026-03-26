@@ -19,5 +19,6 @@ MaterialData(
     restitution: 0.3,
     youngs_modulus: Some(12000000000.0),
     heat_of_combustion: Some(15000000.0),
+    albedo: 0.25,
     molar_mass: None,
 )

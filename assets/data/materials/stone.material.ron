@@ -20,6 +20,7 @@ MaterialData(
     youngs_modulus: Some(50000000000.0),
     heat_of_combustion: None,
     molar_mass: None,
+    albedo: 0.30,
     melted_into: Some("Lava"),
     // No gaseous rock material
     boiled_into: None,

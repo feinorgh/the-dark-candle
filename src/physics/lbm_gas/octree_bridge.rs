@@ -28,6 +28,7 @@ pub fn lbm_step_octree(
     config: &FluidConfig,
     gravity_lattice: [f32; 3],
     rho_ambient: f32,
+    coriolis_omega: Option<[f32; 3]>,
 ) -> (OctreeNode<Voxel>, usize) {
     let mut flat = octree_to_flat(tree, size);
 
@@ -43,7 +44,14 @@ pub fn lbm_step_octree(
     }
 
     let n_steps = config.lbm_steps_per_tick.max(1);
-    step::lbm_step_n(&mut grid, config, gravity_lattice, rho_ambient, n_steps);
+    step::lbm_step_n(
+        &mut grid,
+        config,
+        gravity_lattice,
+        rho_ambient,
+        coriolis_omega,
+        n_steps,
+    );
 
     let changed = sync_grid_to_flat(&grid, &mut flat, size);
 
@@ -105,7 +113,7 @@ mod tests {
         let tree = OctreeNode::new_leaf(Voxel::default());
         let config = FluidConfig::default();
 
-        let (result, changed) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0);
+        let (result, changed) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0, None);
         assert_eq!(changed, 0);
         assert!(result.is_leaf());
     }
@@ -122,7 +130,7 @@ mod tests {
         let tree = flat_to_octree(&voxels, size);
         let config = FluidConfig::default();
 
-        let (result, _changed) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0);
+        let (result, _changed) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0, None);
 
         // Should produce a valid octree
         let result_flat = octree_to_flat(&result, size);
@@ -147,7 +155,7 @@ mod tests {
         let tree = flat_to_octree(&voxels, size);
         let config = FluidConfig::default();
 
-        let (result, _) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0);
+        let (result, _) = lbm_step_octree(&tree, size, &config, [0.0; 3], 1.0, None);
         let result_flat = octree_to_flat(&result, size);
 
         assert_eq!(result_flat[0].material, MaterialId::STONE);

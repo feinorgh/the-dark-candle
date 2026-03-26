@@ -20,6 +20,7 @@ MaterialData(
     youngs_modulus: Some(70000000000.0),
     heat_of_combustion: None,
     molar_mass: None,
+    albedo: 0.40,
     // Sand melts into glass in reality — no Glass material yet
     melted_into: None,
     boiled_into: None,

@@ -7,6 +7,7 @@
 pub mod collision;
 pub mod lattice;
 pub mod macroscopic;
+pub mod moisture;
 pub mod octree_bridge;
 pub mod plugin;
 pub mod step;

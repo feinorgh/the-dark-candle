@@ -25,7 +25,7 @@ pub enum GasCellTag {
 
 /// Per-cell LBM state. Stores the 19 distribution functions plus metadata.
 ///
-/// Size: 19 × 4 + 2 + padding ≈ 80 bytes per cell.
+/// Size: 19 × 4 + 2 + 4 + 4 + padding ≈ 88 bytes per cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LbmCell {
     /// Distribution functions for D3Q19 lattice.
@@ -34,6 +34,10 @@ pub struct LbmCell {
     pub material: MaterialId,
     /// Cell classification for boundary conditions.
     pub tag: GasCellTag,
+    /// Water vapor mixing ratio (kg vapor / kg dry air). Advected as passive scalar.
+    pub moisture: f32,
+    /// Liquid water content from condensation (kg/m³). Cloud density field.
+    pub cloud_lwc: f32,
 }
 
 impl Default for LbmCell {
@@ -42,6 +46,8 @@ impl Default for LbmCell {
             f: lattice::equilibrium(1.0, [0.0; 3]),
             material: MaterialId::AIR,
             tag: GasCellTag::Gas,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         }
     }
 }
@@ -53,6 +59,19 @@ impl LbmCell {
             f: lattice::equilibrium(rho, [0.0; 3]),
             material,
             tag: GasCellTag::Gas,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
+        }
+    }
+
+    /// Create a gas cell with initial moisture content.
+    pub fn new_gas_moist(material: MaterialId, rho: f32, moisture: f32) -> Self {
+        Self {
+            f: lattice::equilibrium(rho, [0.0; 3]),
+            material,
+            tag: GasCellTag::Gas,
+            moisture,
+            cloud_lwc: 0.0,
         }
     }
 
@@ -62,6 +81,8 @@ impl LbmCell {
             f: [0.0; Q],
             material,
             tag: GasCellTag::Solid,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         }
     }
 
@@ -71,6 +92,8 @@ impl LbmCell {
             f: [0.0; Q],
             material,
             tag: GasCellTag::Liquid,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         }
     }
 
@@ -316,6 +339,8 @@ mod tests {
             f: lattice::equilibrium(1.0, u_in),
             material: MaterialId::AIR,
             tag: GasCellTag::Gas,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         };
         let u_out = cell.velocity();
         for d in 0..3 {
@@ -409,7 +434,7 @@ mod tests {
     #[test]
     fn lbm_cell_size_is_reasonable() {
         let sz = std::mem::size_of::<LbmCell>();
-        // 19 f32 (76) + MaterialId (2) + GasCellTag (1) + padding ≈ 80
-        assert!(sz <= 84, "LbmCell is {sz} bytes, expected ≤84");
+        // 19 f32 (76) + 2 f32 (moisture, cloud_lwc) (8) + MaterialId (2) + GasCellTag (1) + padding ≈ 88
+        assert!(sz <= 92, "LbmCell is {sz} bytes, expected ≤92");
     }
 }

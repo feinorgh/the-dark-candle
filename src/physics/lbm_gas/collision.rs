@@ -119,6 +119,8 @@ mod tests {
             f: lattice::equilibrium(rho, u_in),
             material: MaterialId::AIR,
             tag: crate::physics::lbm_gas::types::GasCellTag::Gas,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         };
         collide_bgk(&mut cell, 0.6);
         let u_out = cell.velocity();
@@ -141,6 +143,8 @@ mod tests {
             f: f_eq,
             material: MaterialId::AIR,
             tag: crate::physics::lbm_gas::types::GasCellTag::Gas,
+            moisture: 0.0,
+            cloud_lwc: 0.0,
         };
         collide_bgk(&mut cell, 0.6);
         // Should remain at equilibrium

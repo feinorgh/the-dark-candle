@@ -48,6 +48,10 @@ pub enum Phase {
     Gas,
 }
 
+fn default_albedo() -> f32 {
+    0.3
+}
+
 /// Physical and chemical properties of a material, loaded from `.material.ron`.
 /// The `id` field maps to `MaterialId` in the voxel system.
 ///
@@ -156,6 +160,12 @@ pub struct MaterialData {
     /// `None` = derive from scalar absorption_coefficient (equal on all channels).
     #[serde(default)]
     pub absorption_rgb: Option<[f32; 3]>,
+    /// Surface albedo (fraction of incident solar radiation reflected).
+    /// Range 0.0–1.0. Default: 0.3.
+    /// Low values (dark surfaces) absorb more heat.
+    /// Water ≈ 0.06, snow/ice ≈ 0.8, soil ≈ 0.2, stone ≈ 0.3.
+    #[serde(default = "default_albedo")]
+    pub albedo: f32,
 
     // --- Phase transition targets ---
     /// Material name this becomes when heated above melting_point (solid → liquid).

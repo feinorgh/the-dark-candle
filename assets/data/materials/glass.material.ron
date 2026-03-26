@@ -24,6 +24,7 @@ MaterialData(
     molar_mass: None,
     refractive_index: Some(1.52),
     reflectivity: Some(0.04),
+    albedo: 0.30,
     melted_into: None,
     boiled_into: None,
     frozen_into: None,

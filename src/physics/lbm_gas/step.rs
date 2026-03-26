@@ -19,21 +19,41 @@ use super::types::LbmGrid;
 ///
 /// The grid is modified in place for collision/forcing, then replaced
 /// by the streamed result.
+///
+/// # Arguments
+/// * `coriolis_omega` - Optional planetary rotation vector in lattice units (ω × rotation_axis).
+///   `None` disables Coriolis forcing.
 pub fn lbm_step(
     grid: &mut LbmGrid,
     config: &FluidConfig,
     gravity_lattice: [f32; 3],
     rho_ambient: f32,
+    coriolis_omega: Option<[f32; 3]>,
 ) {
     let tau = config.lbm_tau;
     let cs_smag = config.lbm_smagorinsky_cs;
 
-    // 1. Apply buoyancy forcing to each gas cell
+    // 1. Apply buoyancy and Coriolis forcing to each gas cell
     for cell in grid.cells_mut() {
         if cell.is_gas() {
             let rho = cell.density();
-            let force = macroscopic::buoyancy_force(rho, rho_ambient, gravity_lattice);
-            // Only apply if there's a meaningful density difference
+            let mut force = macroscopic::buoyancy_force(rho, rho_ambient, gravity_lattice);
+
+            // Add Coriolis force: F = -2ρ(ω × v)
+            if let Some(omega) = coriolis_omega {
+                let u = cell.velocity();
+                // Cross product: omega × velocity
+                let coriolis = [
+                    -2.0 * rho * (omega[1] * u[2] - omega[2] * u[1]),
+                    -2.0 * rho * (omega[2] * u[0] - omega[0] * u[2]),
+                    -2.0 * rho * (omega[0] * u[1] - omega[1] * u[0]),
+                ];
+                force[0] += coriolis[0];
+                force[1] += coriolis[1];
+                force[2] += coriolis[2];
+            }
+
+            // Only apply if there's a meaningful force
             let f_mag = force[0] * force[0] + force[1] * force[1] + force[2] * force[2];
             if f_mag > 1e-20 {
                 macroscopic::apply_guo_forcing(cell, force, tau);
@@ -61,10 +81,11 @@ pub fn lbm_step_n(
     config: &FluidConfig,
     gravity_lattice: [f32; 3],
     rho_ambient: f32,
+    coriolis_omega: Option<[f32; 3]>,
     n_steps: usize,
 ) {
     for _ in 0..n_steps {
-        lbm_step(grid, config, gravity_lattice, rho_ambient);
+        lbm_step(grid, config, gravity_lattice, rho_ambient, coriolis_omega);
     }
 }
 
@@ -78,7 +99,7 @@ pub fn max_mach_number(grid: &LbmGrid) -> f32 {
 mod tests {
     use super::*;
     use crate::physics::lbm_gas::lattice;
-    use crate::physics::lbm_gas::types::{LbmCell, LbmGrid};
+    use crate::physics::lbm_gas::types::{GasCellTag, LbmCell, LbmGrid};
     use crate::world::voxel::MaterialId;
 
     fn test_config() -> FluidConfig {
@@ -151,7 +172,7 @@ mod tests {
         let gravity_lattice = [0.0, -0.001, 0.0];
 
         for _ in 0..20 {
-            lbm_step(&mut grid, &config, gravity_lattice, rho_ambient);
+            lbm_step(&mut grid, &config, gravity_lattice, rho_ambient, None);
         }
 
         // The lighter gas should develop upward velocity.
@@ -258,11 +279,11 @@ mod tests {
 
         // 3 single steps
         for _ in 0..3 {
-            lbm_step(&mut grid1, &config, [0.0; 3], 1.0);
+            lbm_step(&mut grid1, &config, [0.0; 3], 1.0, None);
         }
 
         // 1 call with n=3
-        lbm_step_n(&mut grid2, &config, [0.0; 3], 1.0, 3);
+        lbm_step_n(&mut grid2, &config, [0.0; 3], 1.0, None, 3);
 
         // Should be identical
         for idx in 0..grid1.cells().len() {
@@ -310,6 +331,130 @@ mod tests {
         assert!(
             (rho_center - 1.0).abs() < 0.01,
             "Center density deviated from equilibrium: {rho_center}"
+        );
+    }
+
+    #[test]
+    fn coriolis_deflects_moving_air() {
+        let size = 12;
+        let mut grid = LbmGrid::new_empty(size);
+
+        // Walls on all faces
+        for z in 0..size {
+            for y in 0..size {
+                for x in 0..size {
+                    if x == 0 || x == size - 1 || y == 0 || y == size - 1 || z == 0 || z == size - 1
+                    {
+                        *grid.get_mut(x, y, z) = LbmCell::new_solid(MaterialId::STONE);
+                    }
+                }
+            }
+        }
+
+        // Initialize interior with uniform gas and eastward velocity (+x)
+        for z in 1..size - 1 {
+            for y in 1..size - 1 {
+                for x in 1..size - 1 {
+                    let cell = grid.get_mut(x, y, z);
+                    // Set equilibrium with initial velocity in +x direction
+                    let rho = 1.0;
+                    let u = [0.01, 0.0, 0.0];
+                    cell.f = lattice::equilibrium(rho, u);
+                    cell.material = MaterialId::AIR;
+                    cell.tag = GasCellTag::Gas;
+                }
+            }
+        }
+
+        let config = test_config();
+        // Coriolis with omega in +y direction (North Pole scenario)
+        // Using a strong value to see clear deflection in 50 steps
+        let omega = [0.0, 1e-3, 0.0];
+
+        for _ in 0..50 {
+            lbm_step(&mut grid, &config, [0.0; 3], 1.0, Some(omega));
+        }
+
+        // Collect z-velocity components from interior cells
+        let mut total_uz = 0.0_f32;
+        let mut count = 0;
+        for z in 2..size - 2 {
+            for y in 2..size - 2 {
+                for x in 2..size - 2 {
+                    let u = grid.get(x, y, z).velocity();
+                    total_uz += u[2];
+                    count += 1;
+                }
+            }
+        }
+
+        let avg_uz = total_uz / count as f32;
+        // Coriolis force F = -2ρ(ω × v) with ω=[0,ω_y,0] and v=[v_x,0,0]
+        // gives F = -2ρ[0, 0, -ω_y*v_x] = [0, 0, 2ρ*ω_y*v_x]
+        // So z-velocity should become positive (deflection to the right)
+        // With the small omega value (1e-3 in lattice units), the deflection
+        // is very small but should be measurable above numerical noise.
+        assert!(
+            avg_uz.abs() > 1e-7,
+            "Coriolis should deflect flow: avg u_z = {avg_uz}"
+        );
+    }
+
+    #[test]
+    fn coriolis_none_is_noop() {
+        let size = 12;
+        let mut grid = LbmGrid::new_empty(size);
+
+        // Walls on all faces
+        for z in 0..size {
+            for y in 0..size {
+                for x in 0..size {
+                    if x == 0 || x == size - 1 || y == 0 || y == size - 1 || z == 0 || z == size - 1
+                    {
+                        *grid.get_mut(x, y, z) = LbmCell::new_solid(MaterialId::STONE);
+                    }
+                }
+            }
+        }
+
+        // Initialize interior with uniform gas and eastward velocity (+x)
+        for z in 1..size - 1 {
+            for y in 1..size - 1 {
+                for x in 1..size - 1 {
+                    let cell = grid.get_mut(x, y, z);
+                    // Set equilibrium with initial velocity in +x direction
+                    let rho = 1.0;
+                    let u = [0.01, 0.0, 0.0];
+                    cell.f = lattice::equilibrium(rho, u);
+                    cell.material = MaterialId::AIR;
+                    cell.tag = GasCellTag::Gas;
+                }
+            }
+        }
+
+        let config = test_config();
+
+        for _ in 0..50 {
+            lbm_step(&mut grid, &config, [0.0; 3], 1.0, None);
+        }
+
+        // Check that z-velocity remains near zero without Coriolis
+        let mut total_uz = 0.0_f32;
+        let mut count = 0;
+        for z in 2..size - 2 {
+            for y in 2..size - 2 {
+                for x in 2..size - 2 {
+                    let u = grid.get(x, y, z).velocity();
+                    total_uz += u[2];
+                    count += 1;
+                }
+            }
+        }
+
+        let avg_uz = total_uz / count as f32;
+        assert!(
+            avg_uz.abs() < 1e-4,
+            "Without Coriolis, z-velocity should remain near zero: avg u_z = {avg_uz}"
         );
     }
 }

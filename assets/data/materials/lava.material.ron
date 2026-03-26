@@ -20,6 +20,7 @@ MaterialData(
     youngs_modulus: None,
     heat_of_combustion: None,
     molar_mass: None,
+    albedo: 0.05,
     frozen_into: Some("Stone"),
     // No gaseous rock material
     melted_into: None,

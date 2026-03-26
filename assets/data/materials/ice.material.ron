@@ -26,5 +26,6 @@ MaterialData(
     boiled_into: None,
     frozen_into: None,
     refractive_index: Some(1.31),
+    albedo: 0.80,
     condensed_into: None,
 )
