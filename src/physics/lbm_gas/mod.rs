@@ -16,4 +16,7 @@ pub mod streaming;
 pub mod sync;
 pub mod types;
 
+#[cfg(test)]
+mod atmosphere_tests;
+
 pub use plugin::LbmGasPlugin;

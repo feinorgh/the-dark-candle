@@ -7,6 +7,7 @@
 pub mod clouds;
 pub mod light_map;
 pub mod scattering;
+pub mod shadows;
 pub mod sky;
 
 use bevy::prelude::*;
