@@ -50,6 +50,9 @@ pub struct BiomeData {
     /// Item spawn table (natural items like rocks, sticks, berries).
     #[serde(default)]
     pub item_spawns: Vec<SpawnEntry>,
+    /// Prop spawn table (natural scenery — rocks, logs, pebbles).
+    #[serde(default)]
+    pub prop_spawns: Vec<SpawnEntry>,
 }
 
 /// Select a spawn entry from a weighted table using a random value in [0.0, 1.0).
@@ -130,6 +133,7 @@ mod tests {
                 weight: 3.0,
                 max_per_chunk: 5,
             }],
+            prop_spawns: vec![],
         }
     }
 
@@ -147,6 +151,7 @@ mod tests {
                 max_per_chunk: 4,
             }],
             item_spawns: vec![],
+            prop_spawns: vec![],
         }
     }
 

@@ -166,6 +166,7 @@ pub fn desired_chunks_spherical(
 }
 
 /// System: spawns and despawns chunks to keep the loaded set matching the camera position.
+#[allow(clippy::too_many_arguments)]
 pub fn update_chunks(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
@@ -174,6 +175,7 @@ pub fn update_chunks(
     subdiv_config: Res<SubdivisionConfig>,
     planet: Res<PlanetConfig>,
     camera_q: Query<&Transform, With<FpsCamera>>,
+    chunk_props_q: Query<&crate::procgen::props::ChunkProps>,
 ) {
     let Ok(cam_transform) = camera_q.single() else {
         return;
@@ -192,6 +194,12 @@ pub fn update_chunks(
         if !desired.contains(&coord)
             && let Some(entity) = chunk_map.remove(&coord)
         {
+            // Despawn prop entities tracked by this chunk
+            if let Ok(chunk_props) = chunk_props_q.get(entity) {
+                for &prop_entity in &chunk_props.entities {
+                    commands.entity(prop_entity).despawn();
+                }
+            }
             commands.entity(entity).despawn();
         }
     }
@@ -216,6 +224,8 @@ pub fn update_chunks(
                     coord,
                     chunk_octree,
                     ChunkActivity::default(),
+                    crate::procgen::props::NeedsDecoration,
+                    crate::procgen::props::ChunkProps::default(),
                     Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
                 ))
                 .id();

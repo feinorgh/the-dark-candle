@@ -87,6 +87,38 @@ pub fn plan_chunk_spawns(
     spawns
 }
 
+/// Plan prop spawns for a chunk based on its biome's prop table.
+/// Returns Vec of (prop_type, local_x, local_z, seed) for each spawn.
+pub fn plan_chunk_prop_spawns(
+    biome: &BiomeData,
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk_size: usize,
+    world_seed: u64,
+) -> Vec<(String, f32, f32, u64)> {
+    let mut spawns = Vec::new();
+    // Use a different seed offset from creature spawns to avoid correlation
+    let prop_base_seed = world_seed.wrapping_add(0xDEAD_BEEF);
+
+    for (entry_idx, entry) in biome.prop_spawns.iter().enumerate() {
+        let entry_seed = prop_base_seed.wrapping_add(entry_idx as u64 * 7919);
+        let count = creatures_to_spawn(entry, chunk_x, chunk_z, entry_seed);
+
+        if count > 0 {
+            let positions = spawn_positions(count, chunk_size, chunk_x, chunk_z, entry_seed);
+            for (i, (x, z)) in positions.into_iter().enumerate() {
+                let prop_seed = entry_seed
+                    .wrapping_mul(chunk_x as u64)
+                    .wrapping_add(chunk_z as u64)
+                    .wrapping_add(i as u64);
+                spawns.push((entry.id.clone(), x, z, prop_seed));
+            }
+        }
+    }
+
+    spawns
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +144,7 @@ mod tests {
                 },
             ],
             item_spawns: vec![],
+            prop_spawns: vec![],
         }
     }
 
@@ -195,6 +228,7 @@ mod tests {
             surface_material: "Air".into(),
             creature_spawns: vec![],
             item_spawns: vec![],
+            prop_spawns: vec![],
         };
         let spawns = plan_chunk_spawns(&biome, 0, 0, 32, 42);
         assert!(spawns.is_empty());
@@ -205,5 +239,76 @@ mod tests {
         let a = spawn_positions(5, 32, 3, 7, 42);
         let b = spawn_positions(5, 32, 3, 7, 42);
         assert_eq!(a, b);
+    }
+
+    fn prop_biome() -> BiomeData {
+        BiomeData {
+            name: "prop_test".into(),
+            display_name: "Prop Test".into(),
+            height_range: (0.0, 100.0),
+            temperature_range: (200.0, 400.0),
+            moisture_range: (0.0, 1.0),
+            surface_material: "Grass".into(),
+            creature_spawns: vec![],
+            item_spawns: vec![],
+            prop_spawns: vec![
+                SpawnEntry {
+                    id: "rock".into(),
+                    weight: 5.0,
+                    max_per_chunk: 8,
+                },
+                SpawnEntry {
+                    id: "pebble".into(),
+                    weight: 8.0,
+                    max_per_chunk: 20,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn plan_chunk_prop_spawns_returns_valid_types() {
+        let biome = prop_biome();
+        let spawns = plan_chunk_prop_spawns(&biome, 0, 0, 32, 42);
+        for (prop_type, x, z, _seed) in &spawns {
+            assert!(
+                prop_type == "rock" || prop_type == "pebble",
+                "Unknown prop type: {prop_type}"
+            );
+            assert!(*x >= 0.0 && *x < 32.0, "x={x} out of range");
+            assert!(*z >= 0.0 && *z < 32.0, "z={z} out of range");
+        }
+    }
+
+    #[test]
+    fn plan_chunk_prop_spawns_is_deterministic() {
+        let biome = prop_biome();
+        let a = plan_chunk_prop_spawns(&biome, 3, 7, 32, 42);
+        let b = plan_chunk_prop_spawns(&biome, 3, 7, 32, 42);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn prop_spawns_differ_between_chunks() {
+        let biome = prop_biome();
+        let a = plan_chunk_prop_spawns(&biome, 0, 0, 32, 42);
+        let b = plan_chunk_prop_spawns(&biome, 10, 10, 32, 42);
+        let count_differs = a.len() != b.len();
+        let pos_differs = if !a.is_empty() && !b.is_empty() {
+            (a[0].1 - b[0].1).abs() > f32::EPSILON
+        } else {
+            true
+        };
+        assert!(
+            count_differs || pos_differs,
+            "Different chunks should produce different prop spawn plans"
+        );
+    }
+
+    #[test]
+    fn empty_prop_spawns_returns_nothing() {
+        let biome = test_biome(); // has no prop_spawns
+        let spawns = plan_chunk_prop_spawns(&biome, 0, 0, 32, 42);
+        assert!(spawns.is_empty());
     }
 }

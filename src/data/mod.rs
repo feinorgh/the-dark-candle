@@ -15,7 +15,8 @@ impl Plugin for DataPlugin {
             .add_plugins(RonAssetPlugin::<MaterialData>::new(&["material.ron"]))
             .add_plugins(RonAssetPlugin::<CreatureData>::new(&["creature.ron"]))
             .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]))
-            .add_plugins(RonAssetPlugin::<FluidConfig>::new(&["fluid_config.ron"]));
+            .add_plugins(RonAssetPlugin::<FluidConfig>::new(&["fluid_config.ron"]))
+            .add_plugins(RonAssetPlugin::<PropData>::new(&["prop.ron"]));
 
         // Build MaterialRegistry synchronously from .material.ron files on disk.
         match load_material_registry() {
@@ -318,6 +319,63 @@ pub struct ItemData {
 
 fn default_max_stack() -> u32 {
     64
+}
+
+/// Category of world prop for spawn filtering.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropCategory {
+    Rock,
+    Vegetation,
+    Debris,
+    Misc,
+}
+
+/// Slope preference for prop placement.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SlopePreference {
+    /// Only flat ground (slope < 15°)
+    Flat,
+    /// Moderate slopes OK (< 45°)
+    Moderate,
+    /// Prefers steep slopes (> 30°)
+    Steep,
+    /// Any slope
+    #[default]
+    Any,
+}
+
+/// Template for world scenery props (rocks, logs, etc.), loaded from `.prop.ron`.
+#[derive(Deserialize, Asset, TypePath, Debug, Clone, PartialEq)]
+pub struct PropData {
+    /// Unique identifier (e.g., "boulder", "pebble").
+    pub prop_type: String,
+    /// Display name.
+    pub display_name: String,
+    /// Category for filtering.
+    pub category: PropCategory,
+    /// Material name (looked up in MaterialRegistry for color/physics).
+    pub material: String,
+    /// Base scale in meters (x, y, z).
+    pub base_scale: (f32, f32, f32),
+    /// Random scale variation factor (0.0 = no variation, 0.3 = ±30%).
+    #[serde(default)]
+    pub scale_variation: f32,
+    /// Collision shape: "sphere", "aabb", or "none".
+    #[serde(default = "default_collision")]
+    pub collision: String,
+    /// Slope preference for placement.
+    #[serde(default)]
+    pub slope_preference: SlopePreference,
+    /// Minimum altitude (world units) for spawning, if restricted.
+    #[serde(default)]
+    pub min_altitude: Option<f32>,
+    /// Maximum altitude (world units) for spawning, if restricted.
+    #[serde(default)]
+    pub max_altitude: Option<f32>,
+}
+
+fn default_collision() -> String {
+    "aabb".into()
 }
 
 /// Lookup table from MaterialId to material properties, with name-based resolution.

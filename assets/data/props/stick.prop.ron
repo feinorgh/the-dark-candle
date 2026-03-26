@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "stick",
+    display_name: "Stick",
+    category: Vegetation,
+    material: "Wood",
+    base_scale: (0.02, 0.02, 0.5),
+    scale_variation: 0.3,
+    collision: "none",
+    slope_preference: Any,
+)

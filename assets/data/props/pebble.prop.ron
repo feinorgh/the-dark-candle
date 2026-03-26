@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "pebble",
+    display_name: "Pebble",
+    category: Rock,
+    material: "Stone",
+    base_scale: (0.1, 0.08, 0.1),
+    scale_variation: 0.25,
+    collision: "none",
+    slope_preference: Flat,
+)

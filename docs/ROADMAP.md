@@ -140,7 +140,7 @@ rendering features for thermal and atmospheric effects.
 | `2c2809b` | Visual rendering tests (4 MP4 videos via ffmpeg) |
 | `feeca84` | DDA perspective raymarcher with Lambertian shading + shadow rays |
 
-### Phase 11 Tier 1: Optics & Light Phenomena (✅ complete)
+### Phase 12 Tier 1: Optics & Light Phenomena (✅ complete)
 
 Physically-based light transport through the voxel world: material optical
 properties, atmospheric scattering, per-channel absorption, and per-voxel
@@ -159,6 +159,12 @@ sunlight propagation.
 **New material:** `glass.material.ron` (id=12, n=1.52, transparent)
 **New fields on `MaterialData`:** `refractive_index`, `reflectivity`, `absorption_rgb`
 **New constant:** `SPEED_OF_LIGHT = 299_792_458.0 m/s`
+
+### Phase 10: Entity Bodies & Organic Physics (planned)
+
+Physical embodiment for all living entities — articulated skeletons, soft/rigid
+tissue physics, procedural locomotion, injury model, and plant body physics.
+Depends on Phases 3–6 (physics, entities, biology, behavior).
 
 ---
 
@@ -489,7 +495,222 @@ All 10 implementation steps completed. Commits:
 
 ---
 
-## Phase 10 — Buildings & Structural Construction (planned)
+## Phase 10 — Entity Bodies & Organic Physics (planned)
+
+Physical embodiment for all living entities — player, creatures, and plants.
+Replaces the abstract point-entity model (Phase 4) with articulated bodies
+that have mass-distributed skeletal structures, soft/rigid tissue physics,
+field of vision, and locomotion driven by anatomy. The player is a regular
+creature entity controlled by input rather than AI; no special-case code.
+
+### Foundations already in place
+
+| System | Location | Provides |
+|--------|----------|----------|
+| Entity physics | `gravity.rs`, `collision.rs` | Force model (gravity + buoyancy + drag + friction), AABB collision |
+| Rigid body dynamics | `rigid_body.rs`, `solver.rs` | Angular velocity, moment of inertia, sequential impulse solver |
+| Creature data | `procgen/creatures.rs`, `assets/data/` | `CreatureData` RON with stats, color, biome spawning |
+| Biology | `biology/` | Metabolism, health, growth/aging, death/decomposition |
+| Behavior & perception | `behavior/` | Sight/hearing/smell, pathfinding, needs, utility AI |
+| Material properties | `data/mod.rs` | Density, elasticity (Young's modulus), friction, restitution |
+
+### Design
+
+#### 1. Skeletal system
+
+A data-driven skeleton defined per species in `.skeleton.ron` files:
+
+- **Bones** — rigid segments with length (m), mass (kg), and material
+  (calciumite for vertebrates, chitin for arthropods, cellulose for plants).
+  Each bone has a parent bone (forming a tree), rest pose transform, and
+  joint constraints (hinge, ball-and-socket, fixed) with angular limits.
+- **Skeleton tree** — root bone (pelvis for bipeds, thorax for insects,
+  trunk base for trees). Child bones inherit parent transforms. Forward
+  kinematics propagates pose; inverse kinematics solves foot/hand placement.
+- **SkeletonData** struct — derives `serde::Deserialize`, `Asset`,
+  `TypePath`. Loaded via `RonAssetPlugin<SkeletonData>`. Fields: `bones:
+  Vec<BoneData>`, `joints: Vec<JointData>`, `rest_pose: Vec<Transform>`.
+- **Skeleton component** — runtime `Skeleton` ECS component holding current
+  bone transforms, angular velocities, and accumulated torques.
+
+#### 2. Soft & rigid tissue
+
+Organic bodies are not uniform rigid bodies — they have tissue layers with
+distinct mechanical properties:
+
+- **Rigid tissue** (bone, shell, wood) — modeled as rigid body segments
+  connected by joints. Uses existing rigid body solver for each segment.
+  Material properties from `.material.ron` (density, Young's modulus).
+- **Soft tissue** (muscle, fat, skin, bark, leaves) — modeled as
+  mass-spring-damper systems anchored to the skeleton. Provides visual
+  deformation and collision volume. Spring stiffness and damping from
+  tissue material properties.
+- **TissueData** — per-species `.body.ron` defines tissue layers per body
+  region: `{ region: "torso", layers: [{ tissue: "muscle", thickness: 0.04,
+  density: 1060.0 }, { tissue: "fat", thickness: 0.02, density: 920.0 },
+  { tissue: "skin", thickness: 0.003, density: 1100.0 }] }`.
+- **Collision volumes** — each body region generates a collision capsule
+  (or convex hull) from bone length + tissue thickness. Replaces the
+  single-AABB model from Phase 3.
+
+#### 3. Locomotion
+
+Movement emerges from skeletal articulation, not velocity teleportation:
+
+- **Gait definitions** — `.gait.ron` files define named animation cycles
+  per skeleton: walk, run, crawl, swim, fly, slither. Each gait specifies
+  bone target angles per phase, cycle duration, ground contact windows,
+  and energy cost (J/m from metabolism).
+- **Procedural animation** — IK solvers place feet on terrain surface,
+  blend between gaits based on speed/slope/medium. No canned keyframe
+  animations — all poses are computed from skeleton constraints + IK targets.
+- **Locomotion modes:**
+  - *Bipedal/quadrupedal walking* — alternating leg IK with balance
+    correction (center of mass over support polygon).
+  - *Crawling* — low-clearance gait, belly contact, limbs splayed.
+  - *Flying* — wing bones generate lift force proportional to wing area ×
+    airspeed² × lift coefficient. Drag from body cross-section.
+    Sustained flight requires metabolic energy.
+  - *Swimming* — drag-based propulsion in fluid voxels. Fin/limb surface
+    area determines thrust.
+  - *Slithering* — sinusoidal body wave via sequential bone rotations.
+    Friction with ground provides forward force.
+  - *Climbing* — IK grip targets on vertical surfaces, weight transfer
+    between grip points.
+- **Player input mapping** — player input (WASD, jump, crouch) maps to
+  gait selection and IK target adjustments on the player's creature
+  skeleton. Same system as AI locomotion, different input source.
+
+#### 4. Field of vision & perception bodies
+
+Upgrade the abstract perception system (Phase 6) to use physical geometry:
+
+- **Eye components** — position on skeleton (bone attachment point), FOV
+  cone angle, max range. Occlusion via DDA ray-cast against voxel world
+  (reuses `src/world/raycast.rs`). Multiple eyes = wider combined FOV.
+- **Ear components** — position on skeleton, sensitivity curve, directional
+  bias from head orientation.
+- **Player camera** — first-person camera attaches to the player entity's
+  head bone. Camera FOV = eye FOV. Head-bob from locomotion gait. No
+  special player camera system — just a `Camera3d` parented to the head
+  bone entity.
+- **Smell** — unchanged from Phase 6 (diffusion-based, no body geometry
+  needed).
+
+#### 5. Injury & damage model
+
+Tiered physical damage integrated with the skeletal/tissue system:
+
+- **Damage zones** — each body region (head, torso, limb, wing, root, etc.)
+  tracks its own hit points derived from tissue mass and material toughness.
+- **Injury tiers:**
+  - *Bruise/strain* — soft tissue damage. Reduces performance (movement
+    speed, grip strength). Heals over time via metabolism.
+  - *Fracture* — bone damage. Limb loses structural support — IK solver
+    treats fractured bone as a limp/hanging segment. Requires healing time
+    proportional to bone mass.
+  - *Severing* — catastrophic damage separates a body part. Detached part
+    becomes a physics entity (drops with rigid body dynamics). Creature
+    loses capabilities associated with that limb permanently (or until
+    regeneration, if the species supports it).
+- **Damage propagation** — impacts apply force to the collision volume of
+  the hit region. Force exceeding tissue toughness creates injury. Armor
+  (equipped items with material hardness) absorbs force first.
+- **Healing** — biological healing rate from Phase 5 metabolism, scaled by
+  injury tier. Fractures heal slowly. Severing doesn't heal without
+  regeneration trait.
+
+#### 6. Plant body physics
+
+Trees and large plants as semi-rigid articulated structures:
+
+- **Trunk & branches** — modeled as a skeleton tree. Trunk = root bone,
+  branches = child bones. Wood material properties (density, Young's
+  modulus, flexural strength from Phase 11 building materials).
+- **Root system** — anchor bones extending into terrain voxels. Root
+  depth + spread determines wind resistance and nutrient access (ties
+  into Phase 5 plant growth).
+- **Canopy** — leaf clusters as soft-body masses on branch tips. Wind
+  force (from LBM gas field, Phase 9) applies lateral load. Branches
+  flex under wind + gravity. Excessive force → branch breakage (uses
+  flexural strength).
+- **Growth integration** — as plants grow (Phase 5), new bones are added
+  to the skeleton. Trunk thickens (bone radius increases), branches
+  extend, canopy fills out. Growth rate from metabolism.
+- **Felling & damage** — chopping applies damage to trunk bone. When trunk
+  HP reaches zero → tree falls as a rigid body chain (bones disconnect
+  from root anchor, gravity takes over). Fallen tree becomes harvestable
+  material.
+
+### Implementation steps
+
+1. **`SkeletonData` and RON loader** — new `src/bodies/skeleton.rs`.
+   `SkeletonData` struct with bones, joints, rest pose. Register
+   `RonAssetPlugin<SkeletonData>`. Create skeleton RON files for 2–3
+   species (humanoid, quadruped, tree).
+
+2. **`Skeleton` runtime component** — ECS component with current bone
+   transforms, angular state. Forward kinematics system in `FixedUpdate`.
+   Parent-child transform propagation.
+
+3. **Tissue & collision volumes** — new `src/bodies/tissue.rs`. `BodyData`
+   RON with tissue layers per region. Generate per-region collision
+   capsules from bone + tissue. Replace single AABB with compound collider.
+
+4. **IK solver** — new `src/bodies/ik.rs`. FABRIK or CCD inverse
+   kinematics for limb chains. Foot placement on terrain. Hand/grip
+   targeting. Joint constraint enforcement.
+
+5. **Locomotion gaits** — new `src/bodies/locomotion.rs`. `GaitData` RON
+   with bone angle targets per phase. Gait state machine (idle → walk →
+   run → sprint). Procedural gait blending. Energy cost integration with
+   metabolism.
+
+6. **Player embodiment** — player entity spawns with same `Skeleton` +
+   `BodyData` as a humanoid creature. Input system maps WASD → gait
+   selection → IK targets. `Camera3d` parented to head bone.
+
+7. **Perception body integration** — new `src/bodies/perception.rs`. Eye/ear
+   components with skeleton attachment points. FOV occlusion via DDA
+   ray-cast. Replace abstract Phase 6 perception radius with physical
+   sight cones.
+
+8. **Injury system** — new `src/bodies/injury.rs`. Per-region damage
+   tracking. Injury tier logic (bruise → fracture → sever). IK response
+   to fractures. Severed limb spawning. Healing rate integration.
+
+9. **Plant bodies** — extend skeleton system for plants. `TreeSkeletonData`
+   RON. Wind response system (LBM pressure → branch torque). Growth-driven
+   skeleton expansion. Felling mechanics.
+
+10. **Physics integration** — wire articulated body solver into
+    `FixedUpdate`. Per-bone collision response via existing narrow phase +
+    impulse solver. Mass distribution from tissue layers → moment of
+    inertia tensor per bone.
+
+### Dependencies
+
+- Steps 1–3 build on Phase 3 (rigid body physics) and Phase 4 (creature data).
+- Step 4 (IK) is self-contained, depends only on step 2 (skeleton).
+- Step 5 (locomotion) requires steps 2 + 4 (skeleton + IK).
+- Step 6 (player) requires steps 5 (locomotion) + 7 (perception).
+- Step 7 extends Phase 6 (behavior/perception) with body geometry.
+- Step 8 extends Phase 5 (biology/health) with body-part damage.
+- Step 9 depends on steps 1–3 (skeleton + tissue) and Phase 9 (LBM wind).
+- Step 10 integrates everything into the physics pipeline.
+
+### What stays unchanged
+
+Creature RON data (extended with skeleton/body references, not replaced).
+Biology systems (metabolism, growth — extended with per-limb damage, not
+replaced). Behavior AI (action selection unchanged — locomotion replaces
+the velocity output). Existing rigid body solver (reused for per-bone
+dynamics). Voxel collision (extended from single AABB to compound, not
+replaced).
+
+---
+
+## Phase 11 — Buildings & Structural Construction (planned)
 
 A freeform building system where players construct structures from physical
 materials — wood, stone, metal, glass, concrete, clay, and more — all defined as
@@ -723,7 +944,7 @@ not replaced), existing item system (extended with building items).
 
 With the core simulation stack complete, spherical terrain planned (Phase 8),
 atmosphere simulation designed (Phase 9), and structural construction designed
-(Phase 10), the project also needs integration, polish, and gameplay. These are
+(Phase 11), the project also needs integration, polish, and gameplay. These are
 not yet planned in detail — each will get a session plan when started.
 
 **Near-term visual integration (Phase 9b–9d):** The chemistry/heat physics are
@@ -1103,7 +1324,7 @@ gameplay mechanic.
 - **AI hearing** — creatures sample the acoustic field at their position; loud
   events above a threshold trigger alert/investigate behaviors
 
-### Optics & Light Phenomena (Phase 11)
+### Optics & Light Phenomena (Phase 12)
 Physically-based light transport through the voxel world, enabling glass optics,
 underwater caustics, atmospheric color, and material-dependent visual effects.
 Builds on the radiative transfer ray-cast infrastructure from Phase 9a.
@@ -1158,9 +1379,9 @@ with material-driven parameters.
 Priority: medium-high. Optics are central to visual quality and enable unique
 gameplay (lens crafting, underwater exploration, light puzzles).
 Depends on: Phase 9a (ray-cast infrastructure), Phase 9 (atmosphere, sun
-angle), Phase 10 (glass material for structures).
+angle), Phase 11 (glass material for structures).
 
-### Electricity & Magnetism (Phase 12)
+### Electricity & Magnetism (Phase 13)
 Full electromagnetic simulation using a simplified Maxwell's equations solver on
 the voxel grid. Enables technology progression, electrical hazards, and magnetic
 gameplay mechanics.
@@ -1194,7 +1415,7 @@ gameplay mechanics.
 #### Electromagnetic Waves (simplified)
 - **Wave propagation** — EM waves at speed c through the voxel grid (FDTD —
   Finite-Difference Time-Domain — on a coarsened grid for performance).
-  Primarily for radio/signal propagation, not visual light (handled by Phase 11
+  Primarily for radio/signal propagation, not visual light (handled by Phase 12
   optics)
 - **Absorption & shielding** — conductive materials absorb/reflect EM waves
   (skin depth δ = √(2/(ωμσ))). Faraday cage gameplay, signal blocking through
@@ -1213,10 +1434,10 @@ New universal constants needed: `elementary_charge: f64 = 1.602_176_634e-19` C,
 
 Priority: low. Only pursue when a technology/crafting tier requires wiring,
 circuits, or electromagnetic machinery.
-Depends on: Phase 9 (atmosphere for lightning), Phase 10 (structures for
+Depends on: Phase 9 (atmosphere for lightning), Phase 11 (structures for
 circuits), Phase 9a (thermal coupling for resistive heating).
 
-### Nuclear Physics & Radiation (Phase 13)
+### Nuclear Physics & Radiation (Phase 14)
 Radioactive decay, nuclear reactions, and ionizing/non-ionizing radiation
 transport. Enables late-game content: nuclear materials, radiation hazards,
 advanced energy sources.
@@ -1249,7 +1470,7 @@ advanced energy sources.
   hydrogen-rich ones (water, paraffin). Triggers secondary reactions (neutron
   activation, fission). Range: meters through air, attenuated by light elements
 - **Non-ionizing radiation** — thermal infrared (already handled by Phase 9a
-  radiative heat), visible light (Phase 11 optics), radio waves (Phase 12 EM).
+  radiative heat), visible light (Phase 12 optics), radio waves (Phase 13 EM).
   No additional system needed — these are subsumed by earlier phases
 
 #### Radiation Effects
@@ -1291,9 +1512,9 @@ New universal constants: `speed_of_light` (shared), `planck_constant: f64 =
 
 Priority: very low. Nuclear physics is late-game content requiring most other
 systems to be in place. Radiation transport reuses the ray-cast infrastructure
-from Phase 9a/11.
+from Phase 9a/12.
 Depends on: Phase 5 (biology for radiation damage), Phase 9a (radiative
-transport), Phase 11 (ray-cast optics infrastructure), Phase 12 (EM field model
+transport), Phase 12 (ray-cast optics infrastructure), Phase 13 (EM field model
 for neutron interactions).
 
 ### EM, Radiation & Optics — Phasing & Dependencies
@@ -1307,17 +1528,22 @@ Phase 3 (Temperature ✅)─┘      │
                                 ├──→ Phase 9b–9d: Chemistry Runtime + Visual ✅
 Phase 8 (Spherical Planet) ─────┘
 Phase 9 (Atmosphere) ───────────┐
-                                ├──→ Phase 11: Optics (Tier 1 ✅, Tier 2–3 planned)
-Phase 10 (Buildings) ───────────┘
-                                ├──→ Phase 12: Electricity & Magnetism
-                                └──→ Phase 13: Nuclear Physics & Radiation
+                                ├──→ Phase 12: Optics (Tier 1 ✅, Tier 2–3 planned)
+Phase 11 (Buildings) ───────────┘
+                                ├──→ Phase 13: Electricity & Magnetism
+                                └──→ Phase 14: Nuclear Physics & Radiation
+
+Phase 3 (Physics ✅) ───────┐
+Phase 4 (Entities ✅) ──────┤
+Phase 5 (Biology ✅) ───────┼──→ Phase 10: Entity Bodies & Organic Physics
+Phase 6 (Behavior ✅) ──────┘
 ```
 
 Material property extensions accumulate across phases:
 - Phase 9a adds: `absorption_coefficient`, `albedo`
-- Phase 11 adds: `refractive_index`, `reflectivity`, `absorption_rgb` (**Tier 1 ✅**)
-- Phase 12 adds: `electrical_conductivity`, `magnetic_permeability`
-- Phase 13 adds: `atomic_number`, `mass_attenuation_coeff`, `radioactive`
+- Phase 12 adds: `refractive_index`, `reflectivity`, `absorption_rgb` (**Tier 1 ✅**)
+- Phase 13 adds: `electrical_conductivity`, `magnetic_permeability`
+- Phase 14 adds: `atomic_number`, `mass_attenuation_coeff`, `radioactive`
 
 Universal constants can be added to `universal_constants.ron` proactively:
 `speed_of_light` (**✅**), `planck_constant`, `boltzmann_constant`, `elementary_charge`,
@@ -1356,6 +1582,223 @@ visualization:
 - **Sound** — ambient, material interactions, creature vocalizations
 - **Rendering polish** — particle effects, water shading
 - **Narrative systems** — quests, lore, emergent storytelling from social layer
+
+---
+
+## Milestone: Valley River Scene
+
+A target demonstration scene that exercises terrain generation, fluid dynamics,
+static prop scattering, and lighting together for the first time. The scene
+shows a procedurally generated valley on the planetary surface with a river
+flowing through it, rocky terrain with scattered boulders, stones, and pebbles,
+lit by the day-night sun cycle with terrain self-shadowing.
+
+**What the milestone proves:**
+- Planetary terrain can produce recognizable landforms (not just noise hills)
+- AMR fluid simulation produces visible, flowing water in-game
+- The world feels inhabited and textured with scattered natural objects
+- Lighting sells the scene with depth via shadows
+
+### Gap 1 — Procedural Valley & Channel Carving
+
+**Problem:** Terrain is pure Perlin noise — no valleys, ridges, or river
+channels. Noise alone cannot produce the directed, branching drainage patterns
+that define real landscapes.
+
+**Approach:** Overlay a channel carving pass on the existing heightmap:
+
+1. **Ridge-line seeding** — identify local maxima in the continental noise
+   field. These become watershed boundaries.
+2. **Flow accumulation** — for each surface cell, trace the steepest-descent
+   path downhill. Accumulate flow count. Cells with high flow accumulation
+   become river channels.
+3. **Channel carving** — lower the heightmap along high-accumulation paths
+   by a depth proportional to `log(flow_count)`. Width widens with
+   accumulation (tributaries are narrow, main channel is wide).
+4. **Valley shaping** — apply a smooth falloff (cosine or Gaussian) from
+   the channel center outward, creating V-shaped or U-shaped valley
+   cross-sections depending on a configurable profile parameter.
+5. **Erosion texturing** — set material in carved areas: channel bed →
+   gravel/sand, valley walls → exposed stone where slope exceeds threshold,
+   valley floor → dirt/grass.
+
+**Location:** New `src/world/erosion.rs` module, called during
+`generate_chunk()` after base noise but before material assignment.
+
+**Dependencies:** Terrain system (Phase 1), spherical terrain (Phase 8).
+
+### Gap 2 — AMR Fluid Visual Surface & Plugin Activation
+
+**Problem:** `AmrFluidPlugin` exists but is not registered in `PhysicsPlugin`.
+The AMR simulation runs but its free surface is never extracted into a
+renderable mesh. Water voxels are static blocks with no flow.
+
+**Approach:**
+
+1. **Activate `AmrFluidPlugin`** — register it in `PhysicsPlugin::build()`
+   alongside `LbmGasPlugin` and `FlipPicPlugin`.
+2. **Seed river flow** — when a chunk contains carved river channel voxels
+   (from Gap 1), initialize the corresponding `FluidGrid` cells as FLUID
+   with a velocity vector pointing downstream (derived from the channel
+   gradient).
+3. **Free surface extraction** — new system that reads `FluidGrid` SURFACE
+   cells and writes their positions into the chunk's voxel data as
+   `MaterialId::WATER` with a fluid-fraction field (0.0–1.0) for partial
+   fill. The meshing system already handles water material.
+4. **Flow-aware vertex animation** (stretch goal) — pass the fluid velocity
+   field to the mesh shader as a per-vertex attribute. Animate UV
+   coordinates or vertex displacement along the flow direction to give
+   visual motion without re-meshing every frame.
+5. **Boundary conditions** — upstream chunk edges inject fluid at a
+   configurable flow rate; downstream edges drain. River flow is sustained
+   by continuous injection, not a finite volume that drains away.
+
+**Location:** Extend `src/physics/amr_fluid/plugin.rs` for activation.
+New `src/world/fluid_surface.rs` for extraction. Meshing changes in
+`src/world/meshing.rs`.
+
+**Dependencies:** AMR fluid (Phase 3), terrain carving (Gap 1), meshing
+(Phase 1).
+
+### Gap 3 — Static Prop System (`PropData` + Scattering)
+
+**Problem:** No data type for non-living, non-inventory world objects
+(rocks, pebbles, boulders, logs). `ItemData` is for inventory. `CreatureData`
+is for living entities. Biome spawn planning (`plan_chunk_spawns`) exists but
+never creates entities.
+
+**Approach:**
+
+1. **`PropData` struct** — new data container in `src/data/mod.rs`:
+   ```
+   PropData { name, display_name, category (Rock/Vegetation/Debris/Misc),
+   material (MaterialId reference), base_scale (Vec3), scale_variation (f32),
+   collision_shape (Aabb/Sphere/None), spawn_weight (f32),
+   slope_preference (flat/moderate/steep/any), min_altitude, max_altitude }
+   ```
+   Derives `Deserialize`, `Asset`, `TypePath`. Loaded via
+   `RonAssetPlugin<PropData>` from `assets/data/props/*.prop.ron`.
+
+2. **Prop RON files** — define natural scenery:
+   - `boulder.prop.ron` — granite, scale 1–3m, steep slopes OK
+   - `rock.prop.ron` — granite/limestone, scale 0.3–1m
+   - `pebble.prop.ron` — mixed stone, scale 0.05–0.2m
+   - `cobble.prop.ron` — river-rounded stone, scale 0.1–0.3m, river beds
+   - `log.prop.ron` — wood, scale 0.3×0.3×2m, flat ground
+   - `stick.prop.ron` — wood, scale 0.02×0.02×0.5m
+
+3. **Biome prop tables** — extend `BiomeData` with `prop_spawns:
+   Vec<SpawnEntry>` (or reuse existing `item_spawns` renamed to
+   `prop_spawns`). Each biome specifies which props appear and at what
+   density.
+
+4. **Prop scatter system** — new `src/procgen/props.rs`:
+   - Runs when a chunk is generated or loaded.
+   - Queries `plan_chunk_spawns()` prop entries.
+   - For each planned prop: raycast downward to find terrain surface,
+     check slope against `slope_preference`, apply scale jitter, spawn
+     entity with `(Prop, Transform, CollisionShape)` components.
+   - Density falloff near water (fewer rocks in the river, more cobbles
+     on the bank).
+
+5. **Prop rendering** — props are small enough that individual voxel
+   meshes are wasteful. Instead, render props as simple geometric
+   primitives (Bevy `Mesh` with a few faces) colored by material. At
+   distance, props fade or are culled by the LOD system.
+
+**Location:** `src/data/mod.rs` for `PropData`, `src/procgen/props.rs` for
+scatter, `assets/data/props/` for RON files.
+
+**Dependencies:** Data system (Phase 2), biome system (Phase 4), terrain
+surface (Phase 1).
+
+### Gap 4 — Terrain Shadow Casting
+
+**Problem:** Current lighting has per-voxel sunlight propagation (top-down)
+and cloud shadows, but no terrain self-shadowing. A valley lit without
+shadows from its own walls looks flat and unconvincing.
+
+**Approach:**
+
+1. **Shadow ray-cast** — extend `propagate_sunlight()` in
+   `src/lighting/light_map.rs` to cast rays toward the sun direction
+   (not just straight down). For each surface voxel, march a ray from
+   the voxel toward `SunDirection` using `dda_march_ray()` from
+   `src/world/raycast.rs`. If the ray hits opaque terrain before exiting
+   the loaded chunk radius → voxel is in shadow.
+2. **Shadow map update** — store shadow factor (0.0 = full shadow, 1.0 =
+   full sun) per surface voxel in `ChunkLightMap`. Multiply with existing
+   sunlight transmittance. Update when sun angle changes significantly
+   (not every frame — threshold on sun elevation delta).
+3. **Soft shadow edges** — use a small cone of rays (3–5 samples) around
+   the sun direction to produce penumbra at shadow boundaries. Or apply a
+   spatial blur pass on the shadow map.
+4. **Performance budget** — shadow ray-casts are expensive. Limit to
+   surface voxels only (skip interior). Use the LOD level to reduce
+   ray-cast density at distance. Cache shadow maps and invalidate only
+   when sun angle changes by more than a configurable threshold (e.g.,
+   2° of elevation).
+
+**Location:** Extend `src/lighting/light_map.rs` and
+`src/lighting/shadows.rs`. Uses `src/world/raycast.rs` DDA infrastructure.
+
+**Dependencies:** Lighting system (Phase 9d), ray-cast (Phase 9a).
+
+### Gap 5 — Prop Spawn ECS Integration
+
+**Problem:** `plan_chunk_spawns()` in `src/procgen/spawning.rs` plans spawn
+positions for creatures and items, but no ECS system reads the plan and
+actually creates entities for items or props. Only creature spawning may
+be partially wired.
+
+**Approach:**
+
+1. **`spawn_chunk_props` system** — runs after chunk terrain generation.
+   Queries chunks that have been generated but not yet decorated. Calls
+   `plan_chunk_spawns()`, filters for prop entries, spawns prop entities.
+2. **`spawn_chunk_items` system** — same pattern for world items (if
+   items-on-ground is desired for this milestone, otherwise defer).
+3. **Chunk decoration marker** — add a `ChunkDecorated` component to
+   track which chunks have had props spawned. Prevents duplicate spawning
+   on chunk reload.
+4. **Despawn on unload** — when chunks are unloaded by `ChunkManagerPlugin`,
+   despawn associated prop entities.
+
+**Location:** New `src/procgen/props.rs` (shared with Gap 3 scatter logic).
+
+**Dependencies:** Gap 3 (PropData), chunk manager (Phase 1).
+
+### Implementation Order
+
+```
+Gap 1 (Valley carving) ──→ Gap 2 (Water surface) ──→ Scene integration
+         │
+         └──→ Gap 3 (PropData) ──→ Gap 5 (Spawn ECS) ──→ Scene integration
+                                                              │
+Gap 4 (Terrain shadows) ─────────────────────────────────────┘
+```
+
+- **Gap 1** and **Gap 4** have no mutual dependency and can proceed in
+  parallel.
+- **Gap 3** can start immediately (data-only, no terrain dependency).
+- **Gap 2** requires Gap 1 (needs carved channels to seed fluid).
+- **Gap 5** requires Gap 3 (needs `PropData` to spawn).
+- **Scene integration** is the final step: a test scene or gameplay
+  spawn point that generates a planetary chunk region containing a valley,
+  seeds the river, scatters props, and lets the player observe.
+
+### Success Criteria
+
+- A valley is visible on the planetary surface with a recognizable
+  V/U-shaped cross section and sloped walls.
+- Water flows through the valley channel with visible motion (not static
+  blue blocks).
+- At least 3 prop types (boulder, rock, pebble) are scattered on the
+  terrain with density varying by slope and proximity to water.
+- The valley walls cast shadows onto the valley floor that move with the
+  sun cycle.
+- The scene runs at interactive frame rates (≥30 FPS) with at least a
+  4×4 chunk view distance.
 
 ---
 

@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "boulder",
+    display_name: "Boulder",
+    category: Rock,
+    material: "Stone",
+    base_scale: (2.0, 1.5, 2.0),
+    scale_variation: 0.4,
+    collision: "sphere",
+    slope_preference: Any,
+)

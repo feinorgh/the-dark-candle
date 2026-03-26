@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "log",
+    display_name: "Fallen Log",
+    category: Vegetation,
+    material: "Wood",
+    base_scale: (0.3, 0.3, 2.0),
+    scale_variation: 0.35,
+    collision: "aabb",
+    slope_preference: Moderate,
+)

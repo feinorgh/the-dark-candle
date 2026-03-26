@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "cobble",
+    display_name: "River Cobble",
+    category: Rock,
+    material: "Stone",
+    base_scale: (0.15, 0.1, 0.15),
+    scale_variation: 0.2,
+    collision: "none",
+    slope_preference: Flat,
+)

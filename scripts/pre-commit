@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Pre-commit hook for The Dark Candle
-# Runs formatting check, linting, and tests before allowing a commit.
+# Runs formatting check, linting, and fast tests before allowing a commit.
+#
+# By default, only lib (unit) tests and asset validation run (~1s).
+# Heavy integration tests (simulations, visual rendering, GPU) are skipped.
+#
+# To run the full test suite: FULL_TESTS=1 git commit ...
 #
 # Install: ./scripts/install-hooks.sh
 
@@ -30,11 +35,24 @@ fi
 echo -e "${GREEN}  ✓ Clippy OK${NC}"
 
 # 3. Tests
-echo -e "${YELLOW}[3/3]${NC} cargo test"
-if ! cargo test 2>&1; then
-    echo -e "${RED}✗ Tests failed.${NC}"
-    exit 1
+if [ "${FULL_TESTS:-0}" = "1" ]; then
+    echo -e "${YELLOW}[3/3]${NC} cargo test (full suite)"
+    if ! cargo test 2>&1; then
+        echo -e "${RED}✗ Tests failed.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ All tests OK${NC}"
+else
+    echo -e "${YELLOW}[3/3]${NC} cargo test --lib + validate_assets (fast)"
+    if ! cargo test --lib 2>&1; then
+        echo -e "${RED}✗ Unit tests failed.${NC}"
+        exit 1
+    fi
+    if ! cargo test --test validate_assets 2>&1; then
+        echo -e "${RED}✗ Asset validation failed.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ Fast tests OK (skip heavy integration; use FULL_TESTS=1 for all)${NC}"
 fi
-echo -e "${GREEN}  ✓ Tests OK${NC}"
 
 echo -e "${GREEN}[pre-commit] All checks passed.${NC}"

@@ -1,0 +1,10 @@
+PropData(
+    prop_type: "rock",
+    display_name: "Rock",
+    category: Rock,
+    material: "Stone",
+    base_scale: (0.5, 0.4, 0.5),
+    scale_variation: 0.3,
+    collision: "aabb",
+    slope_preference: Any,
+)

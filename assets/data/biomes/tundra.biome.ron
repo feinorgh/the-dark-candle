@@ -9,4 +9,9 @@ BiomeData(
         SpawnEntry(id: "wolf", weight: 5.0, max_per_chunk: 4),
     ],
     item_spawns: [],
+    prop_spawns: [
+        SpawnEntry(id: "boulder", weight: 2.0, max_per_chunk: 3),
+        SpawnEntry(id: "rock", weight: 5.0, max_per_chunk: 8),
+        SpawnEntry(id: "pebble", weight: 4.0, max_per_chunk: 10),
+    ],
 )
