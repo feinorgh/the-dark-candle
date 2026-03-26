@@ -5,7 +5,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::physics::constants;
 use crate::world::chunk::Chunk;
-use crate::world::chunk_manager::ChunkMap;
+use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
 use crate::world::collision::ground_height_at;
 
 pub struct CameraPlugin;
@@ -70,13 +70,20 @@ impl Default for FpsCamera {
     }
 }
 
-fn spawn_camera(mut commands: Commands) {
-    // Start above sea level; gravity will pull us to the terrain surface.
-    // The terrain generator has sea_level=64, height_scale=32, so terrain
-    // can be up to ~96. Start at Y=100 to be safely above.
+fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGeneratorRes>>) {
+    // Compute spawn height from terrain generator if available, otherwise
+    // fall back to a safe default above the typical surface.
+    let spawn_x = 0.0_f32;
+    let spawn_z = 0.0_f32;
+    let surface_y = terrain_gen
+        .map(|tg| tg.0.sample_height(spawn_x as f64, spawn_z as f64) as f32 + 1.0)
+        .unwrap_or(100.0);
+    let spawn_y = surface_y + EYE_HEIGHT;
+
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, 100.0, 0.0).looking_at(Vec3::new(10.0, 95.0, 10.0), Vec3::Y),
+        Transform::from_xyz(spawn_x, spawn_y, spawn_z)
+            .looking_at(Vec3::new(10.0, spawn_y - 1.0, 10.0), Vec3::Y),
         Bloom::NATURAL,
         FpsCamera::default(),
     ));

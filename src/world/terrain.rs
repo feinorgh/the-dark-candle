@@ -432,6 +432,17 @@ impl UnifiedTerrainGenerator {
             _ => None,
         }
     }
+
+    /// Sample terrain surface height at the given world (x, z) coordinates.
+    ///
+    /// For flat mode, delegates to the noise-based height function.
+    /// For spherical mode, returns a conservative estimate (mean_radius).
+    pub fn sample_height(&self, world_x: f64, world_z: f64) -> f64 {
+        match self {
+            Self::Flat(g) => g.sample_height(world_x, world_z),
+            Self::Spherical(g) => g.planet.mean_radius,
+        }
+    }
 }
 
 #[cfg(test)]
