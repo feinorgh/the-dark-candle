@@ -12,7 +12,8 @@ pub mod shadows;
 pub mod sky;
 
 use bevy::prelude::*;
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+use crate::world::planet::PlanetConfig;
 
 /// Marker component for the sun DirectionalLight entity.
 #[derive(Component, Debug, Clone, Copy)]
@@ -106,28 +107,30 @@ pub struct LastShadowAngles {
     pub azimuth: f32,
 }
 
-/// System: advance the clock each frame.
-fn advance_time(mut tod: ResMut<TimeOfDay>, config: Res<DayNightConfig>, time: Res<Time>) {
-    let dt_hours = time.delta_secs() * config.time_scale / 3600.0;
-    tod.0 = (tod.0 + dt_hours) % 24.0;
+/// System: advance the orbital state and sync TimeOfDay for backward compatibility.
+fn advance_time(
+    time: Res<Time>,
+    mut orbital_state: ResMut<orbital::OrbitalState>,
+    mut tod: ResMut<TimeOfDay>,
+) {
+    let real_dt = time.delta_secs_f64();
+    let game_dt = real_dt * orbital_state.time_scale;
+
+    let day_length = 86_400.0;
+    let rotation_rate = std::f64::consts::TAU / day_length;
+    orbital_state.rotation_angle =
+        (orbital_state.rotation_angle + rotation_rate * game_dt) % std::f64::consts::TAU;
+
+    let year_length = day_length * orbital_state.year_in_days;
+    let orbital_rate = std::f64::consts::TAU / year_length;
+    orbital_state.orbital_angle =
+        (orbital_state.orbital_angle + orbital_rate * game_dt) % std::f64::consts::TAU;
+
+    // Sync TimeOfDay from rotation angle for backward compatibility.
+    tod.0 = orbital::time_of_day_from_rotation(orbital_state.rotation_angle);
 }
 
 /// Sun elevation angle (radians) from time of day.
-/// Sunrise at 06:00, zenith at 12:00, sunset at 18:00.
-/// Returns negative values when below the horizon.
-fn sun_elevation(hour: f32) -> f32 {
-    // Map hour to angle: 6h = 0 (horizon), 12h = π/2 (zenith), 18h = π (horizon)
-    // Using sine: elevation = sin((hour - 6) / 12 * π) * π/2
-    // This gives 0 at 6h, π/2 at 12h, 0 at 18h, -π/2 at 0h/24h
-    let day_fraction = (hour - 6.0) / 12.0;
-    (day_fraction * PI).sin() * FRAC_PI_2
-}
-
-/// Sun azimuth angle (radians) — rotates 360° over 24 hours.
-fn sun_azimuth(hour: f32) -> f32 {
-    hour / 24.0 * TAU
-}
-
 /// Color temperature of sunlight based on elevation.
 /// Dawn/dusk: warm orange (~3500 K), noon: neutral white (~6500 K),
 /// night: cool blue moonlight.
@@ -145,69 +148,65 @@ fn sun_color(elevation: f32) -> Color {
     }
 }
 
-/// System: update sun DirectionalLight rotation, color, and intensity.
+/// System: update sun DirectionalLight from orbital-derived direction.
 fn update_sun(
-    tod: Res<TimeOfDay>,
+    orbital_state: Res<orbital::OrbitalState>,
+    planet: Res<PlanetConfig>,
     config: Res<DayNightConfig>,
     mut insolation: ResMut<SolarInsolation>,
     mut sun_dir: ResMut<SunDirection>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
 ) {
-    let elevation = sun_elevation(tod.0);
-    let azimuth = sun_azimuth(tod.0);
+    let (dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
 
-    // Insolation factor: cosine of zenith when above horizon, else 0.
+    // Insolation factor: sine of elevation when above horizon, else 0.
     insolation.0 = elevation.sin().max(0.0);
 
-    // Compute sun direction vector for terrain shadow casting.
+    // Update sun direction for terrain shadows.
     if elevation > 0.0 {
-        sun_dir.0 = [
-            azimuth.cos() * elevation.cos(),
-            elevation.sin(),
-            azimuth.sin() * elevation.cos(),
-        ];
+        sun_dir.0 = dir;
     } else {
-        // Night: straight up (vertical shadows only).
         sun_dir.0 = [0.0, 1.0, 0.0];
     }
 
     for (mut light, mut transform) in &mut sun_q {
-        // Sun direction: rotate around Y (azimuth) then tilt by elevation.
-        // The light shines along -Z of its transform, so we point it downward
-        // at the elevation angle.
-        let pitch = -(FRAC_PI_2 - elevation);
-        *transform = Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, azimuth, pitch, 0.0));
-
-        // Intensity: proportional to elevation above horizon.
         if elevation > 0.0 {
+            let sun_vec = Vec3::new(dir[0], dir[1], dir[2]);
+            *transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
             light.illuminance = config.noon_illuminance * elevation.sin();
             light.color = sun_color(elevation);
         } else {
-            // Sun below horizon — negligible moonlight via directional.
             light.illuminance = config.noon_illuminance * 0.02;
             light.color = sun_color(elevation);
         }
     }
 }
 
-/// System: scale ambient light brightness with sun elevation.
+/// System: scale ambient light brightness with orbital-derived sun elevation.
 fn update_ambient(
-    tod: Res<TimeOfDay>,
+    orbital_state: Res<orbital::OrbitalState>,
+    planet: Res<PlanetConfig>,
     config: Res<DayNightConfig>,
     mut ambient_q: Query<&mut AmbientLight, With<SkyAmbient>>,
 ) {
-    let elevation = sun_elevation(tod.0);
+    let (_dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
     let factor = elevation.sin().max(0.0);
-
-    // Lerp between night_ambient and noon_ambient
     let brightness = config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
 
     for mut ambient in &mut ambient_q {
         ambient.brightness = brightness;
-
-        // Shift ambient color to match time of day
         ambient.color = if elevation <= 0.0 {
-            Color::srgb(0.3, 0.35, 0.5) // blue-ish night
+            Color::srgb(0.3, 0.35, 0.5)
         } else if elevation < 0.3 {
             let t = elevation / 0.3;
             Color::srgb(0.6 + 0.4 * t, 0.65 + 0.35 * t, 0.7 + 0.3 * t)
@@ -217,15 +216,30 @@ fn update_ambient(
     }
 }
 
-/// Spawn the sun and ambient light entities.
-fn spawn_lights(mut commands: Commands, config: Res<DayNightConfig>, tod: Res<TimeOfDay>) {
-    let elevation = sun_elevation(tod.0);
-    let azimuth = sun_azimuth(tod.0);
-    let pitch = -(FRAC_PI_2 - elevation);
+/// Spawn the sun and ambient light entities using orbital state.
+fn spawn_lights(
+    mut commands: Commands,
+    config: Res<DayNightConfig>,
+    orbital_state: Res<orbital::OrbitalState>,
+    planet: Res<PlanetConfig>,
+) {
+    let (dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
     let illuminance = if elevation > 0.0 {
         config.noon_illuminance * elevation.sin()
     } else {
         config.noon_illuminance * 0.02
+    };
+
+    let sun_vec = Vec3::new(dir[0], dir[1], dir[2]);
+    let sun_transform = if elevation > 0.0 {
+        Transform::default().looking_at(-sun_vec, Vec3::Y)
+    } else {
+        Transform::default()
     };
 
     commands.spawn((
@@ -236,7 +250,7 @@ fn spawn_lights(mut commands: Commands, config: Res<DayNightConfig>, tod: Res<Ti
             color: sun_color(elevation),
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, azimuth, pitch, 0.0)),
+        sun_transform,
     ));
 
     let factor = elevation.sin().max(0.0);
@@ -257,7 +271,8 @@ fn update_terrain_shadows(
     sun_dir: Res<SunDirection>,
     shadow_config: Res<ShadowConfig>,
     mut last_angles: ResMut<LastShadowAngles>,
-    tod: Res<TimeOfDay>,
+    orbital_state: Res<orbital::OrbitalState>,
+    planet: Res<PlanetConfig>,
     registry: Option<Res<crate::data::MaterialRegistry>>,
     mut chunk_q: Query<(
         &mut crate::world::chunk::Chunk,
@@ -269,8 +284,13 @@ fn update_terrain_shadows(
     }
     let Some(_registry) = registry else { return };
 
-    let elevation = sun_elevation(tod.0);
-    let azimuth = sun_azimuth(tod.0);
+    let (_dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
+    let azimuth = orbital_state.rotation_angle as f32;
 
     // Check angle threshold.
     let elev_delta = (elevation - last_angles.elevation).abs().to_degrees();
@@ -302,6 +322,13 @@ pub struct LightingPlugin;
 
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
+        // Initialize OrbitalState so rotation corresponds to TimeOfDay default (10:00).
+        let initial_rotation = 10.0 / 24.0 * std::f64::consts::TAU;
+        app.insert_resource(orbital::OrbitalState {
+            rotation_angle: initial_rotation,
+            ..Default::default()
+        });
+
         app.init_resource::<TimeOfDay>()
             .init_resource::<DayNightConfig>()
             .init_resource::<SolarInsolation>()
@@ -313,6 +340,7 @@ impl Plugin for LightingPlugin {
                 Update,
                 (
                     advance_time,
+                    orbital::time_acceleration_input,
                     update_sun,
                     update_ambient,
                     update_chunk_light_maps,
@@ -364,6 +392,19 @@ fn update_chunk_light_maps(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::{FRAC_PI_2, TAU};
+
+    /// Old sinusoidal sun elevation (kept for legacy tests).
+    fn sun_elevation(hour: f32) -> f32 {
+        use std::f32::consts::PI;
+        let day_fraction = (hour - 6.0) / 12.0;
+        (day_fraction * PI).sin() * FRAC_PI_2
+    }
+
+    /// Old sinusoidal sun azimuth (kept for legacy tests).
+    fn sun_azimuth(hour: f32) -> f32 {
+        hour / 24.0 * TAU
+    }
 
     #[test]
     fn sun_elevation_at_noon_is_zenith() {

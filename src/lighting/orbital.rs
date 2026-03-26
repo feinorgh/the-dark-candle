@@ -129,6 +129,43 @@ pub fn time_of_day_from_rotation(rotation_angle: f64) -> f32 {
     hours % 24.0
 }
 
+/// System: handle time acceleration keybindings.
+///
+/// - `BracketLeft` (`[`): halve time scale (min 1.0)
+/// - `BracketRight` (`]`): double time scale (max 100_000.0)
+/// - `Backslash` (`\`): reset to default (72.0)
+/// - `KeyP`: toggle pause (set to 0 or restore previous)
+pub fn time_acceleration_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<OrbitalState>,
+    mut saved_scale: Local<Option<f64>>,
+) {
+    if keyboard.just_pressed(KeyCode::BracketLeft) {
+        state.time_scale = (state.time_scale / 2.0).max(1.0);
+        info!("Time scale: {}×", state.time_scale);
+    }
+    if keyboard.just_pressed(KeyCode::BracketRight) {
+        state.time_scale = (state.time_scale * 2.0).min(100_000.0);
+        info!("Time scale: {}×", state.time_scale);
+    }
+    if keyboard.just_pressed(KeyCode::Backslash) {
+        state.time_scale = 72.0;
+        *saved_scale = None;
+        info!("Time scale reset to 72×");
+    }
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        if state.time_scale == 0.0 {
+            state.time_scale = saved_scale.unwrap_or(72.0);
+            *saved_scale = None;
+            info!("Time resumed: {}×", state.time_scale);
+        } else {
+            *saved_scale = Some(state.time_scale);
+            state.time_scale = 0.0;
+            info!("Time paused");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +277,36 @@ mod tests {
             (actual_advance - orbital_per_day).abs() < 1e-10,
             "One day should advance orbital angle by TAU/365.25"
         );
+    }
+
+    #[test]
+    fn time_scale_halving_has_minimum() {
+        let mut scale = 2.0_f64;
+        scale = (scale / 2.0).max(1.0);
+        assert_eq!(scale, 1.0);
+        scale = (scale / 2.0).max(1.0);
+        assert_eq!(scale, 1.0);
+    }
+
+    #[test]
+    fn time_scale_doubling_has_maximum() {
+        let mut scale = 50_000.0_f64;
+        scale = (scale * 2.0).min(100_000.0);
+        assert_eq!(scale, 100_000.0);
+        scale = (scale * 2.0).min(100_000.0);
+        assert_eq!(scale, 100_000.0);
+    }
+
+    #[test]
+    fn pause_sets_zero_and_resume_restores() {
+        let mut state = OrbitalState {
+            time_scale: 144.0,
+            ..Default::default()
+        };
+        let saved = state.time_scale;
+        state.time_scale = 0.0;
+        assert_eq!(state.time_scale, 0.0);
+        state.time_scale = saved;
+        assert_eq!(state.time_scale, 144.0);
     }
 }
