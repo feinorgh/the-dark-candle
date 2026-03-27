@@ -1,16 +1,19 @@
-// Load system: restore game state from `saves/save.ron`.
+// Load system: restore game state from a save slot RON file.
 //
-// Triggered by pressing F9. Despawns all persistent world entities, then
-// reconstructs them from the save document. The terrain generator is
-// re-seeded from the saved config so newly-loaded (out-of-range) chunks
-// continue to match the saved world.
+// Triggered by pressing F9 (quick-load from auto slot) or via `LoadRequest`
+// resource written by the pause menu. Despawns all persistent world entities,
+// then reconstructs them from the save document.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use crate::{
+    biology::health::Health,
+    camera::FpsCamera,
     entities::Enemy,
+    hud::Player,
+    interaction::Hotbar,
     physics::{collision::Collider, gravity::PhysicsBody},
     procgen::{creatures::Creature, items::Item},
     social::{
@@ -21,10 +24,11 @@ use crate::{
         chunk::{Chunk, ChunkCoord},
         chunk_manager::{ChunkMap, TerrainGeneratorRes},
         terrain::{TerrainConfig, TerrainGenerator, UnifiedTerrainGenerator},
+        voxel::MaterialId,
     },
 };
 
-use super::types::{SAVE_PATH, SAVE_VERSION, SaveId, decode_rle};
+use super::types::{LEGACY_SAVE_PATH, SAVE_VERSION, SaveId, SaveSlot, decode_rle};
 
 /// Migrate a save from an older version to the current format.
 /// Returns true if migration was applied, false if already current.
@@ -38,9 +42,7 @@ fn migrate_save(save: &mut super::types::SaveGame) -> bool {
         info!("Migrating save v1 → v2: pressure atm→Pa, temperature to standard atmosphere");
         for chunk in &mut save.chunks {
             for run in &mut chunk.runs {
-                // Convert pressure from atmospheres to Pascals
                 run.pressure *= 101_325.0;
-                // Adjust default temperature (293 K → 288.15 K for ambient voxels)
                 if (run.temperature - 293.0).abs() < 0.01 {
                     run.temperature = 288.15;
                 }
@@ -49,7 +51,46 @@ fn migrate_save(save: &mut super::types::SaveGame) -> bool {
         save.version = 2;
     }
 
+    // v2 → v3: player field added (defaults to None via serde, nothing to do)
+    if save.version == 2 {
+        info!("Migrating save v2 → v3: player data field added");
+        // `player` already defaults to None via `#[serde(default)]`
+        save.version = 3;
+    }
+
     true
+}
+
+/// Resource that triggers a load from a specific slot. Consumed by
+/// `load_game`.
+#[derive(Resource)]
+pub struct LoadRequest(pub SaveSlot);
+
+/// Try to find a save file: first check the slot path, then fall back to the
+/// legacy `saves/save.ron` for backward compatibility.
+fn find_save_path(slot: SaveSlot) -> Option<String> {
+    let path = slot.path();
+    if std::path::Path::new(&path).exists() {
+        return Some(path);
+    }
+    // For Auto slot, fall back to legacy path
+    if slot == SaveSlot::Auto && std::path::Path::new(LEGACY_SAVE_PATH).exists() {
+        return Some(LEGACY_SAVE_PATH.to_string());
+    }
+    None
+}
+
+/// Return metadata (slot, label, file size, exists) for all save slots.
+/// Used by the UI to show which slots have data.
+pub fn list_save_slots() -> Vec<(SaveSlot, String, bool)> {
+    SaveSlot::all()
+        .into_iter()
+        .map(|slot| {
+            let exists = std::path::Path::new(&slot.path()).exists()
+                || (slot == SaveSlot::Auto && std::path::Path::new(LEGACY_SAVE_PATH).exists());
+            (slot, slot.label(), exists)
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +101,7 @@ fn migrate_save(save: &mut super::types::SaveGame) -> bool {
 pub fn load_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
+    load_request: Option<Res<LoadRequest>>,
     mut chunk_map: ResMut<ChunkMap>,
     mut terrain_gen: ResMut<TerrainGeneratorRes>,
     mut faction_registry: ResMut<FactionRegistry>,
@@ -69,15 +111,35 @@ pub fn load_game(
     creature_query: Query<Entity, With<Creature>>,
     item_query: Query<Entity, With<Item>>,
     enemy_query: Query<Entity, With<Enemy>>,
+    mut player_query: Query<(&mut Transform, &mut FpsCamera, &mut Health), With<Player>>,
+    mut hotbar: Option<ResMut<Hotbar>>,
 ) {
-    if !keyboard.just_pressed(KeyCode::F9) {
+    // Determine target slot: from LoadRequest resource, or F9 quick-load.
+    let slot = if let Some(req) = load_request.as_ref() {
+        req.0
+    } else if keyboard.just_pressed(KeyCode::F9) {
+        SaveSlot::Auto
+    } else {
         return;
+    };
+
+    // Consume the request resource if present.
+    if load_request.is_some() {
+        commands.remove_resource::<LoadRequest>();
     }
 
-    let text = match std::fs::read_to_string(SAVE_PATH) {
+    let path = match find_save_path(slot) {
+        Some(p) => p,
+        None => {
+            warn!("No save file found for {}", slot.label());
+            return;
+        }
+    };
+
+    let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) => {
-            warn!("No save file found at {SAVE_PATH}: {e}");
+            warn!("Failed to read save file at {path}: {e}");
             return;
         }
     };
@@ -304,5 +366,27 @@ pub fn load_game(
         }
     }
 
-    info!("Load complete.");
+    // --- Restore player state --------------------------------------------
+    if let Some(ps) = &save.player {
+        if let Ok((mut transform, mut cam, mut health)) = player_query.single_mut() {
+            transform.translation = Vec3::new(ps.position[0], ps.position[1], ps.position[2]);
+            cam.pitch = ps.pitch;
+            cam.yaw = ps.yaw;
+            cam.gravity_enabled = ps.gravity_enabled;
+            // Recompute rotation from pitch/yaw
+            transform.rotation = Quat::from_rotation_y(cam.yaw) * Quat::from_rotation_x(cam.pitch);
+            health.current = ps.health_current;
+            health.max = ps.health_max;
+        }
+
+        if let Some(hb) = hotbar.as_mut() {
+            let count = ps.hotbar_slots.len().min(hb.slots.len());
+            for i in 0..count {
+                hb.slots[i] = MaterialId(ps.hotbar_slots[i]);
+            }
+            hb.selected = ps.hotbar_selected.min(hb.slots.len().saturating_sub(1));
+        }
+    }
+
+    info!("Load complete ({}).", slot.label());
 }

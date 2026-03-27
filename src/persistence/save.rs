@@ -1,8 +1,9 @@
-// Save system: serialize the current game state to `saves/save.ron`.
+// Save system: serialize the current game state to a save slot RON file.
 //
-// Triggered by pressing F5. Queries all persistent ECS entities, converts
-// them into serialisable save types, and writes a `SaveGame` document via
-// the `ron` crate.
+// Triggered by pressing F5 (quick-save to current slot) or via `SaveRequest`
+// resource written by the pause menu. Queries all persistent ECS entities,
+// converts them into serialisable save types, and writes a `SaveGame`
+// document via the `ron` crate.
 
 use std::collections::HashMap;
 
@@ -11,7 +12,10 @@ use bevy::prelude::*;
 use crate::{
     behavior::needs::Needs,
     biology::{growth::Growth, health::Health, metabolism::Metabolism},
+    camera::FpsCamera,
     entities::Enemy,
+    hud::Player,
+    interaction::Hotbar,
     physics::{collision::Collider, gravity::PhysicsBody},
     procgen::{creatures::Creature, items::Item},
     social::{factions::FactionRegistry, relationships::Relationships},
@@ -20,8 +24,8 @@ use crate::{
 
 use super::types::{
     ChunkSave, ColliderSave, CreatureSave, EnemySave, FactionRegistrySave, FactionRelationEntry,
-    FactionSave, ItemSave, PhysicsBodySave, RelationshipEntry, SAVE_PATH, SAVE_VERSION, SaveGame,
-    SaveId, TerrainConfigSave, encode_rle,
+    FactionSave, ItemSave, PhysicsBodySave, PlayerSave, RelationshipEntry, SAVE_DIR, SAVE_VERSION,
+    SaveGame, SaveId, SaveSlot, TerrainConfigSave, encode_rle,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,20 +74,58 @@ type ItemQuery<'w, 's> = Query<
 // Save system
 // ---------------------------------------------------------------------------
 
+/// Resource that triggers a save to a specific slot. Consumed by `save_game`.
+#[derive(Resource)]
+pub struct SaveRequest(pub SaveSlot);
+
+#[allow(clippy::too_many_arguments)]
 pub fn save_game(
     keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    save_request: Option<Res<SaveRequest>>,
     terrain_gen: Res<TerrainGeneratorRes>,
     faction_registry: Res<FactionRegistry>,
     chunk_query: Query<(&Chunk, &Transform)>,
     creature_query: CreatureQuery,
     item_query: ItemQuery,
     enemy_query: Query<(Entity, &SaveId, &Transform, &Enemy)>,
+    player_query: Query<(&Transform, &FpsCamera, &Health), With<Player>>,
+    hotbar: Option<Res<Hotbar>>,
 ) {
-    if !keyboard.just_pressed(KeyCode::F5) {
+    // Determine target slot: from SaveRequest resource, or F5 quick-save.
+    let slot = if let Some(req) = save_request.as_ref() {
+        req.0
+    } else if keyboard.just_pressed(KeyCode::F5) {
+        SaveSlot::Auto
+    } else {
         return;
+    };
+
+    // Consume the request resource if present.
+    if save_request.is_some() {
+        commands.remove_resource::<SaveRequest>();
     }
 
-    info!("Saving game to {}…", SAVE_PATH);
+    let path = slot.path();
+    info!("Saving game to {path}…");
+
+    // --- Player ----------------------------------------------------------
+    let player = player_query.single().ok().map(|(transform, cam, health)| {
+        let t = transform.translation;
+        let hb = hotbar.as_deref();
+        PlayerSave {
+            position: [t.x, t.y, t.z],
+            pitch: cam.pitch,
+            yaw: cam.yaw,
+            health_current: health.current,
+            health_max: health.max,
+            gravity_enabled: cam.gravity_enabled,
+            hotbar_slots: hb
+                .map(|h| h.slots.iter().map(|m| m.0).collect())
+                .unwrap_or_default(),
+            hotbar_selected: hb.map(|h| h.selected).unwrap_or(0),
+        }
+    });
 
     // --- Terrain ---------------------------------------------------------
     let tc = terrain_gen
@@ -269,13 +311,15 @@ pub fn save_game(
             relations: relations_save,
             creature_factions,
         },
+        player,
     };
 
-    std::fs::create_dir_all("saves").ok();
+    std::fs::create_dir_all(SAVE_DIR).ok();
     match ron::ser::to_string_pretty(&save, ron::ser::PrettyConfig::default()) {
-        Ok(text) => match std::fs::write(SAVE_PATH, text) {
+        Ok(text) => match std::fs::write(&path, text) {
             Ok(()) => info!(
-                "Game saved ({} chunks, {} creatures, {} items, {} enemies).",
+                "Game saved to {} ({} chunks, {} creatures, {} items, {} enemies).",
+                slot.label(),
                 save.chunks.len(),
                 save.creatures.len(),
                 save.items.len(),

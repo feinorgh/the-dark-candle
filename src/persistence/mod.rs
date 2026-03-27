@@ -1,14 +1,19 @@
-// Persistence plugin: save (F5) and load (F9) game state to RON files.
+// Persistence plugin: save and load game state to RON files.
 //
 // Each persistent entity gets a `SaveId` component assigned at spawn.
 // This stable u64 allows relationship maps (which use entity bits as keys)
 // to be correctly remapped when entities are re-created after a load.
+//
+// Save slots: 1 autosave + 3 manual slots. F5/F9 for quick save/load.
+// Pause menu integration via `SaveRequest` / `LoadRequest` resources.
 
 mod load;
 mod save;
 pub mod types;
 
-pub use types::SaveId;
+pub use load::{LoadRequest, list_save_slots};
+pub use save::SaveRequest;
+pub use types::{SaveId, SaveSlot};
 
 use bevy::prelude::*;
 

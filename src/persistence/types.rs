@@ -14,8 +14,49 @@ use crate::{
     procgen::{creatures::Creature, items::Item},
 };
 
-pub const SAVE_VERSION: u32 = 2;
-pub const SAVE_PATH: &str = "saves/save.ron";
+pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_DIR: &str = "saves";
+/// Legacy single-file path kept for backward compatibility on load.
+pub const LEGACY_SAVE_PATH: &str = "saves/save.ron";
+
+/// Number of manual save slots (in addition to the autosave slot).
+pub const MANUAL_SLOT_COUNT: usize = 3;
+
+/// Identifies a save slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SaveSlot {
+    Auto,
+    Manual(u8), // 1..=MANUAL_SLOT_COUNT
+}
+
+impl SaveSlot {
+    pub fn filename(&self) -> String {
+        match self {
+            SaveSlot::Auto => "autosave.ron".to_string(),
+            SaveSlot::Manual(n) => format!("slot_{n}.ron"),
+        }
+    }
+
+    pub fn path(&self) -> String {
+        format!("{}/{}", SAVE_DIR, self.filename())
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            SaveSlot::Auto => "Autosave".to_string(),
+            SaveSlot::Manual(n) => format!("Slot {n}"),
+        }
+    }
+
+    /// All available slots in display order.
+    pub fn all() -> Vec<SaveSlot> {
+        let mut slots = vec![SaveSlot::Auto];
+        for i in 1..=MANUAL_SLOT_COUNT as u8 {
+            slots.push(SaveSlot::Manual(i));
+        }
+        slots
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Stable entity identity
@@ -39,6 +80,25 @@ pub struct SaveGame {
     pub items: Vec<ItemSave>,
     pub enemies: Vec<EnemySave>,
     pub factions: FactionRegistrySave,
+    /// Player state (None for saves from v2 or earlier).
+    #[serde(default)]
+    pub player: Option<PlayerSave>,
+}
+
+// ---------------------------------------------------------------------------
+// Player state
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PlayerSave {
+    pub position: [f32; 3],
+    pub pitch: f32,
+    pub yaw: f32,
+    pub health_current: f32,
+    pub health_max: f32,
+    pub gravity_enabled: bool,
+    pub hotbar_slots: Vec<u16>,
+    pub hotbar_selected: usize,
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 
+use crate::persistence::{LoadRequest, SaveRequest, SaveSlot, list_save_slots};
 use crate::world::chunk_manager::PendingChunks;
 
 /// Top-level game state.
@@ -152,9 +153,18 @@ fn toggle_pause(
 #[derive(Component)]
 struct PauseMenu;
 
+/// Marker for the save/load slot sub-panel.
+#[derive(Component)]
+struct SlotPanel;
+
 #[derive(Component)]
 enum PauseButton {
     Resume,
+    SaveGame,
+    LoadGame,
+    SaveSlot(SaveSlot),
+    LoadSlot(SaveSlot),
+    BackToMenu,
     Quit,
 }
 
@@ -183,8 +193,73 @@ fn spawn_pause_menu(commands: &mut Commands) {
                 TextColor(Color::WHITE),
             ));
             spawn_button(parent, "Resume", PauseButton::Resume);
+            spawn_button(parent, "Save Game", PauseButton::SaveGame);
+            spawn_button(parent, "Load Game", PauseButton::LoadGame);
             spawn_button(parent, "Quit", PauseButton::Quit);
         });
+}
+
+fn spawn_slot_panel(commands: &mut Commands, mode: SlotPanelMode) {
+    let title = match mode {
+        SlotPanelMode::Save => "Save to slot:",
+        SlotPanelMode::Load => "Load from slot:",
+    };
+
+    let slots = list_save_slots();
+
+    commands
+        .spawn((
+            SlotPanel,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(20.0),
+                top: Val::Percent(30.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                padding: UiRect::all(Val::Px(16.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.9)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(title.to_string()),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.7, 0.3)),
+            ));
+
+            for (slot, label, exists) in &slots {
+                let display = if *exists {
+                    format!("{label} ●")
+                } else {
+                    format!("{label} (empty)")
+                };
+
+                let marker = match mode {
+                    SlotPanelMode::Save => PauseButton::SaveSlot(*slot),
+                    SlotPanelMode::Load => {
+                        if *exists {
+                            PauseButton::LoadSlot(*slot)
+                        } else {
+                            continue; // skip empty slots in load mode
+                        }
+                    }
+                };
+
+                spawn_button(parent, &display, marker);
+            }
+
+            spawn_button(parent, "Back", PauseButton::BackToMenu);
+        });
+}
+
+#[derive(Clone, Copy)]
+enum SlotPanelMode {
+    Save,
+    Load,
 }
 
 fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, marker: PauseButton) {
@@ -212,23 +287,63 @@ fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, marker: PauseBut
 }
 
 fn pause_menu_interaction(
+    mut commands: Commands,
     mut interaction_q: Query<
         (&Interaction, &PauseButton, &mut BackgroundColor),
         Changed<Interaction>,
     >,
     mut next_state: ResMut<NextState<GameState>>,
     mut exit: MessageWriter<AppExit>,
+    slot_panel: Query<Entity, With<SlotPanel>>,
 ) {
     for (interaction, button, mut bg) in &mut interaction_q {
         match interaction {
-            Interaction::Pressed => match button {
-                PauseButton::Resume => {
-                    next_state.set(GameState::Playing);
+            Interaction::Pressed => {
+                match button {
+                    PauseButton::Resume => {
+                        next_state.set(GameState::Playing);
+                    }
+                    PauseButton::SaveGame => {
+                        // Despawn any existing slot panel, then show save slots
+                        for e in &slot_panel {
+                            commands.entity(e).despawn();
+                        }
+                        spawn_slot_panel(&mut commands, SlotPanelMode::Save);
+                    }
+                    PauseButton::LoadGame => {
+                        for e in &slot_panel {
+                            commands.entity(e).despawn();
+                        }
+                        spawn_slot_panel(&mut commands, SlotPanelMode::Load);
+                    }
+                    PauseButton::SaveSlot(slot) => {
+                        commands.insert_resource(SaveRequest(*slot));
+                        // Close slot panel
+                        for e in &slot_panel {
+                            commands.entity(e).despawn();
+                        }
+                    }
+                    PauseButton::LoadSlot(slot) => {
+                        commands.insert_resource(LoadRequest(*slot));
+                        // Close panels and resume
+                        for e in &slot_panel {
+                            commands.entity(e).despawn();
+                        }
+                        next_state.set(GameState::Playing);
+                    }
+                    PauseButton::BackToMenu => {
+                        for e in &slot_panel {
+                            commands.entity(e).despawn();
+                        }
+                    }
+                    PauseButton::Quit => {
+                        // Auto-save before quitting
+                        commands.insert_resource(SaveRequest(SaveSlot::Auto));
+                        // Note: the save system runs this frame before exit
+                        exit.write(AppExit::Success);
+                    }
                 }
-                PauseButton::Quit => {
-                    exit.write(AppExit::Success);
-                }
-            },
+            }
             Interaction::Hovered => {
                 *bg = BackgroundColor(Color::srgb(0.3, 0.3, 0.38));
             }
@@ -242,8 +357,15 @@ fn pause_menu_interaction(
 // Clean up pause menu when leaving Paused state (handles both Resume and any
 // other transition).  Registered as OnExit so we don't need the menu to clean
 // itself up in the interaction handler.
-fn despawn_pause_menu(mut commands: Commands, q: Query<Entity, With<PauseMenu>>) {
+fn despawn_pause_menu(
+    mut commands: Commands,
+    q: Query<Entity, With<PauseMenu>>,
+    slot_q: Query<Entity, With<SlotPanel>>,
+) {
     for entity in &q {
+        commands.entity(entity).despawn();
+    }
+    for entity in &slot_q {
         commands.entity(entity).despawn();
     }
 }
