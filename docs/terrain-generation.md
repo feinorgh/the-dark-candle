@@ -582,9 +582,23 @@ available during `generate_chunk()` for:
 #### HydraulicErosionConfig
 
 ```rust
+/// Simulation mode for hydraulic erosion.
+/// See "Reference Techniques" section for detailed comparison.
+pub enum ErosionSimMode {
+    /// Individual water droplets follow gradient, erode steep slopes,
+    /// deposit on flat areas. Better for fine-scale gullies.
+    Droplet,
+    /// Water, sediment, velocity tracked as 2D fields over entire grid.
+    /// Better for broad landscape-wide shaping and sedimentary plains.
+    GridBased,
+    /// Grid-based pass first (broad shaping), then droplet pass (fine detail).
+    Combined,
+}
+
 pub struct HydraulicErosionConfig {
     pub enabled: bool,                   // Master toggle (default: false)
-    pub iterations: u32,                 // Total droplets (default: 100_000)
+    pub mode: ErosionSimMode,            // Simulation approach (default: Combined)
+    pub iterations: u32,                 // Droplet count or grid iterations (default: 100_000 / 720)
     pub erosion_radius: f32,             // Deposit/erode kernel radius in cells (default: 3.0)
     pub inertia: f32,                    // Droplet momentum vs gradient (default: 0.05)
     pub sediment_capacity_factor: f32,   // Carrying capacity multiplier (default: 4.0)
@@ -594,12 +608,27 @@ pub struct HydraulicErosionConfig {
     pub evaporation_rate: f32,           // Water loss per step (default: 0.01)
     pub gravity: f32,                    // Acceleration factor (default: 4.0)
     pub max_droplet_lifetime: u32,       // Steps before forced stop (default: 30)
+    pub repose_slope: f32,               // Angle-of-repose threshold (default: 0.03)
     pub rainfall_noise_freq: f64,        // Rainfall pattern frequency (default: 0.003)
     pub rainfall_base: f32,              // Base moisture level (default: 0.5)
     pub altitude_rain_penalty: f32,      // Reduction per metre above threshold (default: 0.006)
     pub altitude_rain_threshold: f32,    // Altitude where penalty starts (default: 50.0 m above sea)
 }
 ```
+
+The `mode` field selects the simulation approach:
+
+- **`Droplet`** — Rainfall-weighted particle simulation. Each droplet is
+  independent; rainfall intensity map controls spawn density. Produces fine
+  branching gullies. Best for detail.
+- **`GridBased`** — Whole-grid simulation tracking water/sediment/velocity
+  as 2D fields. Each iteration adds precipitation, computes gradient, erodes/
+  deposits, displaces fields downhill, evaporates. Applies angle-of-repose
+  smoothing via `repose_slope`. Iterations = O(N) where N = grid dimension
+  (default 1.4 × 512 ≈ 720). Best for broad landscape shaping.
+- **`Combined`** (default) — Grid-based pass first for broad shaping, then
+  droplet pass for fine detail. The grid pass creates wide valleys and
+  sedimentary plains; the droplet pass adds branching gullies within them.
 
 Embedded in `TerrainConfig` alongside `erosion: ErosionConfig`:
 
@@ -621,13 +650,17 @@ and run once during world initialization:
 2. Sink fill (Planchon-Darboux)
 3. D8 flow direction + accumulation
 4. Valley carving (existing — large-scale channels)
-5. ► Hydraulic erosion (NEW — fine-scale rainfall-driven detail)
-6. Cache final heightmap + sediment map
-7. Per-chunk generation reads cached heightmap
+5. ► Grid-based hydraulic erosion (broad valleys, sedimentary plains)
+6. ► Angle-of-repose slippage smoothing
+7. ► Droplet hydraulic erosion (fine gullies, rainfall-weighted)
+8. Cache final heightmap + sediment map
+9. Per-chunk generation reads cached heightmap
 ```
 
-Step 5 runs after valley carving so droplets can flow through the carved
-channels, depositing sediment in valley floors. The D8 pass creates the river
+Steps 5–7 are the `Combined` mode (default). `Droplet` mode skips 5–6.
+`GridBased` mode skips 7. The D8 pass creates the river network; grid-based
+erosion shapes broad valleys around it; droplet erosion adds fine branching
+detail.
 network; the hydraulic pass adds the gully network and smoothing around it.
 
 #### Performance budget
@@ -740,3 +773,205 @@ realistic patterns.
 | `src/procgen/biomes.rs` | Modify | Add terrain modifier fields to `BiomeData` |
 | `assets/data/materials/*.material.ron` | **New** | 6–8 geological/ore materials |
 | `assets/data/biomes/*.biome.ron` | Modify | Add `terrain` section |
+
+---
+
+## Reference Techniques
+
+Inspired by [dandrino/terrain-erosion-3-ways](https://github.com/dandrino/terrain-erosion-3-ways),
+which demonstrates three distinct erosion approaches in Python: grid-based
+hydraulic simulation, river-network-first generation, and GAN-based terrain.
+Several techniques from that project are directly applicable to our design.
+
+### Fourier-based FBM (enhances T1)
+
+The reference repo generates FBM by applying a power-law filter in the
+frequency domain instead of summing coherent noise octaves:
+
+```
+fbm_fourier(shape, p=-2.0, lower, upper):
+    freq_radial = hypot(fftfreq(nx), fftfreq(nz))
+    envelope = freq_radial^p  (where freq_radial != 0)
+    envelope *= (freq_radial > lower) * (freq_radial < upper)
+    phase_noise = exp(2πi × random(shape))
+    return real(ifft2(fft2(phase_noise) × envelope))
+```
+
+This produces equivalent results to layered Perlin FBM but with precise
+control over frequency band limits (`lower`, `upper`). It's faster for large
+grids (single FFT pair vs. per-octave evaluation) and avoids the lattice
+artifacts of Perlin noise.
+
+**Application to T1:** Consider offering Fourier-based FBM as an alternative
+noise source in `NoiseStack`. For terrain generation on the coarse heightmap
+(512² FlowMap grid), the FFT approach is ideal — one call produces the entire
+field. For per-column evaluation during `generate_chunk()`, the layered Perlin
+approach remains more practical (evaluates single points, not the full grid).
+
+### Ridge noise via per-octave absolute value (enhances T1)
+
+The repo's ridge noise takes the absolute value of each octave *before*
+summing, then inverts and squares:
+
+```
+for octave p in 1..10:
+    a = 2^p
+    values += abs(noise_octave(shape, a) - 0.5) / a
+result = (1.0 - normalize(values))²
+```
+
+This differs from our planned ridged multi-fractal (which uses gain feedback
+between octaves). Both produce ridge-like features, but this variant produces
+more uniform ridge density. The gain-feedback variant produces self-amplifying
+ridges that are more pronounced. Our `NoiseStack` should support both modes
+via a `RidgeMode` enum: `GainFeedback` (default) and `AbsoluteValue`.
+
+### Grid-based hydraulic simulation (enhances T10)
+
+Our T10 currently describes a droplet-based approach. The reference repo uses
+a fundamentally different grid-based simulation where water, sediment, and
+velocity are tracked as 2D fields across the entire heightmap. Each iteration:
+
+1. Add precipitation (uniform random distribution across all cells)
+2. Compute gradient (normalized, with random direction for flat cells)
+3. Compute sediment capacity: `max(delta_h, min) / cell_width × velocity × water × C`
+4. Erode or deposit: dissolve terrain where capacity > sediment, deposit where
+   capacity < sediment, always deposit in uphill cells
+5. Displace water and sediment downhill (conservative advection via
+   fractional-offset weighting to neighbor cells)
+6. Evaporate water
+
+**Key differences from our droplet approach:**
+
+| Aspect | Droplet-based (T10 current) | Grid-based (reference) |
+|--------|---------------------------|----------------------|
+| Water model | Individual particles | Continuous field |
+| Parallelism | Each droplet independent | Entire grid per iteration |
+| Flow convergence | Emerges from droplet paths | Naturally accumulates |
+| Sediment transport | Per-droplet capacity | Per-cell capacity |
+| Iterations needed | ~100K droplets × 30 steps | O(N) iterations over full grid |
+| Fine detail | Better (narrow gullies) | Broader (wide valleys) |
+| Sediment deposition | Localized to droplet path | Distributed across field |
+
+**Application to T10:** Offer both simulation modes in `HydraulicErosionConfig`:
+
+```rust
+pub enum ErosionSimMode {
+    Droplet,     // Particle-based (fine gullies, raindrop-weighted)
+    GridBased,   // Field-based (broad valleys, uniform or weighted precip)
+}
+```
+
+- `Droplet` is better for fine-scale detail (gullies branching off valleys)
+- `GridBased` is better for large-scale landscape-wide erosion (flattened
+  valleys, sedimentary plains, differential erosion)
+- Presets could run both: grid-based first (broad shaping), then droplet
+  (fine detail)
+
+### Angle of repose / talus slippage (enhances T10)
+
+After each erosion iteration, the reference repo applies slippage smoothing:
+
+```
+delta = gradient(terrain) / cell_width
+smoothed = gaussian_blur(terrain, sigma=1.5)
+terrain = where(abs(delta) > repose_slope, smoothed, terrain)
+```
+
+This enforces a maximum stable slope angle (the angle of repose). Slopes
+exceeding it are smoothed via Gaussian blur, simulating talus/scree
+accumulation at the base of steep faces.
+
+**Application to T10:** Add a `repose_slope: f32` parameter to
+`HydraulicErosionConfig` (default 0.03, i.e. ~1.7° — aggressive smoothing
+for sedimentary terrain, or 0.5 ~= 26.6° for rocky terrain). Apply after
+each grid-based iteration, or as a final post-processing pass for
+droplet-based erosion.
+
+### River-first terrain generation (potential future technique)
+
+The most novel technique from the reference repo. Instead of carving rivers
+into existing terrain, it generates the river network first and then sculpts
+terrain to match:
+
+1. **Land mask** — FBM + bump function determines land vs ocean
+2. **Poisson disc + Delaunay** — Irregular mesh avoids grid artifacts
+3. **River graph** — Grown from coast upstream via priority queue:
+   - Only uphill edges allowed (guarantees downhill flow)
+   - No reconnections (rivers only merge, never split)
+   - Edge priority includes **directional inertia** — rivers maintain
+     momentum, producing natural meanders. Configurable parameter
+     (0 = follow steepest gradient, 1 = perfectly straight)
+4. **Water volume** — Accumulated upstream: `volume[i] = base + Σ volume[upstream] × (1 - evaporation)`
+5. **River downcutting** — Height delta modulated by water volume:
+   `effective_delta = min(max_delta, raw_delta × 1/(1 + volume^downcutting_constant))`
+   High-volume rivers carve deeper into terrain.
+6. **Render** — Triangulate point heights back onto regular grid
+
+**River downcutting formula for D8 enhancement:** Our existing D8 valley
+carving uses `depth = depth_scale × ln(flow_accumulation)`. The reference
+approach is complementary — it reduces the height *gradient* along rivers
+rather than carving a cross-section. Our carving approach is better for
+creating visible valley shapes; the downcutting approach is better for
+making river profiles concave (steeper near source, flatter near mouth).
+
+Consider adding a `downcutting_constant: f32` to `ErosionConfig` that
+modulates the D8 carving depth by the inverse volume formula:
+
+```
+effective_depth = base_depth × 1.0 / (1.0 + (flow_accum as f32).powf(downcutting_constant))
+```
+
+This would make our valleys deeper where rivers are larger, matching natural
+longitudinal river profiles.
+
+**Directional inertia for droplet erosion:** The river-first approach's
+directional inertia concept also applies to our T10 droplet simulation.
+Our current T10 design already has an `inertia` parameter that blends
+droplet direction between previous heading and gradient — this is equivalent
+to the reference's `directional_inertia`. The T10 design is already
+well-aligned here.
+
+**Application:** River-first generation is best suited as an alternative
+preset mode for island/archipelago terrain (T3). Instead of noise → erosion,
+use land mask → river network → terrain sculpting → final erosion pass.
+This would be a distinct code path in `generate_chunk()`, gated by a
+`TerrainMode::RiverFirst` variant. Lower priority than T10 since the D8 +
+hydraulic erosion approach already produces good river valleys.
+
+### Domain warping implementation pattern (validates T1)
+
+The reference repo's domain warping is notably simple:
+
+```python
+offsets = 150 × (fbm(shape) + i × fbm(shape))  # complex-valued offset field
+result = sample(values, offsets)                  # bilinear interpolation
+```
+
+This confirms our T1 domain warping design. The key detail is the offset
+magnitude — the reference uses 150 units on a 512-cell grid (~29% of grid
+width), which is quite aggressive warping. Our `warp_strength = 40.0` voxels
+on a ~200 m chunk width (~20%) is comparable. The reference also uses `lower=1.5`
+frequency bound to keep the warp field smooth — our `warp_freq = 0.004` serves
+the same purpose.
+
+### Conservative advection (detail for T10 grid mode)
+
+The reference repo's `displace()` function distributes quantities to
+neighboring cells using fractional-offset weighting:
+
+```
+for dx in [-1, 0, 1]:
+    for dy in [-1, 0, 1]:
+        weight = max(fn[dx](offset_x), 0) × max(fn[dy](offset_y), 0)
+        result += roll(weight × value, dx, dy)
+```
+
+This ensures mass conservation (total water and sediment remain constant)
+during transport. For our Rust implementation of the grid-based mode,
+use the same 3×3 bilinear splatting kernel when moving water/sediment
+downhill.
+
+---
+
+*Reference: [dandrino/terrain-erosion-3-ways](https://github.com/dandrino/terrain-erosion-3-ways) (MIT license)*
