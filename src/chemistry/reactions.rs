@@ -172,8 +172,8 @@ mod tests {
             ..Default::default()
         });
         reg.insert(MaterialData {
-            id: 8,
-            name: "Charcoal".into(),
+            id: 11,
+            name: "Ash".into(),
             default_phase: Phase::Solid,
             density: 400.0,
             melting_point: None,
@@ -189,7 +189,7 @@ mod tests {
             ..Default::default()
         });
         reg.insert(MaterialData {
-            id: 9,
+            id: 8,
             name: "Ice".into(),
             default_phase: Phase::Solid,
             density: 917.0,
@@ -215,7 +215,7 @@ mod tests {
             input_b: Some("Air".into()),
             min_temperature: 573.0,
             max_temperature: 99999.0,
-            output_a: "Charcoal".into(),
+            output_a: "Ash".into(),
             output_b: None,
             // ΔT ≈ flame temperature (1300 K) minus ignition point (573 K).
             heat_output: 800.0,
@@ -241,10 +241,10 @@ mod tests {
     fn reaction_matches_when_conditions_met() {
         let rule = wood_burning_rule();
         let reg = test_registry();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 600.0, &reg);
+        let result = check_reaction(&rule, MaterialId::WOOD, MaterialId::AIR, 600.0, &reg);
         assert!(result.is_some());
         let r = result.unwrap();
-        assert_eq!(r.new_material_a, MaterialId(8));
+        assert_eq!(r.new_material_a, MaterialId::ASH);
         assert_eq!(r.heat_output, 800.0);
     }
 
@@ -252,7 +252,7 @@ mod tests {
     fn reaction_fails_wrong_material() {
         let rule = wood_burning_rule();
         let reg = test_registry();
-        let result = check_reaction(&rule, MaterialId(1), MaterialId(0), 600.0, &reg);
+        let result = check_reaction(&rule, MaterialId::STONE, MaterialId::AIR, 600.0, &reg);
         assert!(result.is_none(), "Stone shouldn't burn");
     }
 
@@ -260,7 +260,7 @@ mod tests {
     fn reaction_fails_wrong_neighbor() {
         let rule = wood_burning_rule();
         let reg = test_registry();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(3), 600.0, &reg);
+        let result = check_reaction(&rule, MaterialId::WOOD, MaterialId::WATER, 600.0, &reg);
         assert!(result.is_none(), "Wood next to water shouldn't combust");
     }
 
@@ -268,7 +268,7 @@ mod tests {
     fn reaction_fails_below_min_temp() {
         let rule = wood_burning_rule();
         let reg = test_registry();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 293.0, &reg);
+        let result = check_reaction(&rule, MaterialId::WOOD, MaterialId::AIR, 293.0, &reg);
         assert!(result.is_none(), "Room temp shouldn't ignite wood");
     }
 
@@ -277,10 +277,10 @@ mod tests {
         let rule = ice_melting_rule();
         let reg = test_registry();
         // input_b is None, so neighbor material doesn't matter
-        let result = check_reaction(&rule, MaterialId(9), MaterialId(1), 280.0, &reg);
+        let result = check_reaction(&rule, MaterialId::ICE, MaterialId::STONE, 280.0, &reg);
         assert!(result.is_some());
         let r = result.unwrap();
-        assert_eq!(r.new_material_a, MaterialId(3)); // becomes water
+        assert_eq!(r.new_material_a, MaterialId::WATER); // becomes water
         assert!(r.heat_output < 0.0, "Melting is endothermic");
     }
 
@@ -313,11 +313,11 @@ mod tests {
         let reg = test_registry();
 
         // Just below ignition: should NOT react
-        let just_below = check_reaction(&rule, MaterialId(5), MaterialId(0), 572.9, &reg);
+        let just_below = check_reaction(&rule, MaterialId::WOOD, MaterialId::AIR, 572.9, &reg);
         assert!(just_below.is_none(), "Wood should not ignite at 572.9 K");
 
         // At ignition: should react
-        let at_ignition = check_reaction(&rule, MaterialId(5), MaterialId(0), 573.0, &reg);
+        let at_ignition = check_reaction(&rule, MaterialId::WOOD, MaterialId::AIR, 573.0, &reg);
         assert!(at_ignition.is_some(), "Wood should ignite at 573.0 K");
     }
 
@@ -352,13 +352,13 @@ mod tests {
         // Wood combustion should produce charcoal (carbon residue)
         let rule = wood_burning_rule();
         let reg = test_registry();
-        let result = check_reaction(&rule, MaterialId(5), MaterialId(0), 800.0, &reg);
+        let result = check_reaction(&rule, MaterialId::WOOD, MaterialId::AIR, 800.0, &reg);
         assert!(result.is_some());
         let r = result.unwrap();
         assert_eq!(
             r.new_material_a,
-            MaterialId(8),
-            "Wood combustion should produce Charcoal"
+            MaterialId::ASH,
+            "Wood combustion should produce Ash"
         );
     }
 }

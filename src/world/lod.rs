@@ -660,9 +660,9 @@ mod tests {
         });
 
         let mut map = MaterialColorMap::from_defaults();
-        let before = map.get(MaterialId(1));
+        let before = map.get(MaterialId::STONE);
         map.populate_from_registry(&registry);
-        let after = map.get(MaterialId(1));
+        let after = map.get(MaterialId::STONE);
 
         // Should have changed to registry color
         assert_eq!(after, [0.6, 0.6, 0.6, 1.0]);
@@ -683,7 +683,7 @@ mod tests {
 
         let mut map = MaterialColorMap::from_defaults();
         map.populate_from_registry(&registry);
-        let color = map.get(MaterialId(3));
+        let color = map.get(MaterialId::WATER);
         assert_eq!(color[3], 0.8, "Transparent material should have alpha 0.8");
     }
 
@@ -701,7 +701,7 @@ mod tests {
 
         let mut map = MaterialColorMap::from_defaults();
         map.populate_from_registry(&registry);
-        let color = map.get(MaterialId(0));
+        let color = map.get(MaterialId::AIR);
         assert_eq!(color[3], 0.0, "Air should always be invisible (alpha 0)");
     }
 }

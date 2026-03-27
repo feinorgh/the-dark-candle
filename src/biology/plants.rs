@@ -59,7 +59,7 @@ fn is_growable_surface(mat: MaterialId) -> bool {
 
 /// Materials that count as vegetation (can spread).
 fn is_vegetation(mat: MaterialId) -> bool {
-    mat == MaterialId(7) // Grass
+    mat == MaterialId::GRASS // Grass
 }
 
 /// Simulate one tick of plant growth on a chunk.
@@ -114,7 +114,7 @@ pub fn simulate_plant_growth(voxels: &mut [Voxel], size: usize, require_water: b
                     }
 
                     // Spread!
-                    voxels[nidx].material = MaterialId(7); // Grass
+                    voxels[nidx].material = MaterialId::GRASS; // Grass
                     grown += 1;
                 }
             }
@@ -142,15 +142,15 @@ mod tests {
         let mut grid = make_grid(size);
 
         // Grass at (3, 2, 3)
-        grid[idx(3, 2, 3, size)].material = MaterialId(7);
+        grid[idx(3, 2, 3, size)].material = MaterialId::GRASS;
         // Dirt neighbors
         grid[idx(4, 2, 3, size)].material = MaterialId::DIRT;
         grid[idx(2, 2, 3, size)].material = MaterialId::DIRT;
 
         let grown = simulate_plant_growth(&mut grid, size, false);
         assert_eq!(grown, 2);
-        assert_eq!(grid[idx(4, 2, 3, size)].material, MaterialId(7));
-        assert_eq!(grid[idx(2, 2, 3, size)].material, MaterialId(7));
+        assert_eq!(grid[idx(4, 2, 3, size)].material, MaterialId::GRASS);
+        assert_eq!(grid[idx(2, 2, 3, size)].material, MaterialId::GRASS);
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
         let mut grid = make_grid(size);
 
         // Grass at (3, 2, 3)
-        grid[idx(3, 2, 3, size)].material = MaterialId(7);
+        grid[idx(3, 2, 3, size)].material = MaterialId::GRASS;
         // Dirt neighbor with stone ceiling
         grid[idx(4, 2, 3, size)].material = MaterialId::DIRT;
         grid[idx(4, 3, 3, size)].material = MaterialId::STONE; // Blocks light
@@ -175,7 +175,7 @@ mod tests {
         let size = 8;
         let mut grid = make_grid(size);
 
-        grid[idx(3, 2, 3, size)].material = MaterialId(7);
+        grid[idx(3, 2, 3, size)].material = MaterialId::GRASS;
         grid[idx(4, 2, 3, size)].material = MaterialId::STONE;
 
         simulate_plant_growth(&mut grid, size, false);
@@ -187,7 +187,7 @@ mod tests {
         let size = 8;
         let mut grid = make_grid(size);
 
-        grid[idx(3, 2, 3, size)].material = MaterialId(7);
+        grid[idx(3, 2, 3, size)].material = MaterialId::GRASS;
         grid[idx(4, 2, 3, size)].material = MaterialId::DIRT;
         // No water nearby
 
@@ -200,13 +200,13 @@ mod tests {
         let size = 8;
         let mut grid = make_grid(size);
 
-        grid[idx(3, 2, 3, size)].material = MaterialId(7);
+        grid[idx(3, 2, 3, size)].material = MaterialId::GRASS;
         grid[idx(4, 2, 3, size)].material = MaterialId::DIRT;
         grid[idx(4, 1, 3, size)].material = MaterialId::WATER; // Water below
 
         let grown = simulate_plant_growth(&mut grid, size, true);
         assert_eq!(grown, 1);
-        assert_eq!(grid[idx(4, 2, 3, size)].material, MaterialId(7));
+        assert_eq!(grid[idx(4, 2, 3, size)].material, MaterialId::GRASS);
     }
 
     #[test]
@@ -223,19 +223,19 @@ mod tests {
         let mut grid = make_grid(size);
 
         // Line of dirt with grass at one end
-        grid[idx(1, 2, 3, size)].material = MaterialId(7);
+        grid[idx(1, 2, 3, size)].material = MaterialId::GRASS;
         for x in 2..6 {
             grid[idx(x, 2, 3, size)].material = MaterialId::DIRT;
         }
 
         // Tick 1: spreads to x=2
         simulate_plant_growth(&mut grid, size, false);
-        assert_eq!(grid[idx(2, 2, 3, size)].material, MaterialId(7));
+        assert_eq!(grid[idx(2, 2, 3, size)].material, MaterialId::GRASS);
         assert_eq!(grid[idx(3, 2, 3, size)].material, MaterialId::DIRT);
 
         // Tick 2: x=2 spreads to x=3
         simulate_plant_growth(&mut grid, size, false);
-        assert_eq!(grid[idx(3, 2, 3, size)].material, MaterialId(7));
+        assert_eq!(grid[idx(3, 2, 3, size)].material, MaterialId::GRASS);
     }
 
     #[test]

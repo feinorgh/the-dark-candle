@@ -18,6 +18,10 @@ impl MaterialId {
     pub const STONE: Self = Self(1);
     pub const DIRT: Self = Self(2);
     pub const WATER: Self = Self(3);
+    pub const IRON: Self = Self(4);
+    pub const WOOD: Self = Self(5);
+    pub const SAND: Self = Self(6);
+    pub const GRASS: Self = Self(7);
     pub const ICE: Self = Self(8);
     pub const STEAM: Self = Self(9);
     pub const LAVA: Self = Self(10);

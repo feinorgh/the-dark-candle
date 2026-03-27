@@ -43,7 +43,7 @@ fn test_registry() -> MaterialRegistry {
         ..Default::default()
     });
     reg.insert(MaterialData {
-        id: 5,
+        id: 4,
         name: "Iron".into(),
         color: [0.7, 0.55, 0.1],
         ..Default::default()
@@ -191,7 +191,7 @@ fn incandescence_voxel_grid_video() {
 
                 for y in 0..8 {
                     let i = idx(x, y, z, size);
-                    voxels[i].material = MaterialId(5); // iron
+                    voxels[i].material = MaterialId::IRON;
                     voxels[i].temperature = animated_temp;
                 }
             }
@@ -476,7 +476,7 @@ fn terrain_registry() -> MaterialRegistry {
         ..Default::default()
     });
     reg.insert(MaterialData {
-        id: 5,
+        id: 4,
         name: "Iron".into(),
         color: [0.7, 0.55, 0.1],
         ..Default::default()
@@ -520,10 +520,10 @@ fn build_terrain(size: usize) -> Vec<Voxel> {
                 let i = idx(x, y, z, size);
                 if y == height {
                     // Top layer: grass
-                    voxels[i].material = MaterialId(7);
+                    voxels[i].material = MaterialId::GRASS;
                 } else if y > height.saturating_sub(3) {
                     // Soil layer: dirt
-                    voxels[i].material = MaterialId(2);
+                    voxels[i].material = MaterialId::DIRT;
                 } else {
                     // Bedrock: stone
                     voxels[i].material = MaterialId::STONE;
@@ -698,7 +698,7 @@ fn build_optics_scene(size: usize) -> Vec<Voxel> {
                 voxels[i].material = MaterialId::STONE;
             }
             let i = idx(x, 8, z, size);
-            voxels[i].material = MaterialId(7); // Grass
+            voxels[i].material = MaterialId::GRASS; // Grass
         }
     }
 
@@ -717,7 +717,7 @@ fn build_optics_scene(size: usize) -> Vec<Voxel> {
         for z in 6..12 {
             for y in 9..14 {
                 let i = idx(x, y, z, size);
-                voxels[i].material = MaterialId(12); // Glass
+                voxels[i].material = MaterialId::GLASS; // Glass
             }
         }
     }

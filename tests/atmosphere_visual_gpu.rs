@@ -66,9 +66,9 @@ fn build_valley_terrain() -> Vec<Voxel> {
 
             for y in 0..h.min(CHUNK_SIZE) {
                 let mat = if y == h - 1 {
-                    MaterialId(2) // grass
+                    MaterialId::DIRT
                 } else {
-                    MaterialId(1) // stone
+                    MaterialId::STONE
                 };
                 voxels[idx(x, y, z)] = Voxel::new(mat);
             }
@@ -76,7 +76,7 @@ fn build_valley_terrain() -> Vec<Voxel> {
             // Water in the valley floor.
             if h < 6 {
                 for y in h..6 {
-                    voxels[idx(x, y, z)] = Voxel::new(MaterialId(3));
+                    voxels[idx(x, y, z)] = Voxel::new(MaterialId::WATER);
                 }
             }
         }

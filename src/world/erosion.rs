@@ -576,7 +576,7 @@ pub fn channel_width(flow_accum: f64, config: &ErosionConfig) -> f64 {
 ///
 /// Returns the adjusted height and an optional material override:
 ///
-/// - Sand (`MaterialId(6)`) on the channel bed (inner 20%).
+/// - Sand (`MaterialId::SAND`) on the channel bed (inner 20%).
 /// - Stone (`MaterialId::STONE`) on steep exposed walls (20–50%
 ///   when the channel is deeper than 3 m).
 /// - `None` outside the carved zone or for shallow channels.
@@ -604,7 +604,7 @@ pub fn carve_valley(
     let carved = base_height - max_depth * (1.0 - blended);
 
     let material = if t < 0.2 {
-        Some(MaterialId(6)) // SAND — channel bed
+        Some(MaterialId::SAND)
     } else if t < 0.5 && max_depth > 3.0 {
         Some(MaterialId::STONE) // exposed rock on steep walls
     } else {
@@ -843,7 +843,7 @@ mod tests {
             direction: (0.0, 1.0),
         };
         let (_, mat) = carve_valley(50.0, &bed, &cfg);
-        assert_eq!(mat, Some(MaterialId(6)), "bed should be SAND");
+        assert_eq!(mat, Some(MaterialId::SAND), "bed should be SAND");
 
         // t ∈ [0.2, 0.5) with depth > 3.0 → STONE
         let wall = ChannelInfo {

@@ -83,7 +83,7 @@ fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
     for x in 0..size {
         for z in 0..size {
             let i = idx(x, 0, z, size);
-            voxels[i].material = MaterialId(7); // Grass
+            voxels[i].material = MaterialId::GRASS; // Grass
         }
     }
 
@@ -100,7 +100,7 @@ fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
     for &(px, pz) in &pillars {
         for y in 2..9 {
             let i = idx(px, y, pz, size);
-            voxels[i].material = MaterialId(5); // Wood
+            voxels[i].material = MaterialId::WOOD; // Wood
         }
     }
 
@@ -108,14 +108,14 @@ fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
     for x in 9..23 {
         let i1 = idx(x, 8, 9, size);
         let i2 = idx(x, 8, 22, size);
-        voxels[i1].material = MaterialId(5);
-        voxels[i2].material = MaterialId(5);
+        voxels[i1].material = MaterialId::WOOD;
+        voxels[i2].material = MaterialId::WOOD;
     }
     for z in 9..23 {
         let i1 = idx(9, 8, z, size);
         let i2 = idx(22, 8, z, size);
-        voxels[i1].material = MaterialId(5);
-        voxels[i2].material = MaterialId(5);
+        voxels[i1].material = MaterialId::WOOD;
+        voxels[i2].material = MaterialId::WOOD;
     }
 
     // Wood walls (partial — leave gaps for windows)
@@ -124,22 +124,22 @@ fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
         for x in 9..23 {
             if !(14..18).contains(&x) || !(4..=6).contains(&y) {
                 let i = idx(x, y, 9, size);
-                voxels[i].material = MaterialId(5);
+                voxels[i].material = MaterialId::WOOD;
             }
         }
         // Back wall (z=22): solid wood
         for x in 9..23 {
             let i = idx(x, y, 22, size);
-            voxels[i].material = MaterialId(5);
+            voxels[i].material = MaterialId::WOOD;
         }
         // Side walls (x=9, x=22): wood except window
         for z in 9..23 {
             if !(14..18).contains(&z) || !(4..=6).contains(&y) {
                 let i = idx(9, y, z, size);
-                voxels[i].material = MaterialId(5);
+                voxels[i].material = MaterialId::WOOD;
             }
             let i = idx(22, y, z, size);
-            voxels[i].material = MaterialId(5);
+            voxels[i].material = MaterialId::WOOD;
         }
     }
 

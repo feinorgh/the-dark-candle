@@ -243,7 +243,7 @@ mod tests {
         let mut chunk = Chunk::new_empty(ChunkCoord::new(0, 0, 0));
         let voxel = Voxel {
             temperature: temp,
-            material: MaterialId(1),
+            material: MaterialId::STONE,
             ..Default::default()
         };
         chunk.set(0, 0, 0, voxel);

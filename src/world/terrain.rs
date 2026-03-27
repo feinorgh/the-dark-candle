@@ -193,7 +193,7 @@ impl TerrainGenerator {
                         if let Some(mat) = erosion_material {
                             mat
                         } else if world_y >= self.config.sea_level {
-                            MaterialId(4) // grass
+                            MaterialId::GRASS
                         } else {
                             MaterialId::DIRT
                         }
@@ -331,7 +331,7 @@ impl SphericalTerrainGenerator {
         if depth_below_surface < 1.0 {
             // Top layer: grass (if above sea level)
             if surface_r >= self.planet.sea_level_radius {
-                return MaterialId(4); // grass
+                return MaterialId::GRASS;
             }
             return MaterialId::DIRT;
         }
@@ -364,7 +364,7 @@ impl SphericalTerrainGenerator {
 /// This is a simple lookup; a more robust version would use the MaterialRegistry.
 fn material_from_layer_name(name: &str) -> MaterialId {
     match name {
-        "Iron" => MaterialId(6), // iron material ID
+        "Iron" => MaterialId::IRON,
         "Stone" => MaterialId::STONE,
         "Dirt" => MaterialId::DIRT,
         "Water" => MaterialId::WATER,
@@ -756,7 +756,7 @@ mod tests {
         let tgen = small_planet_generator();
         // Core voxel (inside inner_core layer)
         let mat = tgen.material_at_radius(25.0, 110.0, 0.0, 25.0, 0.0);
-        assert_eq!(mat, MaterialId(6), "Core should be Iron (MaterialId 6)");
+        assert_eq!(mat, MaterialId::IRON, "Core should be Iron");
 
         // Mantle voxel
         let mat = tgen.material_at_radius(60.0, 110.0, 0.0, 60.0, 0.0);
@@ -774,7 +774,7 @@ mod tests {
         // Just at surface (depth < 1.0)
         let mat = tgen.material_at_radius(surface_r - 0.5, surface_r, 0.0, surface_r - 0.5, 0.0);
         assert!(
-            mat == MaterialId(4) || mat == MaterialId::DIRT,
+            mat == MaterialId::GRASS || mat == MaterialId::DIRT,
             "Surface should be grass or dirt, got {:?}",
             mat
         );

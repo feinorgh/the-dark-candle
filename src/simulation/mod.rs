@@ -335,7 +335,7 @@ mod tests {
         let size = 4;
         let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
         // Place one wood voxel at (0,0,0), neighbor air at (1,0,0)
-        voxels[0].material = MaterialId(5);
+        voxels[0].material = MaterialId::WOOD;
         voxels[0].temperature = 800.0;
 
         let registry = minimal_registry();
@@ -365,8 +365,8 @@ mod tests {
         });
 
         assert!(is_permeable(MaterialId::AIR, &reg));
-        assert!(is_permeable(MaterialId(14), &reg));
-        assert!(!is_permeable(MaterialId(1), &reg));
+        assert!(is_permeable(MaterialId::HYDROGEN, &reg));
+        assert!(!is_permeable(MaterialId::STONE, &reg));
     }
 
     /// Regression test: oxyhydrogen chain reaction must propagate.
@@ -434,9 +434,9 @@ mod tests {
                     let i = z * size * size + y * size + x;
                     voxels[i].temperature = 288.15;
                     if (x + y + z) % 2 == 0 {
-                        voxels[i].material = MaterialId(14); // H₂
+                        voxels[i].material = MaterialId::HYDROGEN;
                     } else {
-                        voxels[i].material = MaterialId(13); // O₂
+                        voxels[i].material = MaterialId::OXYGEN;
                     }
                 }
             }
@@ -446,7 +446,7 @@ mod tests {
         let center = 2 * size * size + 2 * size + 2;
         assert_eq!(
             voxels[center].material,
-            MaterialId(14),
+            MaterialId::HYDROGEN,
             "hot spot should be H₂"
         );
         voxels[center].temperature = 900.0;
@@ -460,7 +460,7 @@ mod tests {
 
         let steam_count = voxels
             .iter()
-            .filter(|v| v.material == MaterialId(9))
+            .filter(|v| v.material == MaterialId::STEAM)
             .count();
 
         assert!(

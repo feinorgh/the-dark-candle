@@ -163,9 +163,9 @@ fn build_valley_terrain(size: usize) -> Vec<Voxel> {
             for y in 0..=height {
                 let i = idx(x, y, z, size);
                 if y == height {
-                    voxels[i].material = MaterialId(7); // Grass
+                    voxels[i].material = MaterialId::GRASS; // Grass
                 } else if y > height.saturating_sub(2) {
-                    voxels[i].material = MaterialId(2); // Dirt
+                    voxels[i].material = MaterialId::DIRT; // Dirt
                 } else {
                     voxels[i].material = MaterialId::STONE;
                 }
