@@ -84,7 +84,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 **All 7 original phases are complete.** The codebase has:
 - 100+ source files, ~34,000 lines of Rust (edition 2024)
-- 911+ passing tests (lib) + 14 integration + 3 simulation + 5 visual rendering
+- 1173+ passing tests (lib) + 14 integration + 3 simulation + 5 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -102,6 +102,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `06e0ccd` | ECS state dump + screenshot capture diagnostics |
 | `40ba85b` | Debugging and diagnostics documentation |
 | `a65d972` | Simulation video visualization pipeline (ffmpeg) |
+| `609259a` | Performance: reduce allocations in heat/LBM/chemistry hot loops |
 
 ### LOD / Octree Realism Overhaul (latest)
 
@@ -354,9 +355,29 @@ visualization:
   spreading over time. Validates heat diffusion + temperature color mode
 
 ### Performance & Scaling
-- **Chunk-parallel simulation** — run physics per-chunk on thread pool
+
+**Completed optimizations:**
+- **Heat diffusion** — double-buffer swap (eliminates ~77 MB clone per active
+  chunk per tick), stack-allocated neighbor array (eliminates 19.2 M heap
+  allocations per chunk), pre-computed thermal property cache
+- **Radiation transfer** — half-direction trick (13 symmetric pairs instead of
+  26 ray directions), removed per-call HashSet allocation
+- **Reaction/pressure snapshots** — lightweight snapshots of only the fields
+  read (MaterialId + temperature for reactions, pressure + permeability for
+  pressure diffusion) instead of full `Vec<Voxel>` copies
+- **LBM streaming** — `stream_into()` double-buffer pattern reuses a
+  pre-allocated scratch grid (~2.8 MB saved per step per chunk)
+- **LBM collision** — compute equilibrium once in `collide_smagorinsky()`
+  instead of twice (strain_rate + collide_bgk were redundant)
+- **Solar heating LOD** — physics LOD distance check skips distant chunks
+- **Existing:** physics LOD (fluid sims within 3-chunk radius), chemistry
+  activity gating (only hot chunks tick), adaptive view distance, mesh
+  throttling (8 tasks/frame), shadow throttling, async meshing/terrain
+
+**Remaining opportunities:**
 - **GPU compute shaders** — offload P2G/G2P, LBM streaming, heat diffusion
 - **Profiling & budgeting** — establish per-frame time budgets for each system
+  (F3 overlay shows frame budget, system timings with EMA smoothing)
 - **Populate MaterialColorMap from MaterialRegistry** — wire the asset-loaded
   material registry into the color map at startup instead of relying on fallbacks
 - **Screen-space error as default LOD strategy** — integrate with camera FOV

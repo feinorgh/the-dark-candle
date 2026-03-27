@@ -10,6 +10,7 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Run all tests | `cargo test` | Unit + integration test results |
 | Run simulation tests | `cargo test --test simulations` | Scenario pass/fail |
 | Dump ECS state (in-game) | Press **F11** | `diagnostics/<timestamp>.dump.ron` |
+| Toggle performance overlay | Press **F3** | HUD with FPS, system timings, chunk stats |
 | Capture screenshot | Press **F12** | `screenshots/<timestamp>.png` |
 | Produce simulation video | Add `emit_video` to `.simulation.ron` | MP4 video or PNG frames |
 | Run visual rendering tests | `cargo test --test visual_rendering` | MP4 videos in `test_output/` |
@@ -478,6 +479,7 @@ These are useful when manually debugging visual or physics issues:
 | **Mouse** | Look around (click to grab cursor, Esc to release) |
 | **Space** | Jump (when grounded) |
 | **G** | Toggle gravity (fly mode) |
+| **F3** | Toggle performance overlay |
 | **F11** | Dump ECS state to `diagnostics/` |
 | **F12** | Capture screenshot to `screenshots/` |
 
@@ -485,7 +487,64 @@ These are useful when manually debugging visual or physics issues:
 
 **Fly mode** (press G) disables gravity and sets movement speed to 20 m/s, useful for inspecting terrain from above or navigating to a specific chunk quickly.
 
-## 9. Visual Rendering Tests
+## 9. Performance Profiling
+
+### F3 — Performance Overlay
+
+Press **F3** in-game to toggle the performance overlay HUD. It displays:
+
+| Line | Content | Example |
+|------|---------|---------|
+| FPS & budget | Frame rate, avg frame time, headroom % | `FPS: 30 (33.3ms) Budget: 0%` |
+| System timings | EMA-smoothed wall-clock time per system group | `Systems: world 2.1ms mesh 5.3ms phys 8.7ms` |
+| Player position | World position and chunk coordinate | `Pos: (12.3, 97.1, -5.8) Chunk: (0, 3, 0)` |
+| Player state | Grounded/gravity/speed | `Grounded: yes Gravity: on Speed: 5` |
+| Chunk pipeline | Loaded/generating/meshing counts, view radius, time | `Chunks: 45 (gen 2 mesh 3) View: 4 Time: 1x (12:30)` |
+
+**Target FPS:** 30 (configured in `FrameBudget`). Headroom > 0% means under budget; negative means over budget.
+
+**EMA smoothing:** All timings use exponential moving average with smoothing factor 0.1 (converges in ~10 frames, filters jitter).
+
+### Timed System Groups
+
+Three system groups are bracketed with `Instant::now()` timing:
+
+| Group | What it covers | Schedule |
+|-------|---------------|----------|
+| **world** | Chunk loading, unloading, terrain generation dispatch | `WorldSet::ChunkManagement` |
+| **mesh** | Surface Nets meshing dispatch and collection | `WorldSet::Meshing` |
+| **phys** | All physics: gravity, collision, LBM gas, FLIP/PIC, pressure | `FixedUpdate` (FixedFirst → FixedLast) |
+
+### Performance Optimization Summary
+
+The simulation hot paths have been optimized to minimize per-tick allocation and redundant computation:
+
+| System | Optimization | Impact |
+|--------|-------------|--------|
+| Heat diffusion | Double-buffer swap instead of `clone()` per sub-step | ~77 MB/chunk/tick eliminated |
+| Heat diffusion | Stack array for neighbors instead of `Vec::with_capacity(6)` | 19.2 M heap allocs/chunk eliminated |
+| Heat diffusion | Pre-computed thermal property cache | Eliminates HashMap lookups per voxel per sub-step |
+| Radiation | Half-direction trick (13 pairs, not 26 directions) | 2× fewer ray-march iterations |
+| Reactions | Snapshot only `MaterialId` + temperature, not full `Voxel` | ~640 KB → ~160 KB per snapshot |
+| Pressure | Snapshot only pressure + permeability flags | ~640 KB → ~160 KB per snapshot |
+| LBM streaming | `stream_into()` double-buffer reuse | ~2.8 MB/step/chunk allocation eliminated |
+| LBM collision | Shared equilibrium in Smagorinsky model | Equilibrium computed 1× not 2× per gas cell |
+| Solar heating | Physics LOD distance check | Distant chunks skipped entirely |
+
+### Existing Throttling & LOD
+
+These mechanisms already limit per-frame work:
+
+- **Physics LOD:** LBM/FLIP only within 3-chunk radius of camera
+- **Chemistry activity gating:** Only chunks >50 K above ambient tick chemistry
+- **Adaptive view distance:** Hysteresis-based radius adjustment (60-frame window)
+- **Mesh throttling:** Max 8 mesh tasks dispatched per frame
+- **Terrain throttling:** Max 8 terrain generation tasks per frame
+- **Shadow throttling:** Max 8 chunk shadow updates per frame
+- **Temperature-only remesh suppression:** <50 K delta skips remesh
+- **Async compute:** Meshing and terrain generation on `AsyncComputeTaskPool`
+
+## 10. Visual Rendering Tests
 
 Integration tests in `tests/visual_rendering.rs` produce MP4 videos for visual evaluation of rendering features. These use a headless software raymarcher (not the GPU pipeline) with the shared DDA raycast module.
 
@@ -506,7 +565,7 @@ cargo test --test visual_rendering -- --nocapture
 
 Each test renders frames via `render_perspective()` from `src/diagnostics/visualization.rs`, then encodes to MP4 via ffmpeg. The videos are meant for human visual inspection — there are no automated pixel-level assertions.
 
-## 10. Atmosphere Visualization Tests
+## 11. Atmosphere Visualization Tests
 
 Two test suites render atmosphere features: a CPU version (`tests/atmosphere_visual.rs`) and a GPU-accelerated version (`tests/atmosphere_visual_gpu.rs`). The GPU version is ~1000× faster and runs as part of `cargo test` by default.
 
@@ -538,7 +597,7 @@ cargo test --test atmosphere_visual --release -- --ignored --nocapture
 
 The CPU tests exist as a reference implementation. For routine work, use the GPU tests.
 
-## 11. GPU Compute Renderer
+## 12. GPU Compute Renderer
 
 The `src/gpu/` module provides a headless wgpu compute shader renderer for offscreen visualization. It reproduces the CPU software renderer's output using a single uber-compute-shader dispatched per frame.
 
