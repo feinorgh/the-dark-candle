@@ -350,7 +350,7 @@ mod tests {
     fn gas_phase_materials_are_permeable() {
         let mut reg = MaterialRegistry::new();
         reg.insert(MaterialData {
-            id: 12,
+            id: 14,
             name: "Hydrogen".into(),
             default_phase: Phase::Gas,
             density: 0.0899,
@@ -365,7 +365,7 @@ mod tests {
         });
 
         assert!(is_permeable(MaterialId::AIR, &reg));
-        assert!(is_permeable(MaterialId(12), &reg));
+        assert!(is_permeable(MaterialId(14), &reg));
         assert!(!is_permeable(MaterialId(1), &reg));
     }
 
@@ -387,7 +387,7 @@ mod tests {
             ..Default::default()
         });
         reg.insert(MaterialData {
-            id: 12,
+            id: 14,
             name: "Hydrogen".into(),
             default_phase: Phase::Gas,
             density: 0.0899,
@@ -434,7 +434,7 @@ mod tests {
                     let i = z * size * size + y * size + x;
                     voxels[i].temperature = 288.15;
                     if (x + y + z) % 2 == 0 {
-                        voxels[i].material = MaterialId(12); // H₂
+                        voxels[i].material = MaterialId(14); // H₂
                     } else {
                         voxels[i].material = MaterialId(13); // O₂
                     }
@@ -446,7 +446,7 @@ mod tests {
         let center = 2 * size * size + 2 * size + 2;
         assert_eq!(
             voxels[center].material,
-            MaterialId(12),
+            MaterialId(14),
             "hot spot should be H₂"
         );
         voxels[center].temperature = 900.0;

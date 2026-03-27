@@ -84,7 +84,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 **All 7 original phases are complete.** The codebase has:
 - 100+ source files, ~34,000 lines of Rust (edition 2024)
-- 1173+ passing tests (lib) + 14 integration + 3 simulation + 5 visual rendering
+- 1173+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -343,9 +343,19 @@ Universal constants can be added to `universal_constants.ron` proactively:
 ### Simulation Video Demos
 The video visualization pipeline (`src/diagnostics/video.rs` +
 `visualization.rs`) can render per-tick frames from headless simulations and
-encode via ffmpeg. Planned demos to exercise and validate both physics and
-visualization:
+encode via ffmpeg.
 
+**Implemented** (`tests/physics_visual.rs`):
+- **Fire propagation** — wooden cabin ignited at one corner, flames spread
+  through walls and beams. Incandescence color mode shows thermal glow
+- **Lava phase transition** — stone mountain with internal magma chamber, heat
+  diffuses upward melting stone into glowing lava
+- **Water boiling** — stone cauldron filled with water, heated from below until
+  it transitions to steam. Temperature heatmap color mode
+- **Oxyhydrogen detonation** — H₂/O₂ checkerboard in a stone chamber with
+  central ignition, chain reaction produces ~3073K white flame
+
+**Planned:**
 - **Bouncing balls** — 3 rubber spheres in an enclosed cube. Requires entity-vs-
   entity collision (rigid body physics above). Validates restitution, gravity,
   drag, energy conservation
@@ -353,6 +363,14 @@ visualization:
   color modes. Validates AMR fluid + video pipeline integration
 - **Thermal conduction** — iron bar heated at one end, temperature gradient
   spreading over time. Validates heat diffusion + temperature color mode
+- **Ice melting** — ice block on warm stone, melts into water pool. Validates
+  latent heat absorption and solid→liquid state transitions
+- **Erosion timelapse** — terrain with rain, showing erosion carving channels
+  over accelerated geological time
+- **Snow accumulation** — terrain during snowfall, particle deposits building
+  up on surfaces. Validates weather + accumulation systems
+- **Glass optics** — light passing through colored glass prisms, showing
+  wavelength-dependent absorption and transparency
 
 ### Performance & Scaling
 
