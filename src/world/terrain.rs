@@ -435,13 +435,25 @@ impl UnifiedTerrainGenerator {
 
     /// Sample terrain surface height at the given world (x, z) coordinates.
     ///
-    /// For flat mode, delegates to the noise-based height function.
-    /// For spherical mode, returns a conservative estimate (mean_radius).
+    /// For flat mode, delegates to the noise-based height function and returns
+    /// a Y value.
+    ///
+    /// For spherical mode, converts the Cartesian (x, z) position to (lat, lon)
+    /// and returns the surface radius at that angular position. The caller must
+    /// interpret this as a radial distance from the planet center, not a Y value.
     pub fn sample_height(&self, world_x: f64, world_z: f64) -> f64 {
         match self {
             Self::Flat(g) => g.sample_height(world_x, world_z),
-            Self::Spherical(g) => g.planet.mean_radius,
+            Self::Spherical(g) => {
+                let pos = bevy::math::DVec3::new(world_x, 0.0, world_z);
+                let (lat, lon) = g.planet().lat_lon(pos);
+                g.sample_surface_radius(lat, lon)
+            }
         }
+    }
+    /// Whether the terrain is in spherical mode.
+    pub fn is_spherical(&self) -> bool {
+        matches!(self, Self::Spherical(_))
     }
 }
 

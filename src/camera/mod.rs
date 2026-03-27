@@ -9,7 +9,8 @@ use crate::hud::{FallTracker, Player};
 use crate::physics::constants;
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
-use crate::world::collision::ground_height_at;
+use crate::world::collision::{ground_height_at, ground_height_radial};
+use crate::world::planet::PlanetConfig;
 
 pub struct CameraPlugin;
 
@@ -77,19 +78,58 @@ impl Default for FpsCamera {
 }
 
 fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGeneratorRes>>) {
-    // Compute spawn height from terrain generator if available, otherwise
-    // fall back to a safe default above the typical surface.
-    let spawn_x = 0.0_f32;
-    let spawn_z = 0.0_f32;
-    let surface_y = terrain_gen
-        .map(|tg| tg.0.sample_height(spawn_x as f64, spawn_z as f64) as f32 + 1.0)
-        .unwrap_or(100.0);
-    let spawn_y = surface_y + EYE_HEIGHT;
+    // Pick a spawn position on the terrain surface.
+    //
+    // Flat mode:  spawn at world origin (0, surface_height, 0).
+    // Spherical mode: spawn on the planet surface at lat=45°, lon=0°. This
+    //   avoids the north pole (Y-axis singularity) and the equator (where
+    //   chunk density is highest during initial load). The actual position is
+    //   a point at distance `surface_radius` from the planet center along the
+    //   (lat, lon) direction vector.
+    let (spawn_pos, look_target) = if let Some(ref tg) = terrain_gen {
+        if tg.0.is_spherical() {
+            // Latitude 45°, longitude 0° — a mid-latitude spawn.
+            let lat: f64 = std::f64::consts::FRAC_PI_4; // 45°
+            let lon: f64 = 0.0;
+            let surface_r = tg.0.sample_height(
+                // sample_height for spherical uses the (x, z) to derive lat/lon internally,
+                // but we already have lat/lon. To be consistent, we pass Cartesian coords
+                // that reconstruct the desired lat/lon through the planet's lat_lon() method.
+                // For rotation_axis = Y, a point at (cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon))
+                // gives the correct lat/lon back.
+                lat.cos() * lon.cos() * 1000.0, // world_x
+                lat.cos() * lon.sin() * 1000.0, // world_z (passed as z)
+            ) as f32;
+            // Construct the spawn direction from lat/lon (Y-up planet, axis = Y).
+            let dir = Vec3::new(
+                lat.cos() as f32 * lon.cos() as f32,
+                lat.sin() as f32,
+                lat.cos() as f32 * lon.sin() as f32,
+            )
+            .normalize();
+            let spawn = dir * (surface_r + EYE_HEIGHT);
+            // Look tangent to the surface (slightly ahead along the equator direction).
+            let look = spawn + Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
+            (spawn, look)
+        } else {
+            let spawn_x = 0.0_f32;
+            let spawn_z = 0.0_f32;
+            let surface_y = tg.0.sample_height(spawn_x as f64, spawn_z as f64) as f32 + 1.0;
+            let spawn_y = surface_y + EYE_HEIGHT;
+            let pos = Vec3::new(spawn_x, spawn_y, spawn_z);
+            let look = Vec3::new(10.0, spawn_y - 1.0, 10.0);
+            (pos, look)
+        }
+    } else {
+        // No terrain generator yet — safe fallback.
+        let pos = Vec3::new(0.0, 100.0 + EYE_HEIGHT, 0.0);
+        let look = Vec3::new(10.0, 99.0, 10.0);
+        (pos, look)
+    };
 
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(spawn_x, spawn_y, spawn_z)
-            .looking_at(Vec3::new(10.0, spawn_y - 1.0, 10.0), Vec3::Y),
+        Transform::from_translation(spawn_pos).looking_at(look_target, Vec3::Y),
         Bloom::NATURAL,
         FpsCamera::default(),
         Player,
@@ -161,13 +201,15 @@ fn camera_look(
 }
 
 /// WASD + Space/Shift movement (only when cursor is grabbed).
-/// When gravity is enabled, movement is horizontal only (no fly).
+/// When gravity is enabled, movement is tangent to the local surface
+/// (horizontal in flat mode, tangent to planet in spherical mode).
 /// Space jumps if grounded, Shift crouches (not yet implemented).
 /// Press G to toggle gravity (fly mode).
 fn camera_move(
     cursor_q: Query<&CursorOptions, With<PrimaryWindow>>,
     key: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    planet: Res<PlanetConfig>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
 ) {
     let Ok(cursor) = cursor_q.single() else {
@@ -196,21 +238,30 @@ fn camera_move(
     let mut direction = Vec3::ZERO;
 
     if cam.gravity_enabled {
-        // Horizontal movement only (project forward onto XZ plane)
-        let forward_xz = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
-        let right_xz = Vec3::new(right.x, 0.0, right.z).normalize_or_zero();
+        // Project movement onto the local tangent plane (perpendicular to gravity).
+        let local_up = if planet.is_spherical() {
+            let pos = transform.translation;
+            let len = pos.length();
+            if len > 1e-6 { pos / len } else { Vec3::Y }
+        } else {
+            Vec3::Y
+        };
+
+        // Project forward/right onto the tangent plane and re-normalize.
+        let forward_tangent = (forward - local_up * forward.dot(local_up)).normalize_or_zero();
+        let right_tangent = (right - local_up * right.dot(local_up)).normalize_or_zero();
 
         if key.pressed(KeyCode::KeyW) {
-            direction += forward_xz;
+            direction += forward_tangent;
         }
         if key.pressed(KeyCode::KeyS) {
-            direction -= forward_xz;
+            direction -= forward_tangent;
         }
         if key.pressed(KeyCode::KeyD) {
-            direction += right_xz;
+            direction += right_tangent;
         }
         if key.pressed(KeyCode::KeyA) {
-            direction -= right_xz;
+            direction -= right_tangent;
         }
         // Jump — v₀ = sqrt(2gh) for ~1.25 m jump height
         if key.just_pressed(KeyCode::Space) && cam.grounded {
@@ -256,10 +307,15 @@ fn camera_move(
 }
 
 /// Apply gravity and ground collision to the camera.
+///
+/// Flat mode:  gravity is -Y, ground check scans vertical voxel columns.
+/// Spherical mode: gravity is radial (toward planet center), ground check
+///   uses `ground_height_radial` which scans along the radial direction.
 fn camera_gravity(
     time: Res<Time>,
     chunk_map: Res<ChunkMap>,
     chunks: Query<&Chunk>,
+    planet: Res<PlanetConfig>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
 ) {
     let Ok((mut cam, mut transform)) = cam_q.single_mut() else {
@@ -273,20 +329,48 @@ fn camera_gravity(
     let dt = time.delta_secs();
     let pos = transform.translation;
 
-    // Apply gravity (SI: 9.80665 m/s²)
-    cam.vertical_velocity -= constants::GRAVITY * dt;
-    // Safety cap at 200 m/s — real terminal velocity (~53 m/s for a human)
-    // will be handled by the force-based drag model once applied to camera.
-    cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
-    transform.translation.y += cam.vertical_velocity * dt;
+    if planet.is_spherical() {
+        // Radial gravity: pull toward planet center.
+        let r = pos.length();
+        let local_up = if r > 1e-6 { pos / r } else { Vec3::Y };
 
-    // Ground collision
-    if let Some(ground_y) = ground_height_at(pos.x, pos.z, &chunk_map, &chunks) {
-        let feet_y = transform.translation.y - EYE_HEIGHT;
-        if feet_y <= ground_y {
-            transform.translation.y = ground_y + EYE_HEIGHT;
-            cam.vertical_velocity = 0.0;
-            cam.grounded = true;
+        // Apply gravity along the radial direction.
+        cam.vertical_velocity -= constants::GRAVITY * dt;
+        cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
+        // Move along the radial direction (positive = outward = up).
+        transform.translation += local_up * cam.vertical_velocity * dt;
+
+        // Radial ground collision.
+        if let Some(ground_r) = ground_height_radial(pos, &chunk_map, &chunks) {
+            let feet_r = transform.translation.length() - EYE_HEIGHT;
+            if feet_r <= ground_r {
+                // Place player on the surface at the correct radial distance.
+                let up = transform.translation.normalize_or(Vec3::Y);
+                transform.translation = up * (ground_r + EYE_HEIGHT);
+                cam.vertical_velocity = 0.0;
+                cam.grounded = true;
+            } else {
+                cam.grounded = false;
+            }
+        } else {
+            cam.grounded = false;
+        }
+    } else {
+        // Flat mode: Y-axis gravity.
+        cam.vertical_velocity -= constants::GRAVITY * dt;
+        cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
+        transform.translation.y += cam.vertical_velocity * dt;
+
+        // Flat ground collision.
+        if let Some(ground_y) = ground_height_at(pos.x, pos.z, &chunk_map, &chunks) {
+            let feet_y = transform.translation.y - EYE_HEIGHT;
+            if feet_y <= ground_y {
+                transform.translation.y = ground_y + EYE_HEIGHT;
+                cam.vertical_velocity = 0.0;
+                cam.grounded = true;
+            } else {
+                cam.grounded = false;
+            }
         } else {
             cam.grounded = false;
         }
