@@ -381,7 +381,11 @@ impl Plugin for LightingPlugin {
                     update_chunk_light_maps,
                     update_terrain_shadows,
                 )
-                    .chain(),
+                    .chain()
+                    // Light-map and shadow systems access chunk entities with
+                    // deferred commands, so they must run after chunk despawn
+                    // commands have been flushed.
+                    .after(crate::world::WorldSet::ChunkManagement),
             );
     }
 }

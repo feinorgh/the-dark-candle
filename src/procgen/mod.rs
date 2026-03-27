@@ -23,6 +23,11 @@ impl Plugin for ProcgenPlugin {
             }
         }
 
-        app.add_systems(Update, props::decorate_chunks);
+        // Run after ChunkManagement so chunk despawn commands are flushed
+        // before we try to decorate or access chunk entities.
+        app.add_systems(
+            Update,
+            props::decorate_chunks.after(crate::world::WorldSet::ChunkManagement),
+        );
     }
 }

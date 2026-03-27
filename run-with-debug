@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+main() {
+    RUST_LOG=warn cargo run --features bevy/dynamic_linking 2>&1 | grep -v 'sound\|audio\|\.ogg\|\.wav' | head -100 | tee debug-output.txt
+}
+
+main "$@"

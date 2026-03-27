@@ -1,3 +1,4 @@
+use bevy::ecs::error;
 use bevy::prelude::*;
 use clap::Parser;
 use the_dark_candle::{
@@ -49,6 +50,11 @@ fn main() {
             }
         }
     }
+
+    // Log stale-entity command errors instead of panicking.  This is a
+    // safety net for rare frame-boundary races between chunk despawn and
+    // systems that hold deferred commands on those entities.
+    app.set_error_handler(error::error);
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
