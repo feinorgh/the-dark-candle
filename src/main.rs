@@ -78,6 +78,7 @@ fn main() {
         SocialPlugin,
         PersistencePlugin,
         WeatherPlugin,
+        the_dark_candle::audio::AudioPlugin,
     ))
     .run();
 }
