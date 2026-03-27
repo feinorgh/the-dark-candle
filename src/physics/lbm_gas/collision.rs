@@ -73,16 +73,42 @@ pub fn collide_smagorinsky(cell: &mut LbmCell, tau_base: f32, cs_smag: f32) {
         return;
     }
 
-    let s_mag = strain_rate(cell);
+    let rho = cell.density();
+    let u = cell.velocity();
+    let f_eq = lattice::equilibrium(rho, u);
 
-    // Compute turbulent relaxation time increment
-    // τ_turb from: ν_turb = (Cs × Δx)² × |S|, and ν_lattice = cs²(τ-0.5)
-    // In lattice units (Δx=1): ν_turb = Cs² × |S|
-    // τ_turb = ν_turb / cs² = Cs² × |S| / cs²
+    // Compute strain rate from the shared equilibrium (avoids recomputing
+    // f_eq inside strain_rate then again inside collide_bgk).
+    let mut pi_neq = [[0.0f32; 3]; 3];
+    for i in 0..Q {
+        let f_neq = cell.f[i] - f_eq[i];
+        for a in 0..3 {
+            for b in a..3 {
+                pi_neq[a][b] += f_neq * E[i][a] as f32 * E[i][b] as f32;
+            }
+        }
+    }
+    pi_neq[1][0] = pi_neq[0][1];
+    pi_neq[2][0] = pi_neq[0][2];
+    pi_neq[2][1] = pi_neq[1][2];
+
+    let mut pi_sq = 0.0f32;
+    for row in &pi_neq {
+        for &val in row {
+            pi_sq += val * val;
+        }
+    }
+    let denom = 2.0 * rho.max(1e-10) * CS4;
+    let s_mag = (2.0 * pi_sq).sqrt() / denom;
+
     let tau_turb = cs_smag * cs_smag * s_mag / CS2;
     let tau_eff = tau_base + tau_turb;
+    let inv_tau = 1.0 / tau_eff;
 
-    collide_bgk(cell, tau_eff);
+    // BGK relaxation reusing the pre-computed equilibrium.
+    for (i, &f_eq_i) in f_eq.iter().enumerate() {
+        cell.f[i] -= (cell.f[i] - f_eq_i) * inv_tau;
+    }
 }
 
 /// Apply collision to all gas cells in a grid.

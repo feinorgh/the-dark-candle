@@ -136,6 +136,8 @@ fn apply_solar_heating(
     solar_insolation: Option<Res<SolarInsolation>>,
     registry: Option<Res<MaterialRegistry>>,
     time: Res<Time>,
+    lod_config: Res<crate::physics::PhysicsLodConfig>,
+    camera_q: Query<&Transform, With<Camera3d>>,
 ) {
     // Early return if any required resource is missing
     let (
@@ -170,8 +172,23 @@ fn apply_solar_heating(
     let solar_constant = atmosphere.solar_constant; // W/m²
     let insolation_factor = insolation.0; // 0.0–1.0
 
+    // Derive camera chunk position for physics LOD culling
+    let camera_chunk = camera_q.iter().next().map(|t| {
+        ChunkCoord::from_voxel_pos(
+            t.translation.x as i32,
+            t.translation.y as i32,
+            t.translation.z as i32,
+        )
+    });
+
     // For each chunk with voxels, find surface voxels and heat them
     for coord in chunk_map.coords() {
+        // Physics LOD: skip distant chunks for solar heating.
+        if let Some(ref cam) = camera_chunk
+            && !lod_config.is_active(coord, cam)
+        {
+            continue;
+        }
         let Some(entity) = chunk_map.get(coord) else {
             continue;
         };
@@ -344,6 +361,10 @@ fn lbm_gas_step(
         )
     });
 
+    // Pre-allocate a scratch grid for streaming double-buffer (avoids
+    // allocating ~2.8 MB per step per chunk).
+    let mut scratch = LbmGrid::new_empty(crate::world::chunk::CHUNK_SIZE);
+
     for coord in coords {
         // Physics LOD: skip chunks outside the active radius.
         if let Some(ref cam) = camera_chunk
@@ -363,6 +384,7 @@ fn lbm_gas_step(
             rho_ambient,
             coriolis_omega,
             n_steps,
+            Some(&mut scratch),
         );
 
         if let Some(entity) = chunk_map.get(&coord)

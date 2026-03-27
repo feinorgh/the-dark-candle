@@ -23,12 +23,14 @@ use super::types::LbmGrid;
 /// # Arguments
 /// * `coriolis_omega` - Optional planetary rotation vector in lattice units (ω × rotation_axis).
 ///   `None` disables Coriolis forcing.
+/// * `scratch` - Optional pre-allocated scratch grid for streaming (avoids allocation).
 pub fn lbm_step(
     grid: &mut LbmGrid,
     config: &FluidConfig,
     gravity_lattice: [f32; 3],
     rho_ambient: f32,
     coriolis_omega: Option<[f32; 3]>,
+    scratch: Option<&mut LbmGrid>,
 ) {
     let tau = config.lbm_tau;
     let cs_smag = config.lbm_smagorinsky_cs;
@@ -64,8 +66,13 @@ pub fn lbm_step(
     // 2. Collision (BGK + Smagorinsky)
     collision::collide_grid(grid, tau, cs_smag);
 
-    // 3. Streaming
-    *grid = streaming::stream(grid);
+    // 3. Streaming — reuse scratch buffer if provided
+    if let Some(buf) = scratch {
+        streaming::stream_into(grid, buf);
+        std::mem::swap(grid, buf);
+    } else {
+        *grid = streaming::stream(grid);
+    }
 }
 
 /// Simplified LBM step with explicit parameters (no FluidConfig needed).
@@ -83,9 +90,31 @@ pub fn lbm_step_n(
     rho_ambient: f32,
     coriolis_omega: Option<[f32; 3]>,
     n_steps: usize,
+    scratch: Option<&mut LbmGrid>,
 ) {
-    for _ in 0..n_steps {
-        lbm_step(grid, config, gravity_lattice, rho_ambient, coriolis_omega);
+    if let Some(buf) = scratch {
+        for _ in 0..n_steps {
+            lbm_step(
+                grid,
+                config,
+                gravity_lattice,
+                rho_ambient,
+                coriolis_omega,
+                Some(buf),
+            );
+        }
+    } else {
+        let mut buf = LbmGrid::new_empty(grid.size());
+        for _ in 0..n_steps {
+            lbm_step(
+                grid,
+                config,
+                gravity_lattice,
+                rho_ambient,
+                coriolis_omega,
+                Some(&mut buf),
+            );
+        }
     }
 }
 
@@ -172,7 +201,7 @@ mod tests {
         let gravity_lattice = [0.0, -0.001, 0.0];
 
         for _ in 0..20 {
-            lbm_step(&mut grid, &config, gravity_lattice, rho_ambient, None);
+            lbm_step(&mut grid, &config, gravity_lattice, rho_ambient, None, None);
         }
 
         // The lighter gas should develop upward velocity.
@@ -279,11 +308,11 @@ mod tests {
 
         // 3 single steps
         for _ in 0..3 {
-            lbm_step(&mut grid1, &config, [0.0; 3], 1.0, None);
+            lbm_step(&mut grid1, &config, [0.0; 3], 1.0, None, None);
         }
 
         // 1 call with n=3
-        lbm_step_n(&mut grid2, &config, [0.0; 3], 1.0, None, 3);
+        lbm_step_n(&mut grid2, &config, [0.0; 3], 1.0, None, 3, None);
 
         // Should be identical
         for idx in 0..grid1.cells().len() {
@@ -372,7 +401,7 @@ mod tests {
         let omega = [0.0, 1e-3, 0.0];
 
         for _ in 0..50 {
-            lbm_step(&mut grid, &config, [0.0; 3], 1.0, Some(omega));
+            lbm_step(&mut grid, &config, [0.0; 3], 1.0, Some(omega), None);
         }
 
         // Collect z-velocity components from interior cells
@@ -435,7 +464,7 @@ mod tests {
         let config = test_config();
 
         for _ in 0..50 {
-            lbm_step(&mut grid, &config, [0.0; 3], 1.0, None);
+            lbm_step(&mut grid, &config, [0.0; 3], 1.0, None, None);
         }
 
         // Check that z-velocity remains near zero without Coriolis

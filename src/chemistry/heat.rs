@@ -21,8 +21,6 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashSet;
-
 use crate::data::MaterialRegistry;
 use crate::world::raycast::{self, RAY_DIRECTIONS};
 use crate::world::voxel::{MaterialId, Voxel};
@@ -112,15 +110,20 @@ pub fn diffuse_chunk(
     let len = size * size * size;
     assert_eq!(voxels.len(), len);
 
-    // Find maximum thermal diffusivity across all materials present to
-    // determine the CFL-stable sub-step size.
+    // Pre-compute per-voxel thermal properties once (avoids repeated
+    // HashMap lookups in the inner loop).
+    let mut conductivities = Vec::with_capacity(len);
+    let mut rho_cps = Vec::with_capacity(len);
     let mut alpha_max: f32 = 0.0;
+
     for v in voxels {
         let mat = registry.get(v.material);
         let k = mat.map(|m| m.thermal_conductivity).unwrap_or(0.1);
         let rho = mat.map(|m| m.density).unwrap_or(1.0);
         let cp = mat.map(|m| m.specific_heat_capacity).unwrap_or(1000.0);
         let rho_cp = rho * cp;
+        conductivities.push(k);
+        rho_cps.push(rho_cp);
         if rho_cp > 0.0 {
             alpha_max = alpha_max.max(k / rho_cp);
         }
@@ -136,67 +139,69 @@ pub fn diffuse_chunk(
     };
     let sub_dt = dt / n_substeps as f32;
 
-    // Working buffer: start from current voxel temperatures.
+    // Double-buffer: swap read/write each sub-step instead of cloning.
     let mut temps: Vec<f32> = voxels.iter().map(|v| v.temperature).collect();
-    // Material IDs don't change during diffusion — cache them.
-    let materials: Vec<MaterialId> = voxels.iter().map(|v| v.material).collect();
+    let mut scratch: Vec<f32> = temps.clone();
+
+    let size_sq = size * size;
 
     for _step in 0..n_substeps {
-        let snapshot = temps.clone();
+        // `temps` is the read buffer, `scratch` is the write buffer.
         for z in 0..size {
             for y in 0..size {
                 for x in 0..size {
-                    let idx = z * size * size + y * size + x;
+                    let idx = z * size_sq + y * size + x;
 
-                    let mat = registry.get(materials[idx]);
-                    let self_k = mat.map(|m| m.thermal_conductivity).unwrap_or(0.1);
-                    let density = mat.map(|m| m.density).unwrap_or(1.0);
-                    let cp = mat.map(|m| m.specific_heat_capacity).unwrap_or(1000.0);
-                    let self_rho_cp = density * cp;
+                    let self_k = conductivities[idx];
+                    let self_rho_cp = rho_cps[idx];
 
-                    let mut neighbors = Vec::with_capacity(6);
+                    // Stack-allocated neighbor array (no heap allocation).
+                    let mut neighbors: [(f32, f32); 6] = [(0.0, 0.0); 6];
+                    let mut n_count = 0usize;
+
                     if x > 0 {
-                        neighbors.push((
-                            snapshot[idx - 1],
-                            thermal_conductivity(materials[idx - 1], registry),
-                        ));
+                        let ni = idx - 1;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
                     if x + 1 < size {
-                        neighbors.push((
-                            snapshot[idx + 1],
-                            thermal_conductivity(materials[idx + 1], registry),
-                        ));
+                        let ni = idx + 1;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
                     if y > 0 {
-                        neighbors.push((
-                            snapshot[idx - size],
-                            thermal_conductivity(materials[idx - size], registry),
-                        ));
+                        let ni = idx - size;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
                     if y + 1 < size {
-                        neighbors.push((
-                            snapshot[idx + size],
-                            thermal_conductivity(materials[idx + size], registry),
-                        ));
+                        let ni = idx + size;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
                     if z > 0 {
-                        neighbors.push((
-                            snapshot[idx - size * size],
-                            thermal_conductivity(materials[idx - size * size], registry),
-                        ));
+                        let ni = idx - size_sq;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
                     if z + 1 < size {
-                        neighbors.push((
-                            snapshot[idx + size * size],
-                            thermal_conductivity(materials[idx + size * size], registry),
-                        ));
+                        let ni = idx + size_sq;
+                        neighbors[n_count] = (temps[ni], conductivities[ni]);
+                        n_count += 1;
                     }
 
-                    temps[idx] =
-                        diffuse_temperature(snapshot[idx], self_k, self_rho_cp, &neighbors, sub_dt);
+                    scratch[idx] = diffuse_temperature(
+                        temps[idx],
+                        self_k,
+                        self_rho_cp,
+                        &neighbors[..n_count],
+                        sub_dt,
+                    );
                 }
             }
         }
+        // Swap buffers: scratch becomes the read source for the next sub-step.
+        std::mem::swap(&mut temps, &mut scratch);
     }
 
     temps
@@ -291,7 +296,12 @@ pub fn radiate_chunk(
     assert_eq!(voxels.len(), len);
 
     let mut deltas = vec![0.0_f32; len];
-    let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
+
+    // Use only the first 13 of 26 ray directions. Each direction has a
+    // symmetric opposite; by marching only "positive-half" directions we
+    // naturally avoid processing each (emitter, receiver) pair twice and
+    // eliminate the expensive HashSet deduplication.
+    let half_dirs = RAY_DIRECTIONS.len() / 2;
 
     for z in 0..size {
         for y in 0..size {
@@ -316,7 +326,7 @@ pub fn radiate_chunk(
                     continue;
                 }
 
-                for dir_idx in 0..RAY_DIRECTIONS.len() {
+                for dir_idx in 0..half_dirs {
                     let get_absorption = |mat_id: MaterialId| -> Option<f32> {
                         if mat_id.is_air() {
                             return Some(0.0);
@@ -337,12 +347,6 @@ pub fn radiate_chunk(
                     };
 
                     let hit = attenuated.hit;
-
-                    // Deduplicate: process each (emitter, receiver) pair once.
-                    let pair = (idx.min(hit.index), idx.max(hit.index));
-                    if !seen_pairs.insert(pair) {
-                        continue;
-                    }
 
                     let recv = &voxels[hit.index];
                     let mat_r = match registry.get(recv.material) {

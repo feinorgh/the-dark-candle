@@ -17,19 +17,29 @@ use super::types::LbmGrid;
 /// For wall cells: half-way bounce-back — f_opp(x, t+1) = f_i_post(x, t)
 /// At grid edges: populations streaming out are lost (open boundary).
 pub fn stream(grid: &LbmGrid) -> LbmGrid {
-    let size = grid.size();
-    let mut out = LbmGrid::new_empty(size);
+    let mut out = LbmGrid::new_empty(grid.size());
+    stream_into(grid, &mut out);
+    out
+}
 
-    // Zero all gas cell distributions (new_empty initializes to equilibrium)
-    for cell in out.cells_mut() {
+/// Stream populations from `src` into pre-allocated `dst`, avoiding
+/// a fresh allocation each step (double-buffer pattern).
+///
+/// `dst` must be the same size as `src`; its contents are overwritten.
+pub fn stream_into(src: &LbmGrid, dst: &mut LbmGrid) {
+    let size = src.size();
+    debug_assert_eq!(size, dst.size(), "stream_into: grid size mismatch");
+
+    // Zero all distributions and reset tags in dst
+    for cell in dst.cells_mut() {
         cell.f = [0.0; Q];
     }
 
     // Copy wall cells unchanged
-    for idx in 0..grid.cells().len() {
-        let cell = &grid.cells()[idx];
+    for idx in 0..src.cells().len() {
+        let cell = &src.cells()[idx];
         if cell.is_wall() {
-            out.cells_mut()[idx] = *cell;
+            dst.cells_mut()[idx] = *cell;
         }
     }
 
@@ -37,8 +47,8 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
     for z in 0..size {
         for y in 0..size {
             for x in 0..size {
-                let src = grid.get(x, y, z);
-                if !src.is_gas() {
+                let cell = src.get(x, y, z);
+                if !cell.is_gas() {
                     continue;
                 }
 
@@ -47,7 +57,6 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
                     let ny = y as i32 + E[i][1];
                     let nz = z as i32 + E[i][2];
 
-                    // Check grid bounds
                     if nx < 0
                         || nx >= size as i32
                         || ny < 0
@@ -55,10 +64,8 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
                         || nz < 0
                         || nz >= size as i32
                     {
-                        // Open boundary: population is lost (absorbed)
-                        // Compensate by keeping it in place (zero-gradient)
-                        let dst_idx = grid.index(x, y, z);
-                        out.cells_mut()[dst_idx].f[i] += src.f[i];
+                        let dst_idx = src.index(x, y, z);
+                        dst.cells_mut()[dst_idx].f[i] += cell.f[i];
                         continue;
                     }
 
@@ -66,17 +73,15 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
                     let ny = ny as usize;
                     let nz = nz as usize;
 
-                    let neighbor = grid.get(nx, ny, nz);
+                    let neighbor = src.get(nx, ny, nz);
 
                     if neighbor.is_wall() {
-                        // Half-way bounce-back: reflect into opposite direction at source
                         let opp = OPPOSITE[i];
-                        let src_idx = grid.index(x, y, z);
-                        out.cells_mut()[src_idx].f[opp] += src.f[i];
+                        let src_idx = src.index(x, y, z);
+                        dst.cells_mut()[src_idx].f[opp] += cell.f[i];
                     } else {
-                        // Normal streaming: f_i moves to neighbor
-                        let dst_idx = grid.index(nx, ny, nz);
-                        out.cells_mut()[dst_idx].f[i] += src.f[i];
+                        let dst_idx = src.index(nx, ny, nz);
+                        dst.cells_mut()[dst_idx].f[i] += cell.f[i];
                     }
                 }
             }
@@ -84,19 +89,16 @@ pub fn stream(grid: &LbmGrid) -> LbmGrid {
     }
 
     // Preserve material, tag, and scalar fields for gas cells
-    for idx in 0..grid.cells().len() {
-        let cell = &grid.cells()[idx];
+    for idx in 0..src.cells().len() {
+        let cell = &src.cells()[idx];
         if cell.is_gas() {
-            out.cells_mut()[idx].material = cell.material;
-            out.cells_mut()[idx].tag = cell.tag;
+            dst.cells_mut()[idx].material = cell.material;
+            dst.cells_mut()[idx].tag = cell.tag;
         }
     }
 
-    // Advect moisture and cloud_lwc as passive scalars using upwind scheme.
-    // Each gas cell's scalars move in the direction of its macroscopic velocity.
-    advect_scalars(grid, &mut out);
-
-    out
+    // Advect moisture and cloud_lwc as passive scalars
+    advect_scalars(src, dst);
 }
 
 /// Advect moisture and cloud_lwc using first-order upwind from macroscopic velocity.

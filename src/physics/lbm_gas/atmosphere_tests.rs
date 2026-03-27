@@ -65,7 +65,7 @@ mod tests {
         let rho_upper_before = grid.get(6, 8, 6).density();
 
         // Run 30 LBM steps (not too many — catch the rising plume)
-        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 30);
+        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 30, None);
 
         // The lighter air should have redistributed upward: density at upper
         // levels should be lower than ambient (lighter air has risen there)
@@ -92,7 +92,7 @@ mod tests {
 
         let mass_before = grid.total_mass();
 
-        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 100);
+        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 100, None);
 
         let mass_after = grid.total_mass();
         let rel_error = (mass_after - mass_before).abs() / mass_before;
@@ -116,7 +116,7 @@ mod tests {
         let initial_max = grid.get(5, 5, 5).density();
 
         // No gravity — pure pressure equilibration
-        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, None, 200);
+        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, None, 200, None);
 
         // The peak density should have decreased significantly
         let final_max = grid.get(5, 5, 5).density();
@@ -151,7 +151,7 @@ mod tests {
         // ω = rotation rate along y-axis (Northern Hemisphere, latitude ~45°)
         let omega = [0.0, 0.001, 0.0]; // Exaggerated for test visibility
 
-        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, Some(omega), 30);
+        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, Some(omega), 30, None);
 
         // Measure z-velocity at center — should be deflected (nonzero)
         let center_vel = grid.get(6, 6, 6).velocity();
@@ -182,7 +182,7 @@ mod tests {
         let _vel_before = grid.get(5, 5, 5).velocity();
 
         // Run without Coriolis
-        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, None, 20);
+        step::lbm_step_n(&mut grid, &config, [0.0; 3], 1.0, None, 20, None);
 
         let vel_after = grid.get(5, 5, 5).velocity();
         // z-velocity should remain very small without Coriolis
@@ -361,7 +361,7 @@ mod tests {
 
         // Run LBM steps — moisture is advected as passive scalar in streaming
         for _ in 0..40 {
-            step::lbm_step(&mut grid, &config, [0.0; 3], 1.0, None);
+            step::lbm_step(&mut grid, &config, [0.0; 3], 1.0, None, None);
         }
 
         // Check moisture has been transported rightward
@@ -484,7 +484,7 @@ mod tests {
         *grid.get_mut(6, 2, 6) = LbmCell::new_gas(MaterialId::AIR, 0.5);
         *grid.get_mut(6, 9, 6) = LbmCell::new_gas(MaterialId::AIR, 1.5);
 
-        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 100);
+        step::lbm_step_n(&mut grid, &config, gravity, rho_ambient, None, 100, None);
 
         // Check stability: no NaN or Inf, Mach number reasonable
         let mach = step::max_mach_number(&grid);
@@ -563,7 +563,15 @@ mod tests {
             }
         }
         let omega = [0.0, 0.0005, 0.0];
-        step::lbm_step_n(&mut grid_with, &config, [0.0; 3], 1.0, Some(omega), 20);
+        step::lbm_step_n(
+            &mut grid_with,
+            &config,
+            [0.0; 3],
+            1.0,
+            Some(omega),
+            20,
+            None,
+        );
         let ke_with = kinetic_energy(&grid_with);
 
         // Run WITHOUT Coriolis (same initial conditions)
@@ -576,7 +584,7 @@ mod tests {
                 }
             }
         }
-        step::lbm_step_n(&mut grid_without, &config, [0.0; 3], 1.0, None, 20);
+        step::lbm_step_n(&mut grid_without, &config, [0.0; 3], 1.0, None, 20, None);
         let ke_without = kinetic_energy(&grid_without);
 
         // Coriolis shouldn't amplify KE significantly vs no-Coriolis baseline

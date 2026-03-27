@@ -51,6 +51,7 @@ pub fn lbm_step_octree(
         rho_ambient,
         coriolis_omega,
         n_steps,
+        None,
     );
 
     let changed = sync_grid_to_flat(&grid, &mut flat, size);

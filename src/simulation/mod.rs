@@ -19,7 +19,7 @@ use crate::chemistry::reactions::{ReactionData, check_reaction};
 use crate::chemistry::state_transitions::apply_transitions;
 use crate::data::{MaterialRegistry, Phase};
 use crate::physics::constants::STEFAN_BOLTZMANN;
-use crate::world::voxel::Voxel;
+use crate::world::voxel::{MaterialId, Voxel};
 
 /// Face-adjacent neighbor offsets (6-connectivity).
 const NEIGHBORS: [(i32, i32, i32); 6] = [
@@ -98,14 +98,23 @@ fn diffuse_pressure_sim(
     rate: f32,
     registry: &MaterialRegistry,
 ) -> f32 {
-    let snapshot: Vec<Voxel> = voxels.to_vec();
+    // Snapshot only the values we actually read (pressure + permeability),
+    // not the entire Voxel array.
+    let len = size * size * size;
+    let mut pressures = Vec::with_capacity(len);
+    let mut permeable = Vec::with_capacity(len);
+    for v in voxels.iter() {
+        pressures.push(v.pressure);
+        permeable.push(is_permeable(v.material, registry));
+    }
+
     let mut max_delta: f32 = 0.0;
 
     for z in 0..size {
         for y in 0..size {
             for x in 0..size {
                 let i = idx(x, y, z, size);
-                if !is_permeable(snapshot[i].material, registry) {
+                if !permeable[i] {
                     continue;
                 }
 
@@ -126,16 +135,16 @@ fn diffuse_pressure_sim(
                     }
 
                     let ni = idx(nx, ny, nz, size);
-                    if is_permeable(snapshot[ni].material, registry) {
-                        sum += snapshot[ni].pressure;
+                    if permeable[ni] {
+                        sum += pressures[ni];
                         count += 1;
                     }
                 }
 
                 if count > 0 {
                     let avg = sum / count as f32;
-                    let delta = (avg - snapshot[i].pressure) * rate;
-                    voxels[i].pressure = snapshot[i].pressure + delta;
+                    let delta = (avg - pressures[i]) * rate;
+                    voxels[i].pressure = pressures[i] + delta;
                     max_delta = max_delta.max(delta.abs());
                 }
             }
@@ -169,14 +178,18 @@ pub fn simulate_tick(
 ) -> TickResult {
     // 1. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors.
     //    Runs first so ignition hot-spots trigger before diffusion spreads them.
+    //    Snapshot only the fields read by check_reaction (material + temperature)
+    //    instead of the full Voxel array.
     let mut reactions_fired = 0;
-    let snapshot: Vec<Voxel> = voxels.to_vec();
+    let snap_materials: Vec<MaterialId> = voxels.iter().map(|v| v.material).collect();
+    let snap_temps: Vec<f32> = voxels.iter().map(|v| v.temperature).collect();
 
     for z in 0..size {
         for y in 0..size {
             for x in 0..size {
                 let i = idx(x, y, z, size);
-                let voxel_a = &snapshot[i];
+                let mat_a = snap_materials[i];
+                let temp_a = snap_temps[i];
 
                 for &(dx, dy, dz) in &NEIGHBORS {
                     let nx = x as i32 + dx;
@@ -194,16 +207,10 @@ pub fn simulate_tick(
                     }
 
                     let ni = nz as usize * size * size + ny as usize * size + nx as usize;
-                    let voxel_b = &snapshot[ni];
+                    let mat_b = snap_materials[ni];
 
                     for rule in rules {
-                        if let Some(result) = check_reaction(
-                            rule,
-                            voxel_a.material,
-                            voxel_b.material,
-                            voxel_a.temperature,
-                            registry,
-                        ) {
+                        if let Some(result) = check_reaction(rule, mat_a, mat_b, temp_a, registry) {
                             voxels[i].material = result.new_material_a;
                             voxels[i].temperature += result.heat_output;
                             if let Some(new_b) = result.new_material_b {
