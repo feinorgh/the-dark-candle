@@ -954,6 +954,30 @@ fully implemented and tested but not yet running in-game or visible to the
 player. Phases 9b (chemistry runtime), 9c (thermal glow), and 9d (time-of-day)
 will bridge this gap — see their detailed sections below Phase 9a.
 
+### Terrain Detail & World Generation Options
+
+The terrain generator currently uses only two Perlin noise layers blended at a
+fixed 70/30 ratio, producing smooth, repetitive landscapes. This milestone
+upgrades to multi-octave FBM, ridged multi-fractal, domain warping, geological
+strata, multi-scale caves, and biome-terrain integration. All detail is computed
+once during async chunk generation — zero runtime FPS impact.
+
+Nine tasks across four tracks:
+
+1. **Noise engine** — `NoiseStack` with composable FBM, ridged fractal, domain
+   warping, terrain-type selector, and micro-detail (T1, T2)
+2. **World presets & CLI** — 6+ scene presets (alpine, archipelago, desert,
+   plains, volcanic, tundra), extended CLI flags, and a world creation UI
+   screen (T3, T4, T5)
+3. **Geological depth** — Rock strata by depth (sedimentary/metamorphic/igneous),
+   ore veins (coal, copper, iron, gold, crystal), enhanced multi-scale cave
+   system with caverns, tunnels, and tube networks (T6, T7)
+4. **Biome-terrain integration** — Biome map generation, per-biome terrain
+   modifiers (height bias, roughness, erosion rate), slope/altitude surface
+   materials (T8, T9)
+
+Full design: **[terrain-generation.md](terrain-generation.md)**
+
 ### Coupling & Integration
 - **Cross-model fluid coupling** — AMR ↔ LBM mass/heat exchange at liquid-gas
   interfaces; FLIP particles entering/leaving LBM gas fields
