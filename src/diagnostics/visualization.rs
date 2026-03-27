@@ -142,7 +142,7 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
     }
 
     match color_mode {
-        ColorMode::Material => {
+        ColorMode::Material | ColorMode::Incandescence => {
             if let Some(mat) = registry.get(voxel.material) {
                 Rgb([
                     (mat.color[0] * 255.0) as u8,
@@ -171,21 +171,28 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
             };
             heatmap_rgb(t)
         }
-        ColorMode::Incandescence => {
-            // Base color from material data
-            let base = if let Some(mat) = registry.get(voxel.material) {
-                [mat.color[0], mat.color[1], mat.color[2], 1.0]
-            } else {
-                [0.8, 0.0, 0.8, 1.0]
-            };
-            let hdr = crate::world::meshing::incandescence_color(base, voxel.temperature);
-            // Tone-map HDR → LDR via Reinhard
-            fn tonemap(v: f32) -> u8 {
-                ((v / (1.0 + v)) * 255.0).min(255.0) as u8
-            }
-            Rgb([tonemap(hdr[0]), tonemap(hdr[1]), tonemap(hdr[2])])
-        }
     }
+}
+
+/// Return the HDR emissive color for a voxel (incandescence mode only).
+///
+/// This is the self-luminous contribution from hot materials — it should be
+/// added to the final pixel color *after* Lambertian shading, not multiplied
+/// by it. Returns `[0, 0, 0]` for cold voxels or non-incandescence modes.
+fn voxel_emissive(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMode) -> [f32; 3] {
+    if !matches!(color_mode, ColorMode::Incandescence) || voxel.material.is_air() {
+        return [0.0; 3];
+    }
+    let base = if let Some(mat) = registry.get(voxel.material) {
+        [mat.color[0], mat.color[1], mat.color[2], 1.0]
+    } else {
+        [0.8, 0.0, 0.8, 1.0]
+    };
+    let hdr = crate::world::meshing::incandescence_color(base, voxel.temperature);
+    // Emissive = HDR incandescence minus the base material color.
+    // For cold voxels (< 800K), incandescence_color returns the base unchanged,
+    // so emissive is zero. For hot voxels, it captures only the glow.
+    [hdr[0] - base[0], hdr[1] - base[1], hdr[2] - base[2]]
 }
 
 /// Index into a flat `size³` voxel array.
@@ -344,6 +351,7 @@ fn render_perspective(
             {
                 let voxel = &voxels[idx(hit.x, hit.y, hit.z, size)];
                 let base = voxel_color(voxel, registry, color_mode);
+                let emissive = voxel_emissive(voxel, registry, color_mode);
 
                 // Face normal from DDA hit.
                 let face_n = hit.face_normal();
@@ -387,9 +395,35 @@ fn render_perspective(
 
                 let bg = sky_color(dir, light_dir);
 
-                let r = (base.0[0] as f32 * (light.ambient + diffuse_r * light_col.0)).min(255.0);
-                let g = (base.0[1] as f32 * (light.ambient + diffuse_g * light_col.1)).min(255.0);
-                let b = (base.0[2] as f32 * (light.ambient + diffuse_b * light_col.2)).min(255.0);
+                // Diffuse (externally lit) component — base material color
+                // modulated by ambient + directional lighting.
+                let lit_r = base.0[0] as f32 / 255.0 * (light.ambient + diffuse_r * light_col.0);
+                let lit_g = base.0[1] as f32 / 255.0 * (light.ambient + diffuse_g * light_col.1);
+                let lit_b = base.0[2] as f32 / 255.0 * (light.ambient + diffuse_b * light_col.2);
+
+                // Emissive (self-luminous) component — independent of external
+                // light direction, shadows, or surface normal. Hot materials
+                // glow regardless of how they face the sun.
+                let hdr_r = lit_r + emissive[0];
+                let hdr_g = lit_g + emissive[1];
+                let hdr_b = lit_b + emissive[2];
+
+                // Convert to final 0-255 pixel value. Use Reinhard tone-mapping
+                // when emissive HDR content is present; otherwise clamp to
+                // preserve full brightness for non-emissive materials.
+                let has_emissive = emissive[0] > 0.0 || emissive[1] > 0.0 || emissive[2] > 0.0;
+                let (r, g, b) = if has_emissive {
+                    fn tonemap(v: f32) -> f32 {
+                        (v / (1.0 + v)) * 255.0
+                    }
+                    (tonemap(hdr_r), tonemap(hdr_g), tonemap(hdr_b))
+                } else {
+                    (
+                        (hdr_r * 255.0).min(255.0),
+                        (hdr_g * 255.0).min(255.0),
+                        (hdr_b * 255.0).min(255.0),
+                    )
+                };
 
                 Rgb([
                     (r * (1.0 - fog) + bg.0[0] as f32 * fog) as u8,
