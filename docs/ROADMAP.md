@@ -387,6 +387,47 @@ visualization:
   boundaries, using the existing `upsample_voxels` / trilinear interpolation
   pipeline
 
+### Rendering Architecture Overhaul (planned)
+
+The current renderer uses Bevy's default PBR pipeline with one `Mesh3d` +
+`StandardMaterial` entity per chunk (~240 draw calls for a typical scene).
+Two planned tiers address this:
+
+**Tier A — Decouple Rendering from Simulation (near-term)**
+
+Voxel data remains the simulation substrate (heat, chemistry, LBM gas,
+collisions) but the visual representation diverges at distance:
+
+1. **Chunk mesh merging** — combine adjacent chunks at the same LOD level into
+   region mega-meshes.  Reduces draw calls from ~240 to ~15–20 while keeping
+   the existing Surface Nets algorithm for near-field geometry.
+2. **Shared material** — all chunks share a single `StandardMaterial` handle
+   (vertex-colored), enabling Bevy's automatic draw-call batching.
+3. **Heightmap rendering for distant terrain** — beyond LOD 2 (~256 m), replace
+   voxel meshes with a single heightmap mesh per LOD ring (one vertex per
+   column, no 3D Surface Nets).  Faster to generate, fewer vertices, one draw
+   call per ring.
+4. **Near-field voxel meshes preserved** — within LOD 0–1 (~128 m), keep
+   Surface Nets so the player sees caves, overhangs, and deformable terrain.
+
+Expected impact: ~12× draw-call reduction, ~40–60 % CPU frame-time reduction.
+
+**Tier B — Custom Voxel Render Phase (long-term)**
+
+Replace Bevy's generic `Mesh3d`/`StandardMaterial` path for terrain with a
+purpose-built draw phase:
+
+- Custom `RenderCommand` with instanced indirect draws, bypassing Bevy's
+  extract → prepare → sort overhead for chunk geometry.
+- Keep Bevy's UI, post-processing (bloom), input, and asset pipeline intact.
+- Opens the door to GPU-side frustum/occlusion culling and voxel-specific
+  optimisations (greedy face merging, palette texturing).
+- Falls under Bevy's "Tier 2" integration model: replace mesh rendering while
+  retaining the rest of the engine.
+
+Tier B depends on Tier A being stable.  Both tiers leave the simulation layer
+(`src/chemistry/`, `src/physics/`, `src/world/voxel.rs`) completely untouched.
+
 ### Gameplay & Content
 - **Player interaction** — mining, tool use, UI/HUD
 - **World persistence** — save/load chunks to disk
@@ -446,7 +487,8 @@ Full design: **[valley-river-milestone.md](valley-river-milestone.md)**
 ## Open Questions
 
 - **Multiplayer?** Not in scope, but chunk-based architecture doesn’t preclude it.
-- **Rendering style?** Low-poly / stylized is easier to ship.
+- **Rendering style?** Low-poly / stylized is easier to ship. Custom voxel render
+  phase (Tier B) would decouple this decision from Bevy's PBR defaults.
 - **Fluid coupling strategy?** Interface cells? Overlapping domains? TBD.
 - **Sound design?** Bevy has built-in audio. Not prioritized yet.
 - **Planet scale?** Default is 32 km radius. Earth-scale (6,371 km) requires
@@ -459,3 +501,8 @@ Full design: **[valley-river-milestone.md](valley-river-milestone.md)**
 - **Structural analysis frequency?** Full stress analysis every tick is expensive.
   Budget-limited (every N ticks, or event-driven when loads change). Acceptable
   latency TBD with profiling.
+- **WGSL vs custom shaders?** Bevy's internal renderer is locked to WGSL
+  (cross-compiled to SPIR-V via naga at runtime). Custom compute shaders in
+  `src/gpu/` could use GLSL or precompiled SPIR-V via wgpu's `ShaderSource`
+  enum, but this wouldn't eliminate the Vulkan validation warnings (those
+  originate from Bevy's built-in shaders, not ours).
