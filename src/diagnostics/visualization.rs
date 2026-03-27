@@ -179,20 +179,46 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
 /// This is the self-luminous contribution from hot materials — it should be
 /// added to the final pixel color *after* Lambertian shading, not multiplied
 /// by it. Returns `[0, 0, 0]` for cold voxels or non-incandescence modes.
-fn voxel_emissive(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMode) -> [f32; 3] {
+///
+/// Computed directly from the incandescence ramp × Stefan-Boltzmann T⁴
+/// scaling, independent of the material base color. This avoids negative
+/// emissive values that occurred with the old subtraction approach.
+fn voxel_emissive(voxel: &Voxel, _registry: &MaterialRegistry, color_mode: &ColorMode) -> [f32; 3] {
+    const GLOW_THRESHOLD: f32 = 800.0;
+
     if !matches!(color_mode, ColorMode::Incandescence) || voxel.material.is_air() {
         return [0.0; 3];
     }
-    let base = if let Some(mat) = registry.get(voxel.material) {
-        [mat.color[0], mat.color[1], mat.color[2], 1.0]
+    let temp = voxel.temperature;
+    if temp < GLOW_THRESHOLD {
+        return [0.0; 3];
+    }
+
+    // Incandescence ramp: dark red → cherry red → orange → yellow-white
+    // (mirrors meshing::incandescence_color but outputs pure HDR emissive)
+    let (r, g, b) = if temp < 1200.0 {
+        let t = (temp - 800.0) / 400.0;
+        (0.3 + 0.4 * t, 0.02 * t, 0.0)
+    } else if temp < 1500.0 {
+        let t = (temp - 1200.0) / 300.0;
+        (0.7 + 0.3 * t, 0.02 + 0.28 * t, 0.0)
+    } else if temp < 1800.0 {
+        let t = (temp - 1500.0) / 300.0;
+        (1.0, 0.3 + 0.4 * t, 0.1 * t)
     } else {
-        [0.8, 0.0, 0.8, 1.0]
+        (
+            1.0,
+            0.7 + 0.3 * ((temp - 1800.0) / 500.0).min(1.0),
+            0.1 + 0.9 * ((temp - 1800.0) / 500.0).min(1.0),
+        )
     };
-    let hdr = crate::world::meshing::incandescence_color(base, voxel.temperature);
-    // Emissive = HDR incandescence minus the base material color.
-    // For cold voxels (< 800K), incandescence_color returns the base unchanged,
-    // so emissive is zero. For hot voxels, it captures only the glow.
-    [hdr[0] - base[0], hdr[1] - base[1], hdr[2] - base[2]]
+
+    // HDR intensity via Stefan-Boltzmann T⁴ scaling. The 0.15 coefficient
+    // gives subtle glow at 800K and dramatic brightness at 2000K+.
+    let t_norm = temp / 1000.0;
+    let intensity = t_norm * t_norm * t_norm * t_norm * 0.15;
+
+    [r * intensity, g * intensity, b * intensity]
 }
 
 /// Index into a flat `size³` voxel array.

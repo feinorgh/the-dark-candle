@@ -15,7 +15,7 @@
 
 use the_dark_candle::chemistry::reactions::ReactionData;
 use the_dark_candle::chemistry::runtime::load_reaction_rules;
-use the_dark_candle::data::{load_material_registry, MaterialRegistry};
+use the_dark_candle::data::{MaterialRegistry, load_material_registry};
 use the_dark_candle::diagnostics::video::FrameEncoder;
 use the_dark_candle::diagnostics::visualization::{
     ColorMode, SceneLight, ViewMode, render_frame_lit,
@@ -42,13 +42,7 @@ fn noon_light() -> SceneLight {
 }
 
 /// Standard camera looking at center of a grid, positioned above and away.
-fn orbit_camera(
-    size: usize,
-    angle: f32,
-    elevation: f32,
-    img_w: u32,
-    img_h: u32,
-) -> ViewMode {
+fn orbit_camera(size: usize, angle: f32, elevation: f32, img_w: u32, img_h: u32) -> ViewMode {
     let center = size as f32 / 2.0;
     let radius = size as f32 * 1.2;
     let cam_x = center + radius * angle.cos() * elevation.cos();
@@ -68,8 +62,9 @@ fn orbit_camera(
 // ---------------------------------------------------------------------------
 
 /// Builds a 32³ scene with a wooden structure on a grass floor, surrounded
-/// by air. Wood pillars and beams form a small cabin. A stone hearth sits
-/// in the center with a hot spot to ignite the wood.
+/// by air. Wood pillars and beams form a small cabin. The wood is pre-heated
+/// with a vertical gradient — lower layers above ignition temperature (573K)
+/// react to ash immediately, creating incandescent glow from the bottom up.
 fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
     let mut voxels = vec![Voxel::default(); size * size * size];
     let ambient = 288.15; // 15°C
@@ -143,13 +138,29 @@ fn build_fire_scene(size: usize, registry: &MaterialRegistry) -> Vec<Voxel> {
         }
     }
 
-    // Ignition hot spot: a 2×2×2 region at the back-right corner (inside)
-    // heated well above wood ignition point (573K)
-    for dx in 0..2 {
-        for dy in 0..2 {
-            for dz in 0..2 {
-                let i = idx(20 + dx, 2 + dy, 20 + dz, size);
-                voxels[i].temperature = 700.0;
+    // Pre-heat the cabin wood with a vertical gradient simulating a fire
+    // already in progress. Bottom layers are above wood ignition (573K) so
+    // they react immediately to ash; upper layers stay as warm wood.
+    for x in 0..size {
+        for z in 0..size {
+            for y in 0..size {
+                let i = idx(x, y, z, size);
+                if voxels[i].material == MaterialId::WOOD {
+                    // Gradient: y=2 → 700K, y=8 → 400K
+                    let frac = ((y as f32) - 2.0) / 6.0;
+                    voxels[i].temperature = 700.0 - frac * 300.0;
+                }
+            }
+        }
+    }
+
+    // Extra-hot ignition point at the back-right wall corner to seed the
+    // brightest glow. This is ON the wood wall (x=22), not inside the cabin.
+    for y in 2..5 {
+        for z in 18..23 {
+            let i = idx(22, y, z, size);
+            if voxels[i].material == MaterialId::WOOD {
+                voxels[i].temperature = 800.0;
             }
         }
     }
@@ -471,8 +482,7 @@ fn water_boiling_video() {
             max_k: 500.0,
         };
 
-        let frame_img =
-            render_frame_lit(&voxels, size, &registry, &view, &color, 1, &light);
+        let frame_img = render_frame_lit(&voxels, size, &registry, &view, &color, 1, &light);
         encoder.push_frame(&frame_img).expect("frame");
     }
 
@@ -486,8 +496,9 @@ fn water_boiling_video() {
 // ---------------------------------------------------------------------------
 
 /// Builds a 32³ scene with a checkerboard of hydrogen and oxygen gas,
-/// contained in a stone chamber. A hot spot at the center ignites the
-/// chain reaction.
+/// contained in a stone chamber. The entire gas volume is pre-heated above
+/// auto-ignition temperature (843K), causing a uniform detonation on the
+/// first simulation tick.
 fn build_oxyhydrogen_scene(size: usize) -> Vec<Voxel> {
     let mut voxels = vec![Voxel::default(); size * size * size];
 
@@ -508,7 +519,10 @@ fn build_oxyhydrogen_scene(size: usize) -> Vec<Voxel> {
     }
 
     // Checkerboard H₂/O₂ fill interior (y=2..size, x=2..size-2, z=2..size-2)
-    // Leave top open (no stone ceiling) so steam can escape
+    // Leave top open (no stone ceiling) so steam can escape.
+    // Pre-heat the entire gas volume ABOVE auto-ignition (843K) to model a
+    // detonation: all H₂ reacts on the very first tick, producing a massive
+    // thermal flash that fills the chamber with superheated steam.
     for z in 2..size - 2 {
         for y in 2..size {
             for x in 2..size - 2 {
@@ -518,20 +532,13 @@ fn build_oxyhydrogen_scene(size: usize) -> Vec<Voxel> {
                 } else {
                     voxels[i].material = MaterialId::OXYGEN;
                 }
+                voxels[i].temperature = 850.0;
             }
         }
     }
 
-    // Ignition hot spot: 3×3×3 cube at center, heated above autoignition (843K)
-    let c = size / 2;
-    for dz in 0..3 {
-        for dy in 0..3 {
-            for dx in 0..3 {
-                let i = idx(c - 1 + dx, c - 1 + dy, c - 1 + dz, size);
-                voxels[i].temperature = 950.0;
-            }
-        }
-    }
+    // No separate ignition hot spot needed — the entire gas is above
+    // auto-ignition temperature. The detonation fires uniformly.
 
     voxels
 }
@@ -574,9 +581,10 @@ fn oxyhydrogen_flame_video() {
             simulate_tick(&mut voxels, size, &rules.0, &registry, dt);
         }
 
-        // Camera orbits faster to capture the rapid reaction
+        // Camera orbits faster to capture the rapid reaction, with higher
+        // elevation to look down into the open-top chamber.
         let angle = t * std::f32::consts::TAU * 0.8;
-        let elev = 0.25 + 0.15 * (t * std::f32::consts::TAU * 2.0).sin();
+        let elev = 0.55 + 0.1 * (t * std::f32::consts::TAU * 2.0).sin();
         let view = orbit_camera(size, angle, elev, img_w, img_h);
 
         let frame_img = render_frame_lit(

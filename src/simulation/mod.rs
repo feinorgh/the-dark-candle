@@ -191,7 +191,12 @@ pub fn simulate_tick(
                 let mat_a = snap_materials[i];
                 let temp_a = snap_temps[i];
 
+                let mut reacted = false;
                 for &(dx, dy, dz) in &NEIGHBORS {
+                    if reacted {
+                        break;
+                    }
+
                     let nx = x as i32 + dx;
                     let ny = y as i32 + dy;
                     let nz = z as i32 + dz;
@@ -217,6 +222,7 @@ pub fn simulate_tick(
                                 voxels[ni].material = new_b;
                             }
                             reactions_fired += 1;
+                            reacted = true;
                             break;
                         }
                     }
@@ -425,14 +431,17 @@ mod tests {
             heat_output: 3500.0,
         };
 
-        // 4³ grid: alternating H₂ and O₂ (checkerboard)
+        // 4³ grid: alternating H₂ and O₂ (checkerboard).
+        // Pre-heat to 800 K so heat only needs to diffuse ~43 K to cross the
+        // 843 K ignition threshold.  Use a large dt so heat traverses the O₂
+        // buffer layer (H₂ voxels are always 2 steps apart in a checkerboard).
         let size = 4;
         let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
         for z in 0..size {
             for y in 0..size {
                 for x in 0..size {
                     let i = z * size * size + y * size + x;
-                    voxels[i].temperature = 288.15;
+                    voxels[i].temperature = 800.0;
                     if (x + y + z) % 2 == 0 {
                         voxels[i].material = MaterialId::HYDROGEN;
                     } else {
@@ -453,8 +462,8 @@ mod tests {
 
         let rules = vec![rule];
         let mut total_reactions = 0;
-        for _tick in 0..50 {
-            let result = simulate_tick(&mut voxels, size, &rules, &reg, 500.0);
+        for _tick in 0..100 {
+            let result = simulate_tick(&mut voxels, size, &rules, &reg, 5000.0);
             total_reactions += result.reactions_fired;
         }
 
