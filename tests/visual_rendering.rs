@@ -52,7 +52,7 @@ fn test_registry() -> MaterialRegistry {
 }
 
 fn idx(x: usize, y: usize, z: usize, size: usize) -> usize {
-    x + z * size + y * size * size
+    z * size * size + y * size + x
 }
 
 /// Reinhard tone-map a single HDR channel to [0, 255].
