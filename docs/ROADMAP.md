@@ -239,7 +239,7 @@ upgrades to multi-octave FBM, ridged multi-fractal, domain warping, geological
 strata, multi-scale caves, and biome-terrain integration. All detail is computed
 once during async chunk generation — zero runtime FPS impact.
 
-Nine tasks across four tracks:
+Ten tasks across five tracks:
 
 1. **Noise engine** — `NoiseStack` with composable FBM, ridged fractal, domain
    warping, terrain-type selector, and micro-detail (T1, T2)
@@ -252,6 +252,10 @@ Nine tasks across four tracks:
 4. **Biome-terrain integration** — Biome map generation, per-biome terrain
    modifiers (height bias, roughness, erosion rate), slope/altitude surface
    materials (T8, T9)
+5. **Hydraulic erosion** — Rainfall-driven droplet simulation producing
+   fine-scale gullies, smoothed ridges, and sediment deposition. Per-region
+   rainfall intensity controls droplet density — rainy areas get more
+   erosion detail. Runs once at generation time (T10)
 
 Full design: **[terrain-generation.md](terrain-generation.md)**
 

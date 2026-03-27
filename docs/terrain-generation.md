@@ -49,6 +49,10 @@ D8 flow accumulation with Planchon–Darboux sink filling. Valley carving via
 `carve_valley()` blends V-shaped and U-shaped cross-sections. Enabled per
 preset (currently only `valley_river`). Cached in `OnceLock<FlowMap>`.
 
+No particle-based hydraulic erosion. The D8 carving creates large-scale valleys
+and drainage channels but doesn't produce fine-scale gullies, sediment fans, or
+the natural smoothing that rainfall creates over time.
+
 ### Parameters (`TerrainConfig`)
 
 | Field | Default | Description |
@@ -466,6 +470,225 @@ with STONE to simulate exposed boulders. Only on slopes > 0.5 gradient.
 
 ---
 
+## Design: Hydraulic Erosion (Rainfall-Driven)
+
+### T10. Particle-based hydraulic erosion
+
+Add a droplet-simulation erosion pass that runs on the coarse heightmap during
+terrain generation (same phase as FlowMap computation — generation-time only,
+zero runtime FPS cost). Areas with higher rainfall receive more simulated
+droplets, producing denser gullies, smoother slopes, and sediment deposition
+in lowlands.
+
+#### How it works
+
+The algorithm simulates thousands of water droplets rolling downhill across the
+heightmap. Each droplet picks up sediment where it flows fast (steep slopes,
+high velocity) and deposits it where it slows (flat areas, pools). Over many
+iterations, this produces:
+
+- **Gullies** — fine branching channels where many droplets converge
+- **Smoothed ridges** — exposed summits abraded by repeated flow
+- **Sediment fans** — deposited material at the base of slopes
+- **Alluvial plains** — fine-grained fill in valley floors
+- **Terracing** — natural step patterns on moderate slopes
+
+This complements the existing D8 flow carving, which produces large-scale
+valleys. Hydraulic erosion adds the fine-scale detail within and between those
+valleys.
+
+#### Algorithm: droplet simulation (Beyer / de Swart variant)
+
+Each droplet is a state tuple `(pos, dir, vel, water, sediment)`:
+
+```
+for each droplet:
+    1. Spawn at random position on heightmap
+       (probability weighted by rainfall intensity map)
+    2. Compute gradient at current position (bilinear interpolation)
+    3. Update direction: dir = dir * inertia + gradient * (1 - inertia)
+       (normalize)
+    4. Move: new_pos = pos + dir
+    5. Compute height difference: delta_h = h_new - h_old
+    6. Compute sediment capacity:
+       capacity = max(-delta_h, min_slope) * vel * water * capacity_factor
+    7. If sediment > capacity (carrying too much):
+       deposit = (sediment - capacity) * deposition_rate
+       Add deposit to heightmap at pos (weighted kernel)
+       sediment -= deposit
+    8. Else (can carry more):
+       erode = min((capacity - sediment) * erosion_rate, -delta_h)
+       Subtract erode from heightmap at pos (weighted kernel)
+       sediment += erode
+    9. Update velocity: vel = sqrt(vel² + delta_h * gravity)
+   10. Evaporate: water *= (1 - evaporation_rate)
+   11. If water < 0.01 or lifetime exceeded or out of bounds: stop
+```
+
+#### Erosion radius kernel
+
+Each deposit/erode operation affects a circular area (radius ≈ 3 cells) with
+bilinear weight falloff. This prevents single-cell spikes and produces smooth,
+natural channels. The kernel is precomputed once per config.
+
+#### Rainfall intensity map
+
+A per-cell `f32` (0.0 = arid, 1.0 = monsoon) controls droplet spawn density.
+Generated from composable inputs:
+
+```
+rainfall(x, z) = clamp(
+    base_moisture                            // from biome (T8) or noise fallback
+    + orographic_lift(slope, wind_direction)  // windward slopes get more rain
+    + altitude_penalty(height)                // very high = less rain (snow)
+    + noise_perturbation(x, z)               // local variation
+, 0.0, 1.0)
+```
+
+**Before T8 (biome map):** use a standalone noise-based rainfall:
+```
+rainfall(x, z) = clamp(
+    0.5 + 0.4 * Perlin(seed + 200).get(x * 0.003, z * 0.003)
+    - 0.3 * max(0, (height - sea_level - 50) / 50)   // high altitude penalty
+, 0.0, 1.0)
+```
+
+**After T8:** the biome's `moisture_range` and any future `precipitation_rate`
+field feed into `base_moisture`, producing biome-aware rainfall patterns.
+
+#### Droplet distribution
+
+Total droplets = `iterations` (config). Each cell's share is proportional to
+its rainfall intensity:
+
+```
+droplets_for_cell = round(iterations * rainfall[cell] / sum(rainfall))
+```
+
+Arid cells (rainfall < 0.05) get zero droplets. High-rainfall cells get
+significantly more, concentrating erosion where rain falls.
+
+#### Sediment tracking map
+
+A parallel `Vec<f32>` (same grid as heightmap) accumulates net sediment
+deposit per cell. Positive = deposition, negative = erosion. This map is
+available during `generate_chunk()` for:
+
+- **Material assignment**: Heavy deposition cells → alluvial Dirt/Clay
+  instead of the default surface material
+- **Soil depth modulation**: Net deposition thickens the soil layer;
+  net erosion thins it or exposes bare rock
+
+#### HydraulicErosionConfig
+
+```rust
+pub struct HydraulicErosionConfig {
+    pub enabled: bool,                   // Master toggle (default: false)
+    pub iterations: u32,                 // Total droplets (default: 100_000)
+    pub erosion_radius: f32,             // Deposit/erode kernel radius in cells (default: 3.0)
+    pub inertia: f32,                    // Droplet momentum vs gradient (default: 0.05)
+    pub sediment_capacity_factor: f32,   // Carrying capacity multiplier (default: 4.0)
+    pub min_slope: f32,                  // Floor for capacity calc (default: 0.01)
+    pub erosion_rate: f32,               // Fraction of deficit eroded (default: 0.3)
+    pub deposition_rate: f32,            // Fraction of excess deposited (default: 0.3)
+    pub evaporation_rate: f32,           // Water loss per step (default: 0.01)
+    pub gravity: f32,                    // Acceleration factor (default: 4.0)
+    pub max_droplet_lifetime: u32,       // Steps before forced stop (default: 30)
+    pub rainfall_noise_freq: f64,        // Rainfall pattern frequency (default: 0.003)
+    pub rainfall_base: f32,              // Base moisture level (default: 0.5)
+    pub altitude_rain_penalty: f32,      // Reduction per metre above threshold (default: 0.006)
+    pub altitude_rain_threshold: f32,    // Altitude where penalty starts (default: 50.0 m above sea)
+}
+```
+
+Embedded in `TerrainConfig` alongside `erosion: ErosionConfig`:
+
+```rust
+pub struct TerrainConfig {
+    // ... existing fields ...
+    pub erosion: ErosionConfig,                      // D8 valley carving
+    pub hydraulic_erosion: HydraulicErosionConfig,   // Rainfall-driven droplet erosion
+}
+```
+
+#### Execution order
+
+Both erosion passes operate on the same coarse heightmap grid (from FlowMap)
+and run once during world initialization:
+
+```
+1. Sample raw heightmap (noise evaluation)
+2. Sink fill (Planchon-Darboux)
+3. D8 flow direction + accumulation
+4. Valley carving (existing — large-scale channels)
+5. ► Hydraulic erosion (NEW — fine-scale rainfall-driven detail)
+6. Cache final heightmap + sediment map
+7. Per-chunk generation reads cached heightmap
+```
+
+Step 5 runs after valley carving so droplets can flow through the carved
+channels, depositing sediment in valley floors. The D8 pass creates the river
+network; the hydraulic pass adds the gully network and smoothing around it.
+
+#### Performance budget
+
+| Parameter | Value | Cost |
+|-----------|-------|------|
+| Grid resolution | 512×512 (8 m cells) | — |
+| Iterations (droplets) | 100,000 | ~50–150 ms |
+| Max lifetime per droplet | 30 steps | 3M step operations worst case |
+| Erosion radius | 3 cells | ~28 cells touched per step |
+
+At 100K droplets × 30 steps × ~28 ops = ~84M operations, but most droplets
+die early (evaporation, out of bounds, flat terrain). Empirical cost is
+~50–150 ms for a 512² grid — comparable to the existing FlowMap computation.
+Runs once during world init, fully parallelizable with `rayon` if needed.
+
+#### Preset integration
+
+Each scene preset configures hydraulic erosion intensity:
+
+| Preset | `enabled` | `iterations` | `rainfall_base` | Character |
+|--------|-----------|--------------|------------------|-----------|
+| `valley_river` | true | 80,000 | 0.6 | Moderate — natural smoothing around rivers |
+| `alpine` | true | 120,000 | 0.4 | Aggressive — deep gullies on steep slopes |
+| `archipelago` | true | 60,000 | 0.7 | Tropical rain — smooth island terrain |
+| `desert_canyon` | false | — | — | No rain — wind erosion not modeled here |
+| `rolling_plains` | true | 40,000 | 0.3 | Light — gentle smoothing |
+| `volcanic` | true | 100,000 | 0.5 | Moderate — gully erosion on ash slopes |
+| `tundra_fjords` | false | — | — | Glacial erosion (different mechanism) |
+
+#### CLI exposure (T4 extension)
+
+```
+--hydraulic-erosion <off|light|moderate|heavy>
+    off:      disabled
+    light:    40K iterations, rainfall_base 0.3
+    moderate: 100K iterations, rainfall_base 0.5 (default when enabled)
+    heavy:    200K iterations, rainfall_base 0.7
+```
+
+#### Testing
+
+- **Unit tests**: Verify droplet moves downhill, deposits on flat, erodes on
+  steep. Verify erosion radius kernel sums to 1.0. Verify sediment conservation
+  (total eroded ≈ total deposited, within floating-point tolerance).
+- **Integration test**: Generate a known slope heightmap (tilted plane), run
+  100K droplets. Assert: (a) sediment accumulated at base, (b) heightmap at
+  top is lower, (c) total mass conserved.
+- **Visual verification**: Run on `valley_river` preset, compare before/after
+  heightmap renders. Gullies should be visible branching off the main valley.
+
+#### Files
+
+| File | Action | Description |
+|------|--------|-------------|
+| `src/world/erosion.rs` | Modify | Add `HydraulicErosionConfig`, `RainfallMap`, `simulate_hydraulic_erosion()`, `SedimentMap` |
+| `src/world/terrain.rs` | Modify | Call hydraulic erosion after FlowMap, expose `SedimentMap` for material assignment |
+| `src/world/scene_presets.rs` | Modify | Add `HydraulicErosionConfig` to each preset |
+
+---
+
 ## Dependency Graph
 
 ```
@@ -474,33 +697,41 @@ T1 (noise engine) ──→ T2 (continent masks use NoiseStack)
          ├──→ T3 (presets configure NoiseStack params)
          ├──→ T6 (ore noise layers built on noise.rs)
          ├──→ T7 (cave layers built on noise.rs)
-         └──→ T8 (biome terrain modifiers applied to NoiseStack output)
+         ├──→ T8 (biome terrain modifiers applied to NoiseStack output)
+         └──→ T10 (hydraulic erosion runs on improved heightmap)
 
 T3 (presets) ──→ T4 (CLI exposes preset names + overrides)
 T4 (CLI) ──→ T5 (world creation UI wraps CLI params)
 T6 (geology) ──→ T7 (caves reference rock layer materials)
-T8 (biome map) ──→ T9 (surface detail uses biome selection)
+T8 (biome map) ──→ T9 (surface detail uses biome)
+T8 (biome map) ·····→ T10 (optional: biome rainfall data enhances rainfall map)
 ```
+
+Note: T10 can run before T8 using a noise-based rainfall map. After T8 is
+implemented, the rainfall map gains biome-specific moisture data for more
+realistic patterns.
 
 ## Implementation Order
 
 1. **T1** — Noise engine (foundation for all other tasks)
 2. **T3** — Scene presets (immediate user-visible variety)
 3. **T4** — Extended CLI (expose controls)
-4. **T6** — Rock layers & ores (underground variety)
-5. **T7** — Enhanced caves (exploration interest)
-6. **T2** — Continent/ocean masks (large-scale geography)
-7. **T8** — Biome-terrain integration (biome-aware generation)
-8. **T9** — Surface detail (visual polish)
-9. **T5** — World creation screen (UI, once all options are stable)
+4. **T10** — Hydraulic erosion (rainfall-driven fine-scale detail)
+5. **T6** — Rock layers & ores (underground variety)
+6. **T7** — Enhanced caves (exploration interest)
+7. **T2** — Continent/ocean masks (large-scale geography)
+8. **T8** — Biome-terrain integration (biome-aware generation)
+9. **T9** — Surface detail (visual polish)
+10. **T5** — World creation screen (UI, once all options are stable)
 
 ## Files Modified / Created
 
 | File | Action | Description |
 |------|--------|-------------|
 | `src/world/noise.rs` | **New** | `NoiseStack` with FBM, ridged, selector, warp, micro |
-| `src/world/terrain.rs` | Modify | Replace `sample_height()` with `NoiseStack`, extend `generate_chunk()` with strata/surface logic |
-| `src/world/scene_presets.rs` | Modify | Add 6+ presets, each configuring `NoiseStack` params |
+| `src/world/terrain.rs` | Modify | Replace `sample_height()` with `NoiseStack`, extend `generate_chunk()` with strata/surface logic, call hydraulic erosion, read sediment map for material assignment |
+| `src/world/erosion.rs` | Modify | Add `HydraulicErosionConfig`, `RainfallMap`, `SedimentMap`, `simulate_hydraulic_erosion()` |
+| `src/world/scene_presets.rs` | Modify | Add 6+ presets, each configuring `NoiseStack` + `HydraulicErosionConfig` params |
 | `src/world/biome_map.rs` | **New** | Biome map generation and caching |
 | `src/world/mod.rs` | Modify | Register `noise` module |
 | `src/world_creation.rs` | **New** | World creation UI screen |
