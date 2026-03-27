@@ -1,0 +1,30 @@
+MaterialData(
+    id: 19,
+    name: "Charcoal",
+    default_phase: Solid,
+    // Charcoal: product of incomplete wood combustion (pyrolysis).
+    // Porous carbon structure, burns hotter and longer than raw wood.
+    density: 250.0,
+    melting_point: None,
+    boiling_point: None,
+    // Higher ignition than wood — charcoal is harder to light but sustains.
+    ignition_point: Some(623.0),
+    hardness: 1.5,
+    color: (0.15, 0.12, 0.10),
+    transparent: false,
+    // Very low thermal conductivity — porous carbon is a good insulator.
+    // α = 0.05/(250×840) = 2.4e-7 m²/s.
+    thermal_conductivity: 0.05,
+    specific_heat_capacity: 840.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.95,
+    viscosity: None,
+    friction_coefficient: 0.4,
+    restitution: 0.1,
+    youngs_modulus: None,
+    // Charcoal has higher energy density than raw wood.
+    heat_of_combustion: Some(30000000.0),
+    albedo: 0.05,
+    molar_mass: Some(0.012),
+)

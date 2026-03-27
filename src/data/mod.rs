@@ -16,7 +16,10 @@ impl Plugin for DataPlugin {
             .add_plugins(RonAssetPlugin::<CreatureData>::new(&["creature.ron"]))
             .add_plugins(RonAssetPlugin::<ItemData>::new(&["item.ron"]))
             .add_plugins(RonAssetPlugin::<FluidConfig>::new(&["fluid_config.ron"]))
-            .add_plugins(RonAssetPlugin::<PropData>::new(&["prop.ron"]));
+            .add_plugins(RonAssetPlugin::<PropData>::new(&["prop.ron"]))
+            .add_plugins(RonAssetPlugin::<crate::procgen::tree::TreeConfig>::new(&[
+                "tree.ron",
+            ]));
 
         // Build MaterialRegistry synchronously from .material.ron files on disk.
         match load_material_registry() {

@@ -19,7 +19,9 @@ use crate::chemistry::reactions::{ReactionData, check_reaction};
 use crate::chemistry::state_transitions::apply_transitions;
 use crate::data::{MaterialRegistry, Phase};
 use crate::physics::constants::STEFAN_BOLTZMANN;
+use crate::world::octree::OctreeNode;
 use crate::world::voxel::{MaterialId, Voxel};
+use crate::world::voxel_access::{flat_to_octree, octree_to_flat};
 
 /// Face-adjacent neighbor offsets (6-connectivity).
 const NEIGHBORS: [(i32, i32, i32); 6] = [
@@ -176,6 +178,21 @@ pub fn simulate_tick(
     registry: &MaterialRegistry,
     dt: f32,
 ) -> TickResult {
+    simulate_tick_dx(voxels, size, rules, registry, dt, 1.0)
+}
+
+/// Run one simulation tick with explicit voxel edge length `dx` (meters).
+///
+/// Identical to [`simulate_tick`] but parameterized for multiresolution grids
+/// where each voxel may be smaller than the default 1 m.
+pub fn simulate_tick_dx(
+    voxels: &mut [Voxel],
+    size: usize,
+    rules: &[ReactionData],
+    registry: &MaterialRegistry,
+    dt: f32,
+    dx: f32,
+) -> TickResult {
     // 1. Chemical reactions — check each voxel against ±X/±Y/±Z neighbors.
     //    Runs first so ignition hot-spots trigger before diffusion spreads them.
     //    Snapshot only the fields read by check_reaction (material + temperature)
@@ -232,7 +249,7 @@ pub fn simulate_tick(
     }
 
     // 2. Heat diffusion (CFL sub-stepped for stability with low-density gases)
-    let new_temps = diffuse_chunk(voxels, size, dt, registry);
+    let new_temps = diffuse_chunk(voxels, size, dt, registry, dx);
     for (v, &t) in voxels.iter_mut().zip(new_temps.iter()) {
         v.temperature = t;
     }
@@ -264,6 +281,32 @@ pub fn simulate_tick(
         max_pressure,
         max_pressure_delta,
     }
+}
+
+/// Simulate a subdivided octree region by flattening it, running physics at the
+/// correct voxel scale, and collapsing back.
+///
+/// `base_size` is the original chunk edge length (e.g. 32 for a 32³ chunk).
+/// `depth` is how many subdivision levels to expand (1 = 2× resolution, 2 = 4×, etc.).
+/// The effective voxel size is `1.0 / 2^depth` meters (since 1 voxel = 1 m at base).
+///
+/// Returns the modified octree and tick statistics.
+pub fn simulate_subdivided_region(
+    octree: &OctreeNode<Voxel>,
+    base_size: usize,
+    depth: u32,
+    rules: &[ReactionData],
+    registry: &MaterialRegistry,
+    dt: f32,
+) -> (OctreeNode<Voxel>, TickResult) {
+    let scale = 1usize << depth;
+    let hi_res_size = base_size * scale;
+    let dx = 1.0 / scale as f32;
+
+    let mut flat = octree_to_flat(octree, hi_res_size);
+    let result = simulate_tick_dx(&mut flat, hi_res_size, rules, registry, dt, dx);
+    let new_octree = flat_to_octree(&flat, hi_res_size);
+    (new_octree, result)
 }
 
 #[cfg(test)]

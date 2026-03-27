@@ -1,0 +1,13 @@
+ReactionData(
+    name: "Dry leaves combustion",
+    input_a: "DryLeaves",
+    input_b: Some("Air"),
+    // Dry leaves ignite very easily — flash point ~180°C (453 K).
+    min_temperature: 453.0,
+    max_temperature: 99999.0,
+    // Leaves burn away completely — no solid residue.
+    output_a: "Air",
+    output_b: None,
+    // ΔT: brief flash fire, moderate heat.
+    heat_output: 400.0,
+)

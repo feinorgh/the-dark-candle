@@ -68,7 +68,7 @@ pub fn diffuse_chunk_octree(
     registry: &MaterialRegistry,
 ) -> Vec<f32> {
     let flat = octree_to_flat(tree, size);
-    chemistry::heat::diffuse_chunk(&flat, size, dt, registry)
+    chemistry::heat::diffuse_chunk(&flat, size, dt, registry, 1.0)
 }
 
 /// Apply a temperature update buffer to an octree volume.
@@ -297,7 +297,7 @@ mod tests {
 
         let tree = make_octree(&flat, size);
         let temps_from_tree = diffuse_chunk_octree(&tree, size, 1.0, &reg);
-        let temps_from_flat = crate::chemistry::heat::diffuse_chunk(&flat, size, 1.0, &reg);
+        let temps_from_flat = crate::chemistry::heat::diffuse_chunk(&flat, size, 1.0, &reg, 1.0);
 
         assert_eq!(temps_from_tree.len(), temps_from_flat.len());
         for (a, b) in temps_from_tree.iter().zip(temps_from_flat.iter()) {

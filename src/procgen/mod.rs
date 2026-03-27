@@ -3,6 +3,7 @@ pub mod creatures;
 pub mod items;
 pub mod props;
 pub mod spawning;
+pub mod tree;
 
 use bevy::prelude::*;
 

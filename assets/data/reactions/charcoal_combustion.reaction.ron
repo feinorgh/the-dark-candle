@@ -1,0 +1,13 @@
+ReactionData(
+    name: "Charcoal combustion",
+    input_a: "Charcoal",
+    input_b: Some("Air"),
+    // Charcoal requires higher temperature to ignite but burns very hot.
+    min_temperature: 623.0,
+    max_temperature: 99999.0,
+    output_a: "Ash",
+    output_b: None,
+    // ΔT: charcoal burns hotter than wood — ~1500 K flame temperature.
+    // 623 K ignition → 1520 K ≈ 900 K delta.
+    heat_output: 900.0,
+)

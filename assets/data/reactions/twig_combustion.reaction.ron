@@ -1,0 +1,13 @@
+ReactionData(
+    name: "Twig combustion",
+    input_a: "Twig",
+    input_b: Some("Air"),
+    // Dry twigs ignite at ~200°C (473 K) — lower than solid wood.
+    min_temperature: 473.0,
+    max_temperature: 99999.0,
+    output_a: "Ash",
+    output_b: None,
+    // ΔT ≈ flame temperature (~1070 K) − ignition (473 K).
+    // Twigs burn fast with high surface area.
+    heat_output: 600.0,
+)

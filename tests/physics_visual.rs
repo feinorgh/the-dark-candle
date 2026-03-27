@@ -20,8 +20,10 @@ use the_dark_candle::diagnostics::video::FrameEncoder;
 use the_dark_candle::diagnostics::visualization::{
     ColorMode, SceneLight, ViewMode, render_frame_lit,
 };
-use the_dark_candle::simulation::simulate_tick;
+use the_dark_candle::procgen::tree::{TreeConfig, generate_tree};
+use the_dark_candle::simulation::{simulate_tick, simulate_tick_dx};
 use the_dark_candle::world::voxel::{MaterialId, Voxel};
+use the_dark_candle::world::voxel_access::octree_to_flat;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -601,5 +603,138 @@ fn oxyhydrogen_flame_video() {
 
     encoder.finish().expect("finalize");
     eprintln!("  ✓ Oxyhydrogen flame video → {path}");
+    assert!(std::path::Path::new(path).exists());
+}
+
+// ---------------------------------------------------------------------------
+// 5. Burning tree — fire propagating through multiresolution octree branches
+// ---------------------------------------------------------------------------
+
+/// Build a tree scene using the procedural generator, flatten to a simulation
+/// grid, and ignite the base to show fire climbing the branches.
+fn build_burning_tree_scene(config: &TreeConfig, grid_size: usize) -> (Vec<Voxel>, usize) {
+    let octree = generate_tree(config, grid_size);
+    let depth = config.octree_depth;
+    let hi_size = grid_size * (1 << depth);
+    let mut flat = octree_to_flat(&octree, hi_size);
+
+    // Place ground layer of dirt at y=0.
+    let ground_y = 0;
+    for z in 0..hi_size {
+        for x in 0..hi_size {
+            let i = z * hi_size * hi_size + ground_y * hi_size + x;
+            flat[i] = Voxel {
+                material: MaterialId::DIRT,
+                temperature: 288.15,
+                pressure: 101_325.0,
+                damage: 0.0,
+                latent_heat_buffer: 0.0,
+            };
+        }
+    }
+
+    // Ignite: heat the base of the trunk to above twig ignition temperature.
+    // The trunk sits at the center of XZ, starting at y=1 (just above ground).
+    let center = hi_size / 2;
+    let ignition_radius = 3; // cells around trunk base
+    for dz in -ignition_radius..=ignition_radius {
+        for dy in 0..=2 {
+            for dx in -ignition_radius..=ignition_radius {
+                let gx = (center as i32 + dx) as usize;
+                let gy = (1 + dy) as usize;
+                let gz = (center as i32 + dz) as usize;
+                if gx < hi_size && gy < hi_size && gz < hi_size {
+                    let i = gz * hi_size * hi_size + gy * hi_size + gx;
+                    if !flat[i].material.is_air() {
+                        flat[i].temperature = 900.0; // well above ignition
+                    }
+                }
+            }
+        }
+    }
+
+    (flat, hi_size)
+}
+
+#[test]
+fn burning_tree_video() {
+    let _ = std::fs::create_dir_all("test_output");
+    let path = "test_output/burning_tree.mp4";
+
+    // Use a moderate-sized tree: grid 16, depth 2 → 64³ = 262K voxels.
+    // This keeps the test fast while showing multiresolution fire propagation.
+    let config = TreeConfig {
+        trunk_radius: 0.5,
+        trunk_height: 6.0,
+        branch_depth: 3,
+        length_ratio: 0.55,
+        radius_ratio: 0.45,
+        branch_angle_deg: 35.0,
+        fork_count: 3,
+        octree_depth: 2,
+        ambient_temperature: 288.15,
+    };
+    let grid_size: usize = 16;
+    let dx = 1.0 / (1u32 << config.octree_depth) as f32;
+
+    let (mut voxels, hi_size) = build_burning_tree_scene(&config, grid_size);
+
+    let img_w: u32 = 640;
+    let img_h: u32 = 480;
+    let fps: u32 = 30;
+    let duration_s = 20.0_f32;
+    let total_frames = (duration_s * fps as f32) as u32;
+    let ticks_per_frame = 3;
+    let dt = 0.5;
+
+    let registry = load_material_registry().expect("material registry");
+    let rules = load_reaction_rules().expect("reaction rules");
+    let mut encoder = FrameEncoder::new(path, img_w, img_h, fps).expect("encoder");
+
+    // Dim ambient — fire should be the primary light.
+    let light = SceneLight {
+        direction: (-0.4, -0.8, -0.3),
+        color: (0.8, 0.75, 0.65),
+        intensity: 0.3,
+        ambient: 0.08,
+    };
+
+    for frame in 0..total_frames {
+        let t = frame as f32 / total_frames as f32;
+
+        for _ in 0..ticks_per_frame {
+            simulate_tick_dx(&mut voxels, hi_size, &rules.0, &registry, dt, dx);
+        }
+
+        // Slow orbit with slight upward drift to follow the fire.
+        let angle = t * std::f32::consts::TAU * 0.4;
+        let elev = 0.3 + 0.15 * t;
+        let center = hi_size as f32 / 2.0;
+        let radius = hi_size as f32 * 0.9;
+        let cam_x = center + radius * angle.cos() * elev.cos();
+        let cam_y = hi_size as f32 * 0.3 + radius * elev.sin();
+        let cam_z = center + radius * angle.sin() * elev.cos();
+        let view = ViewMode::Perspective {
+            eye: (cam_x, cam_y, cam_z),
+            target: (center, hi_size as f32 * 0.35, center),
+            fov_degrees: 55.0,
+            width: img_w,
+            height: img_h,
+        };
+
+        let frame_img = render_frame_lit(
+            &voxels,
+            hi_size,
+            &registry,
+            &view,
+            &ColorMode::Incandescence,
+            1,
+            &light,
+        );
+        encoder.push_frame(&frame_img).expect("frame");
+    }
+
+    encoder.finish().expect("finalize");
+    eprintln!("  ✓ Burning tree video → {path}");
     assert!(std::path::Path::new(path).exists());
 }

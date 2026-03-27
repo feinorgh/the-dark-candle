@@ -29,6 +29,11 @@ impl MaterialId {
     pub const GLASS: Self = Self(12);
     pub const OXYGEN: Self = Self(13);
     pub const HYDROGEN: Self = Self(14);
+    pub const ORGANIC_MATTER: Self = Self(15);
+    pub const TWIG: Self = Self(16);
+    pub const DRY_LEAVES: Self = Self(17);
+    pub const BARK: Self = Self(18);
+    pub const CHARCOAL: Self = Self(19);
 
     pub fn is_air(self) -> bool {
         self.0 == 0

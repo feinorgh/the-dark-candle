@@ -11,7 +11,7 @@ use crate::data::BodySize;
 use crate::world::voxel::{MaterialId, Voxel};
 
 /// Material ID for organic matter (decaying corpse material).
-pub const ORGANIC_MATTER: MaterialId = MaterialId(15);
+pub const ORGANIC_MATTER: MaterialId = MaterialId::ORGANIC_MATTER;
 
 /// How many voxels a corpse occupies based on body size.
 pub fn corpse_voxel_count(size: BodySize) -> usize {

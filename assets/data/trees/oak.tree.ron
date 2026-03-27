@@ -1,0 +1,13 @@
+// Oak tree configuration — standard deciduous tree with medium branching.
+// trunk_radius/height in meters, angles in degrees.
+TreeConfig(
+    trunk_radius: 0.6,
+    trunk_height: 8.0,
+    branch_depth: 4,
+    length_ratio: 0.6,
+    radius_ratio: 0.55,
+    branch_angle_deg: 35.0,
+    fork_count: 3,
+    octree_depth: 4,
+    ambient_temperature: 288.15,
+)

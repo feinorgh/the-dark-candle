@@ -1,0 +1,13 @@
+ReactionData(
+    name: "Bark combustion",
+    input_a: "Bark",
+    input_b: Some("Air"),
+    // Bark ignites slightly easier than heartwood due to texture and oils.
+    min_temperature: 553.0,
+    max_temperature: 99999.0,
+    // Bark pyrolyzes into charcoal before fully combusting.
+    output_a: "Charcoal",
+    output_b: None,
+    // ΔT: good sustained heat, produces charcoal for secondary burning.
+    heat_output: 700.0,
+)

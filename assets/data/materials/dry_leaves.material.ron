@@ -1,0 +1,29 @@
+MaterialData(
+    id: 17,
+    name: "DryLeaves",
+    default_phase: Solid,
+    // Very loosely packed dry leaf litter — mostly air by volume.
+    // Extremely low thermal mass: ideal fire starter.
+    density: 30.0,
+    melting_point: None,
+    boiling_point: None,
+    // Dry leaves ignite very easily — lower than any other solid fuel.
+    ignition_point: Some(453.0),
+    hardness: 0.5,
+    color: (0.55, 0.42, 0.18),
+    transparent: false,
+    // Leaf litter is mostly trapped air with thin organic membranes.
+    // α = 0.04/(30×1400) = 9.5e-7 m²/s (6.5× faster than solid wood).
+    thermal_conductivity: 0.04,
+    specific_heat_capacity: 1400.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.92,
+    viscosity: None,
+    friction_coefficient: 0.3,
+    restitution: 0.05,
+    youngs_modulus: None,
+    heat_of_combustion: Some(14000000.0),
+    albedo: 0.18,
+    molar_mass: None,
+)

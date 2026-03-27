@@ -1,0 +1,29 @@
+MaterialData(
+    id: 18,
+    name: "Bark",
+    default_phase: Solid,
+    // Tree bark: protective outer layer, fibrous and porous.
+    // Denser than twigs but lighter than heartwood.
+    density: 350.0,
+    melting_point: None,
+    boiling_point: None,
+    // Bark ignites slightly easier than solid wood due to texture and oils.
+    ignition_point: Some(553.0),
+    hardness: 1.5,
+    color: (0.35, 0.22, 0.12),
+    transparent: false,
+    // Lower conductivity than solid wood — bark is a natural insulator.
+    // α = 0.10/(350×1500) = 1.9e-7 m²/s (slightly faster than solid wood).
+    thermal_conductivity: 0.10,
+    specific_heat_capacity: 1500.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.91,
+    viscosity: None,
+    friction_coefficient: 0.6,
+    restitution: 0.2,
+    youngs_modulus: Some(3000000000.0),
+    heat_of_combustion: Some(16000000.0),
+    albedo: 0.22,
+    molar_mass: None,
+)

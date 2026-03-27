@@ -1,0 +1,31 @@
+MaterialData(
+    id: 16,
+    name: "Twig",
+    default_phase: Solid,
+    // Represents a 1 m³ volume loosely packed with small dry sticks (~10 cm diameter).
+    // Bulk density much lower than solid wood because of air gaps.
+    density: 100.0,
+    melting_point: None,
+    boiling_point: None,
+    // Dry thin wood ignites at lower temperature than solid timber.
+    ignition_point: Some(473.0),
+    hardness: 1.0,
+    color: (0.45, 0.30, 0.15),
+    transparent: false,
+    // Low conductivity — loose packing traps air, but much less thermal mass
+    // means heat penetrates quickly: α = k/(ρ·Cₚ) = 0.08/(100×1500) = 5.3e-7 m²/s
+    // (3.6× faster than solid wood).
+    thermal_conductivity: 0.08,
+    specific_heat_capacity: 1500.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.90,
+    viscosity: None,
+    friction_coefficient: 0.55,
+    restitution: 0.1,
+    youngs_modulus: None,
+    // Twigs burn fast — higher surface-area-to-volume ratio than solid wood.
+    heat_of_combustion: Some(17000000.0),
+    albedo: 0.20,
+    molar_mass: None,
+)

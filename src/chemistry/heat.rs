@@ -63,12 +63,14 @@ pub fn thermal_conductivity(material: MaterialId, registry: &MaterialRegistry) -
 ///   - `self_rho_cp`: this voxel's ρ×Cₚ (kg/m³ × J/(kg·K) = J/(m³·K))
 ///   - `neighbors`: slice of (temperature, conductivity) for adjacent voxels
 ///   - `dt`: timestep in seconds
+///   - `dx`: voxel edge length in meters (default 1.0 for standard resolution)
 pub fn diffuse_temperature(
     current_temp: f32,
     self_k: f32,
     self_rho_cp: f32,
     neighbors: &[(f32, f32)],
     dt: f32,
+    dx: f32,
 ) -> f32 {
     if neighbors.is_empty() || self_rho_cp <= 0.0 {
         return current_temp;
@@ -82,12 +84,12 @@ pub fn diffuse_temperature(
         } else {
             0.0
         };
-        // Q = k_eff * (T_neighbor - T_self) [W, since A=1m², dx=1m]
-        total_heat_flux += k_eff * (neighbor_temp - current_temp);
+        // Q_face = k_eff × (A / dx) × ΔT = k_eff × dx × ΔT  [W]
+        total_heat_flux += k_eff * dx * (neighbor_temp - current_temp);
     }
 
-    // ΔT = Q_total * dt / (ρ × Cₚ)  [since V=1m³]
-    current_temp + total_heat_flux * dt / self_rho_cp
+    // ΔT = Q_total × dt / (ρ × Cₚ × V) where V = dx³
+    current_temp + total_heat_flux * dt / (self_rho_cp * dx * dx * dx)
 }
 
 /// Apply one heat diffusion step to a flat 3D voxel array of size `size³`
@@ -100,12 +102,14 @@ pub fn diffuse_temperature(
 /// is high relative to spatial resolution.
 ///
 /// `dt` is the timestep in seconds.
+/// `dx` is the voxel edge length in meters (1.0 for standard resolution).
 /// Returns the new temperature buffer.
 pub fn diffuse_chunk(
     voxels: &[Voxel],
     size: usize,
     dt: f32,
     registry: &MaterialRegistry,
+    dx: f32,
 ) -> Vec<f32> {
     let len = size * size * size;
     assert_eq!(voxels.len(), len);
@@ -131,8 +135,9 @@ pub fn diffuse_chunk(
 
     // CFL limit for 3D explicit Euler: dt_stable = dx² / (6 × α_max).
     // Use a safety factor of 0.9 to stay comfortably below the limit.
+    let dx2 = dx * dx;
     let n_substeps = if alpha_max > 0.0 {
-        let dt_stable = 1.0 / (6.0 * alpha_max) * 0.9; // dx = 1 m
+        let dt_stable = dx2 / (6.0 * alpha_max) * 0.9;
         (dt / dt_stable).ceil().max(1.0) as usize
     } else {
         1
@@ -196,6 +201,7 @@ pub fn diffuse_chunk(
                         self_rho_cp,
                         &neighbors[..n_count],
                         sub_dt,
+                        dx,
                     );
                 }
             }
@@ -444,7 +450,7 @@ mod tests {
         let k = 2.5; // stone
         let rho_cp = 2700.0 * 790.0;
         let neighbors = vec![(293.0, k), (293.0, k), (293.0, k)];
-        let result = diffuse_temperature(293.0, k, rho_cp, &neighbors, DT);
+        let result = diffuse_temperature(293.0, k, rho_cp, &neighbors, DT, 1.0);
         assert!(
             (result - 293.0).abs() < f32::EPSILON,
             "Uniform temp should be stable, got {result}"
@@ -456,24 +462,24 @@ mod tests {
         let k = 80.2; // iron
         let rho_cp = 7874.0 * 449.0;
         let neighbors = vec![(200.0, k), (200.0, k)];
-        let result = diffuse_temperature(400.0, k, rho_cp, &neighbors, DT);
+        let result = diffuse_temperature(400.0, k, rho_cp, &neighbors, DT, 1.0);
         assert!(result < 400.0, "Hot voxel should cool down, got {result}");
 
         let cold_neighbors = vec![(500.0, k), (500.0, k)];
-        let result2 = diffuse_temperature(200.0, k, rho_cp, &cold_neighbors, DT);
+        let result2 = diffuse_temperature(200.0, k, rho_cp, &cold_neighbors, DT, 1.0);
         assert!(result2 > 200.0, "Cold voxel should warm up, got {result2}");
     }
 
     #[test]
     fn no_neighbors_keeps_temperature() {
-        let result = diffuse_temperature(350.0, 80.2, 7874.0 * 449.0, &[], DT);
+        let result = diffuse_temperature(350.0, 80.2, 7874.0 * 449.0, &[], DT, 1.0);
         assert_eq!(result, 350.0);
     }
 
     #[test]
     fn zero_rho_cp_keeps_temperature() {
         let neighbors = vec![(500.0, 80.2)];
-        let result = diffuse_temperature(350.0, 80.2, 0.0, &neighbors, DT);
+        let result = diffuse_temperature(350.0, 80.2, 0.0, &neighbors, DT, 1.0);
         assert_eq!(result, 350.0, "Zero ρCₚ should not change temperature");
     }
 
@@ -483,14 +489,15 @@ mod tests {
         let iron_k = 80.2_f32;
         let iron_rho_cp = 7874.0 * 449.0;
         let iron_neighbors = vec![(288.15, iron_k), (288.15, iron_k)];
-        let iron_result = diffuse_temperature(1000.0, iron_k, iron_rho_cp, &iron_neighbors, DT);
+        let iron_result =
+            diffuse_temperature(1000.0, iron_k, iron_rho_cp, &iron_neighbors, DT, 1.0);
         let iron_delta = (1000.0 - iron_result).abs();
 
         // Air hot spot: same geometry
         let air_k = 0.026_f32;
         let air_rho_cp = 1.225 * 1005.0;
         let air_neighbors = vec![(288.15, air_k), (288.15, air_k)];
-        let air_result = diffuse_temperature(1000.0, air_k, air_rho_cp, &air_neighbors, DT);
+        let air_result = diffuse_temperature(1000.0, air_k, air_rho_cp, &air_neighbors, DT, 1.0);
         let air_delta = (1000.0 - air_result).abs();
 
         // Iron should transfer more heat per step (higher thermal diffusivity)
@@ -522,7 +529,7 @@ mod tests {
             })
             .sum();
 
-        let new_temps = diffuse_chunk(&voxels, size, DT, &reg);
+        let new_temps = diffuse_chunk(&voxels, size, DT, &reg, 1.0);
 
         let energy_after: f64 = voxels
             .iter()
@@ -550,12 +557,12 @@ mod tests {
         let water_rho_cp = 1000.0 * 4186.0;
         let iron_k = 80.2;
         let neighbors = vec![(1000.0, iron_k)];
-        let water_result = diffuse_temperature(288.15, water_k, water_rho_cp, &neighbors, DT);
+        let water_result = diffuse_temperature(288.15, water_k, water_rho_cp, &neighbors, DT, 1.0);
         let water_delta = (water_result - 288.15).abs();
 
         // Iron voxel with same hot neighbor setup
         let iron_rho_cp = 7874.0 * 449.0;
-        let iron_result = diffuse_temperature(288.15, iron_k, iron_rho_cp, &neighbors, DT);
+        let iron_result = diffuse_temperature(288.15, iron_k, iron_rho_cp, &neighbors, DT, 1.0);
         let iron_delta = (iron_result - 288.15).abs();
 
         assert!(
@@ -594,6 +601,7 @@ mod tests {
                 iron_rho_cp as f32,
                 &[(t_water, water_k)],
                 dt,
+                1.0,
             );
             let new_water = diffuse_temperature(
                 t_water,
@@ -601,6 +609,7 @@ mod tests {
                 water_rho_cp as f32,
                 &[(t_iron, iron_k)],
                 dt,
+                1.0,
             );
             t_iron = new_iron;
             t_water = new_water;
@@ -625,7 +634,7 @@ mod tests {
             .map(|_| Voxel::new(MaterialId::STONE))
             .collect();
         let ambient = voxels[0].temperature;
-        let new_temps = diffuse_chunk(&voxels, size, DT, &reg);
+        let new_temps = diffuse_chunk(&voxels, size, DT, &reg, 1.0);
         for &t in &new_temps {
             assert!(
                 (t - ambient).abs() < f32::EPSILON,
@@ -646,7 +655,7 @@ mod tests {
         voxels[center].temperature = 1000.0;
 
         // Use dt=1.0s so the temperature change is large enough for f32 precision
-        let new_temps = diffuse_chunk(&voxels, size, 1.0, &reg);
+        let new_temps = diffuse_chunk(&voxels, size, 1.0, &reg, 1.0);
 
         assert!(new_temps[center] < 1000.0, "Hot spot should cool down");
 
