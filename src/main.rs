@@ -63,6 +63,7 @@ fn main() {
         GameStatePlugin,
         CameraPlugin,
         the_dark_candle::hud::HudPlugin,
+        the_dark_candle::interaction::InteractionPlugin,
         LightingPlugin,
         DiagnosticsPlugin,
         EntityPlugin,
