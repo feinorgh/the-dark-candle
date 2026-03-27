@@ -24,11 +24,26 @@ impl Plugin for ProcgenPlugin {
             }
         }
 
+        match tree::load_tree_registry() {
+            Ok(registry) => {
+                info!("Loaded TreeRegistry with {} trees", registry.len());
+                app.insert_resource(registry);
+            }
+            Err(e) => {
+                warn!("Failed to load TreeRegistry: {e}");
+                app.init_resource::<tree::TreeRegistry>();
+            }
+        }
+
         // Run after ChunkManagement so chunk despawn commands are flushed
         // before we try to decorate or access chunk entities.
+        // plant_trees runs first (modifies chunk voxels), then decorate_chunks
+        // (removes NeedsDecoration marker and spawns prop entities).
         app.add_systems(
             Update,
-            props::decorate_chunks.after(crate::world::WorldSet::ChunkManagement),
+            (tree::plant_trees, props::decorate_chunks)
+                .chain()
+                .after(crate::world::WorldSet::ChunkManagement),
         );
     }
 }

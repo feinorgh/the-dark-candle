@@ -119,6 +119,37 @@ pub fn plan_chunk_prop_spawns(
     spawns
 }
 
+/// Plan tree spawns for a chunk based on its biome's tree table.
+/// Returns Vec of (tree_name, local_x, local_z, seed) for each spawn.
+pub fn plan_chunk_tree_spawns(
+    biome: &BiomeData,
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk_size: usize,
+    world_seed: u64,
+) -> Vec<(String, f32, f32, u64)> {
+    let mut spawns = Vec::new();
+    let tree_base_seed = world_seed.wrapping_add(0xCAFE_BABE);
+
+    for (entry_idx, entry) in biome.tree_spawns.iter().enumerate() {
+        let entry_seed = tree_base_seed.wrapping_add(entry_idx as u64 * 7919);
+        let count = creatures_to_spawn(entry, chunk_x, chunk_z, entry_seed);
+
+        if count > 0 {
+            let positions = spawn_positions(count, chunk_size, chunk_x, chunk_z, entry_seed);
+            for (i, (x, z)) in positions.into_iter().enumerate() {
+                let tree_seed = entry_seed
+                    .wrapping_mul(chunk_x as u64)
+                    .wrapping_add(chunk_z as u64)
+                    .wrapping_add(i as u64);
+                spawns.push((entry.id.clone(), x, z, tree_seed));
+            }
+        }
+    }
+
+    spawns
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +176,7 @@ mod tests {
             ],
             item_spawns: vec![],
             prop_spawns: vec![],
+            tree_spawns: vec![],
         }
     }
 
@@ -229,6 +261,7 @@ mod tests {
             creature_spawns: vec![],
             item_spawns: vec![],
             prop_spawns: vec![],
+            tree_spawns: vec![],
         };
         let spawns = plan_chunk_spawns(&biome, 0, 0, 32, 42);
         assert!(spawns.is_empty());
@@ -263,6 +296,7 @@ mod tests {
                     max_per_chunk: 20,
                 },
             ],
+            tree_spawns: vec![],
         }
     }
 

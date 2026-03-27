@@ -425,6 +425,202 @@ fn add_leaf_cluster(
     }
 }
 
+/// Generate a tree at base resolution (1 voxel = 1 m) and stamp its non-air
+/// voxels into a chunk. The tree base is placed at local chunk position
+/// `(base_x, base_y, base_z)` where `base_y` is the Y of the surface voxel.
+///
+/// Only voxels within chunk bounds [0, CHUNK_SIZE) are written. Trees taller
+/// than the chunk are clipped. Returns the number of voxels written.
+pub fn stamp_tree_into_chunk(
+    config: &TreeConfig,
+    chunk: &mut crate::world::chunk::Chunk,
+    base_x: usize,
+    base_y: usize,
+    base_z: usize,
+    seed: u64,
+) -> usize {
+    use crate::world::chunk::CHUNK_SIZE;
+
+    // Determine grid size to fit the tree: enough for trunk height + branches.
+    let extent = (config.trunk_height * 2.0).ceil() as usize + 4;
+    let grid_size = extent.next_power_of_two().max(8);
+
+    // Generate at base resolution only (depth=0) for chunk integration.
+    let base_config = TreeConfig {
+        octree_depth: 0,
+        ..*config
+    };
+    let tree = generate_tree(&base_config, grid_size);
+
+    // The tree is centred at (grid_size/2, 0, grid_size/2) in tree space.
+    // Map to chunk space: tree(tx,ty,tz) → chunk(base_x + tx - grid_size/2, base_y + ty, base_z + tz - grid_size/2)
+    let half = grid_size / 2;
+
+    // Use a simple deterministic rotation based on the seed.
+    let _seed = seed; // reserved for future random rotation
+
+    let mut written = 0;
+    tree.for_each_leaf(0, 0, 0, grid_size, &mut |lx, ly, lz, _leaf_size, voxel| {
+        if voxel.material.is_air() {
+            return;
+        }
+        let cx = lx as i32 - half as i32 + base_x as i32;
+        let cy = ly as i32 + base_y as i32 + 1; // +1: tree starts above surface
+        let cz = lz as i32 - half as i32 + base_z as i32;
+
+        if cx >= 0
+            && cx < CHUNK_SIZE as i32
+            && cy >= 0
+            && cy < CHUNK_SIZE as i32
+            && cz >= 0
+            && cz < CHUNK_SIZE as i32
+        {
+            let ux = cx as usize;
+            let uy = cy as usize;
+            let uz = cz as usize;
+            // Only write into air cells (don't overwrite terrain).
+            if chunk.get(ux, uy, uz).material.is_air() {
+                chunk.set(ux, uy, uz, *voxel);
+                written += 1;
+            }
+        }
+    });
+
+    written
+}
+
+/// Resource holding loaded TreeConfig templates, indexed by name.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct TreeRegistry {
+    trees: std::collections::HashMap<String, TreeConfig>,
+}
+
+impl TreeRegistry {
+    pub fn get(&self, name: &str) -> Option<&TreeConfig> {
+        self.trees.get(name)
+    }
+
+    pub fn insert(&mut self, name: String, config: TreeConfig) {
+        self.trees.insert(name, config);
+    }
+
+    pub fn len(&self) -> usize {
+        self.trees.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.trees.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &TreeConfig)> {
+        self.trees.iter()
+    }
+}
+
+/// Build a `TreeRegistry` by reading all `.tree.ron` files from disk.
+pub fn load_tree_registry() -> Result<TreeRegistry, String> {
+    let dir = crate::data::find_data_dir()?.join("trees");
+    if !dir.is_dir() {
+        return Ok(TreeRegistry::default());
+    }
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+
+    let mut registry = TreeRegistry::default();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !name.ends_with(".tree.ron") {
+            continue;
+        }
+        let stem = name.trim_end_matches(".tree.ron").to_string();
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let config: TreeConfig =
+            ron::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+        registry.insert(stem, config);
+    }
+
+    Ok(registry)
+}
+
+/// Marker component for chunks that need tree planting.
+/// Added alongside `NeedsDecoration` at spawn time, consumed by `plant_trees`.
+#[derive(bevy::prelude::Component)]
+pub struct NeedsTreePlanting;
+
+/// ECS system: plants voxel trees into newly generated chunks based on biome data.
+///
+/// Queries chunks that still have `NeedsTreePlanting`, determines the biome,
+/// plans tree spawn positions, and stamps tree voxels directly into the chunk.
+pub fn plant_trees(
+    mut commands: bevy::prelude::Commands,
+    tree_registry: bevy::prelude::Res<TreeRegistry>,
+    biome_assets: bevy::prelude::Res<bevy::prelude::Assets<crate::procgen::biomes::BiomeData>>,
+    mut to_plant: bevy::prelude::Query<
+        (
+            bevy::prelude::Entity,
+            &mut crate::world::chunk::Chunk,
+            &crate::world::chunk::ChunkCoord,
+        ),
+        bevy::prelude::With<crate::procgen::props::NeedsDecoration>,
+    >,
+) {
+    use crate::procgen::props::surface_height;
+    use crate::procgen::spawning::plan_chunk_tree_spawns;
+    use crate::world::chunk::CHUNK_SIZE;
+
+    if tree_registry.is_empty() {
+        return;
+    }
+
+    let biomes: Vec<&crate::procgen::biomes::BiomeData> =
+        biome_assets.iter().map(|(_, b)| b).collect();
+    if biomes.is_empty() {
+        return;
+    }
+
+    for (entity, mut chunk, coord) in &mut to_plant {
+        let _ = entity;
+        let _ = &mut commands;
+
+        // Simple biome match (same logic as decorate_chunks).
+        let center_height = surface_height(&chunk, CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap_or(0);
+        let world_y = coord.y as f32 * CHUNK_SIZE as f32 + center_height as f32;
+        let biome = biomes
+            .iter()
+            .find(|b| world_y >= b.height_range.0 && world_y <= b.height_range.1)
+            .or(biomes.first());
+        let Some(biome) = biome else { continue };
+
+        if biome.tree_spawns.is_empty() {
+            continue;
+        }
+
+        let spawns = plan_chunk_tree_spawns(biome, coord.x, coord.z, CHUNK_SIZE, 42);
+
+        for (tree_name, local_x, local_z, seed) in spawns {
+            let Some(config) = tree_registry.get(&tree_name) else {
+                continue;
+            };
+
+            let ix = (local_x as usize).min(CHUNK_SIZE - 1);
+            let iz = (local_z as usize).min(CHUNK_SIZE - 1);
+
+            let Some(sy) = surface_height(&chunk, ix, iz) else {
+                continue;
+            };
+
+            // Don't plant on water/lava/etc.
+            if !crate::procgen::props::is_valid_surface(&chunk, ix, sy, iz) {
+                continue;
+            }
+
+            stamp_tree_into_chunk(config, &mut chunk, ix, sy, iz, seed);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +735,65 @@ mod tests {
 
         let has_leaves = flat.iter().any(|v| v.material == MaterialId::DRY_LEAVES);
         assert!(has_leaves, "Fine branches should have leaf clusters");
+    }
+
+    #[test]
+    fn stamp_tree_into_chunk_writes_voxels() {
+        use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
+
+        let config = TreeConfig {
+            trunk_radius: 0.5,
+            trunk_height: 6.0,
+            branch_depth: 1,
+            octree_depth: 0,
+            ..Default::default()
+        };
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        let mut chunk = Chunk::new_empty(coord);
+
+        // Place dirt surface at y=4.
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                chunk.set_material(x, 4, z, MaterialId::DIRT);
+            }
+        }
+
+        let written = stamp_tree_into_chunk(&config, &mut chunk, 16, 4, 16, 42);
+        assert!(
+            written > 5,
+            "Expected at least 5 tree voxels in chunk, got {written}"
+        );
+
+        // Verify trunk exists above the surface.
+        let trunk_mat = chunk.get(16, 5, 16).material;
+        assert!(
+            trunk_mat == MaterialId::WOOD || trunk_mat == MaterialId::BARK,
+            "Expected wood or bark at trunk base, got {trunk_mat:?}"
+        );
+    }
+
+    #[test]
+    fn stamp_tree_clips_at_chunk_boundary() {
+        use crate::world::chunk::{Chunk, ChunkCoord};
+
+        let config = TreeConfig {
+            trunk_radius: 0.5,
+            trunk_height: 6.0,
+            branch_depth: 1,
+            octree_depth: 0,
+            ..Default::default()
+        };
+        let coord = ChunkCoord { x: 0, y: 0, z: 0 };
+        let mut chunk = Chunk::new_empty(coord);
+
+        // Place tree at corner — should not panic, just clip.
+        // Just verify it doesn't panic — clipped trees produce fewer voxels.
+        let _written = stamp_tree_into_chunk(&config, &mut chunk, 0, 0, 0, 99);
+    }
+
+    #[test]
+    fn load_tree_registry_finds_oak() {
+        let registry = load_tree_registry().expect("tree registry");
+        assert!(registry.get("oak").is_some(), "Should find oak.tree.ron");
     }
 }

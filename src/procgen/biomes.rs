@@ -53,6 +53,9 @@ pub struct BiomeData {
     /// Prop spawn table (natural scenery — rocks, logs, pebbles).
     #[serde(default)]
     pub prop_spawns: Vec<SpawnEntry>,
+    /// Tree spawn table (voxel trees stamped into chunks).
+    #[serde(default)]
+    pub tree_spawns: Vec<SpawnEntry>,
 }
 
 /// Select a spawn entry from a weighted table using a random value in [0.0, 1.0).
@@ -134,6 +137,7 @@ mod tests {
                 max_per_chunk: 5,
             }],
             prop_spawns: vec![],
+            tree_spawns: vec![],
         }
     }
 
@@ -152,6 +156,7 @@ mod tests {
             }],
             item_spawns: vec![],
             prop_spawns: vec![],
+            tree_spawns: vec![],
         }
     }
 

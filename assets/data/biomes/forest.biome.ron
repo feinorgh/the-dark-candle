@@ -20,4 +20,7 @@ BiomeData(
         SpawnEntry(id: "log", weight: 3.0, max_per_chunk: 4),
         SpawnEntry(id: "stick", weight: 7.0, max_per_chunk: 12),
     ],
+    tree_spawns: [
+        SpawnEntry(id: "oak", weight: 8.0, max_per_chunk: 3),
+    ],
 )
