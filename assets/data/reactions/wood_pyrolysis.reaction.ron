@@ -1,0 +1,12 @@
+ReactionData(
+    name: "Wood pyrolysis",
+    input_a: "Wood",
+    input_b: None,
+    min_temperature: 473.0,
+    max_temperature: 99999.0,
+    output_a: "Charcoal",
+    output_b: None,
+    // Endothermic — absorbs heat to break down cellulose.
+    // Real pyrolysis onset ~200°C (473K), well below flaming ignition.
+    heat_output: -50.0,
+)
