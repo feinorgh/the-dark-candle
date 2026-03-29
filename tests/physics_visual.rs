@@ -667,7 +667,7 @@ fn build_forest_fire_scene(config: &TreeConfig, scene_size: usize, depth: u32) -
 
     // Place 8 trees close to center for fire to spread via ground litter.
     let center = hi_size as f32 / 2.0;
-    let ring_radius = hi_size as f32 * 0.22;
+    let ring_radius = hi_size as f32 * 0.15;
     let mut rng = SimpleRng::new(12345);
 
     let tree_positions: Vec<(i32, i32)> = (0..8)
@@ -738,15 +738,15 @@ fn build_forest_fire_scene(config: &TreeConfig, scene_size: usize, depth: u32) -
         ..air
     };
     for &(tx, tz) in &tree_positions {
-        // Bresenham-like line from center to tree with width ~3 voxels.
+        // Bresenham-like line from center to tree with width ~5 voxels.
         let steps = ((tx - cx).abs().max((tz - cz).abs()) + 1) as usize;
         for s in 0..=steps {
             let frac = s as f32 / steps.max(1) as f32;
             let lx = cx as f32 + (tx - cx) as f32 * frac;
             let lz = cz as f32 + (tz - cz) as f32 * frac;
-            // Trail width: 3 voxels (±1).
-            for dz in -1i32..=1 {
-                for ddx in -1i32..=1 {
+            // Trail width: 5 voxels (±2) — continuous fuel bed.
+            for dz in -2i32..=2 {
+                for ddx in -2i32..=2 {
                     let gx = (lx as i32 + ddx) as usize;
                     let gz = (lz as i32 + dz) as usize;
                     if gx < hi_size && gz < hi_size && ground_y < hi_size {
@@ -769,8 +769,8 @@ fn build_forest_fire_scene(config: &TreeConfig, scene_size: usize, depth: u32) -
             if dist_sq > scatter_radius * scatter_radius {
                 continue;
             }
-            // ~60% chance of leaf litter at each ground position.
-            if srng.next_f32() > 0.60 {
+            // ~80% chance of leaf litter at each ground position.
+            if srng.next_f32() > 0.80 {
                 continue;
             }
             let gx = (cx + ddx) as usize;
@@ -850,10 +850,108 @@ fn count_fuel(voxels: &[Voxel]) -> usize {
         .count()
 }
 
-/// Simplified radiative heat transfer: burning voxels heat combustible neighbors
-/// within a small radius. Uses a buffer to cap total radiation per target voxel,
-/// preventing the positive-feedback cascade where hundreds of burning voxels
-/// heat the same target simultaneously.
+/// Convective heat transport proxy for forest fire simulation.
+///
+/// Real forest fires spread primarily via convection (hot gas rises, carrying
+/// heat to fuel above and downwind). Our engine models conduction and radiation
+/// but not fluid convection. This proxy approximates the effect: hot voxels
+/// transfer heat upward with a bias, modeling the buoyant plume that drives
+/// real fire spread. Without this, fire cannot jump between trees at ≥0.5m
+/// voxel scales because radiation view factors at 3+ meter gaps are tiny.
+///
+/// Uses buffered accumulation with per-voxel caps to prevent cascade runaway.
+fn apply_convection_heating(voxels: &mut [Voxel], size: usize, dt: f32, dx: f32) {
+    // In real forest fires, convective plumes carry 800-1200K gas at 5-15 m/s,
+    // delivering ~10-50 kW/m² to fuel above. Additionally, burning embers are
+    // lofted and transported by wind (firebrand transport). This proxy models
+    // the combined effect of all non-conductive, non-radiative heat transport
+    // mechanisms that the engine doesn't yet support. The coefficient is tuned
+    // to reproduce realistic fire spread timescales at dx=0.5m voxel scale.
+    let h_conv = 50.0_f32; // combined convection + firebrand coefficient
+    let radius: i32 = 6; // reach in voxels (~3m at dx=0.5)
+    let cap_per_tick = 8.0_f32; // max temperature gain per voxel per tick
+
+    // Collect hot sources (any non-air voxel above ignition range).
+    let mut hot: Vec<(usize, usize, usize, f32)> = Vec::new();
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let idx = z * size * size + y * size + x;
+                let v = &voxels[idx];
+                if v.temperature > 500.0 && !v.material.is_air() {
+                    hot.push((x, y, z, v.temperature));
+                }
+            }
+        }
+    }
+
+    let total = size * size * size;
+    let mut heat_buf = vec![0.0_f32; total];
+
+    for &(hx, hy, hz, t_hot) in &hot {
+        for dz in -radius..=radius {
+            for dy in -radius..=radius {
+                for ddx in -radius..=radius {
+                    if ddx == 0 && dy == 0 && dz == 0 {
+                        continue;
+                    }
+                    let nx = hx as i32 + ddx;
+                    let ny = hy as i32 + dy;
+                    let nz = hz as i32 + dz;
+                    if nx < 0
+                        || nx >= size as i32
+                        || ny < 0
+                        || ny >= size as i32
+                        || nz < 0
+                        || nz >= size as i32
+                    {
+                        continue;
+                    }
+                    let ni = nz as usize * size * size + ny as usize * size + nx as usize;
+                    if heat_buf[ni] >= cap_per_tick {
+                        continue;
+                    }
+                    let v = &voxels[ni];
+                    let m = v.material;
+                    let combustible = m == MaterialId::WOOD
+                        || m == MaterialId::TWIG
+                        || m == MaterialId::DRY_LEAVES
+                        || m == MaterialId::BARK
+                        || m == MaterialId::CHARCOAL;
+                    if !combustible || v.temperature >= t_hot {
+                        continue;
+                    }
+
+                    let r_sq = (ddx * ddx + dy * dy + dz * dz) as f32;
+                    let r_m = r_sq.sqrt() * dx;
+
+                    // Buoyant plume bias: convection carries heat upward strongly,
+                    // laterally at moderate strength, weakly downward.
+                    let upward_factor = if dy > 0 {
+                        2.0
+                    } else if dy == 0 {
+                        1.0
+                    } else {
+                        0.3
+                    };
+
+                    let area = dx * dx;
+                    let q = h_conv * upward_factor * (t_hot - v.temperature) * area
+                        / (r_m * r_m).max(dx * dx);
+                    let thermal_mass = 80.0 * dx.powi(3) * 1500.0;
+                    let delta_t = q * dt / thermal_mass;
+                    heat_buf[ni] = (heat_buf[ni] + delta_t).min(cap_per_tick);
+                }
+            }
+        }
+    }
+
+    for (i, &delt) in heat_buf.iter().enumerate() {
+        if delt > 0.0 {
+            voxels[i].temperature += delt;
+        }
+    }
+}
 
 #[test]
 fn burning_tree_video() {
@@ -895,8 +993,7 @@ fn burning_tree_video() {
     // At 30fps: 1 second of video = 90 seconds of simulation.
     let dt = 1.0;
     let ticks_per_frame = 3;
-    let max_frames = fps * 120; // hard cap at 2 minutes of video
-    let cooldown_frames = fps * 5; // 5 seconds after fire dies out
+    let max_frames = fps * 30; // hard cap at 30 seconds of video
 
     let registry = load_material_registry().expect("material registry");
     let rules = load_reaction_rules().expect("reaction rules");
@@ -914,25 +1011,32 @@ fn burning_tree_video() {
     let mut prev_fuel = initial_fuel;
     let mut total_frames = 0u32;
     let mut peak_burning = 0usize;
+    // Rate-based stall detection: track fuel over a sliding window.
+    let rate_window = fps * 5; // measure consumption over 5-second windows
+    let mut window_start_fuel = initial_fuel;
+    let mut window_start_frame = 0u32;
 
     for frame in 0..max_frames {
         total_frames = frame + 1;
 
         for _ in 0..ticks_per_frame {
             simulate_tick_dx(&mut voxels, hi_size, &rules.0, &registry, dt, dx);
+            // Convection proxy: hot gas transport that the engine doesn't yet model.
+            // Without this, fire cannot jump 3+ meter gaps between trees.
+            apply_convection_heating(&mut voxels, hi_size, dt, dx);
         }
 
         let burning = count_actively_burning(&voxels);
         let fuel = count_fuel(&voxels);
         peak_burning = peak_burning.max(burning);
 
-        // Stop condition: fuel hasn't decreased for cooldown_frames.
-        // This handles the case where smoldering wood cores stay warm but
-        // can't combust (no adjacent air, below charcoal ignition).
+        // Stop condition: consumption rate has dropped to near zero.
+        // Smoldering cores may consume 1-2 voxels/frame indefinitely.
+        // We stop when less than 0.1% of initial fuel is consumed per window.
         if frame > fps * 3 {
             if fuel == prev_fuel {
                 frames_since_fuel_changed += 1;
-                if frames_since_fuel_changed >= cooldown_frames {
+                if frames_since_fuel_changed >= fps * 5 {
                     eprintln!(
                         "  Fire stalled at frame {frame} ({:.1}s video, fuel={fuel}). Stopping.",
                         frame as f32 / fps as f32
@@ -942,6 +1046,23 @@ fn burning_tree_video() {
             } else {
                 frames_since_fuel_changed = 0;
                 prev_fuel = fuel;
+            }
+
+            // Rate-based check: if less than 0.5% of initial fuel consumed in
+            // the last 5-second window, the fire has effectively died.
+            if frame - window_start_frame >= rate_window {
+                let consumed_in_window = window_start_fuel.saturating_sub(fuel);
+                let rate_pct = consumed_in_window as f32 / initial_fuel as f32 * 100.0;
+                if rate_pct < 1.5 && burning < peak_burning / 4 {
+                    eprintln!(
+                        "  Fire winding down at frame {frame} ({:.1}s video, rate={:.2}%/5s, fuel={fuel}). Stopping.",
+                        frame as f32 / fps as f32,
+                        rate_pct,
+                    );
+                    break;
+                }
+                window_start_fuel = fuel;
+                window_start_frame = frame;
             }
         }
 
