@@ -847,6 +847,15 @@
         "src/behavior/mod.rs: perceive_and_select_action() - food item queries, diet filtering",
         "src/behavior/mod.rs: execute_action_system() - despawn food + metabolism.feed()"
       ]
+    },
+    {
+      "name": "A* pathfinding",
+      "module": "behavior",
+      "status": "complete",
+      "implements": [
+        "src/behavior/pathfinding.rs: VoxelGrid trait, WorldVoxelGrid (chunk-backed), find_path() A* with jump/drop/swim",
+        "src/behavior/mod.rs: CreaturePath component, compute_paths system (budgeted per-tick), waypoint following in execute_action_system"
+      ]
     }
   ],
   "tech_debt": [
@@ -909,7 +918,7 @@
   },
   "meta": {
     "generated_date": "2026-03-29",
-    "generated_from_commit": "a480454",
+    "generated_from_commit": "a6664c8",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
