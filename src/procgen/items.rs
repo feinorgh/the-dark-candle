@@ -9,6 +9,7 @@
 use crate::data::{ItemCategory, ItemData, MaterialData, MaterialRegistry};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// ECS component for a spawned item instance.
 #[derive(Serialize, Deserialize, Component, Debug, Clone)]
@@ -99,6 +100,67 @@ pub fn generate_item(
         max_stack: template.max_stack,
         stack_count: 1,
     }
+}
+
+/// Marker component: chunk needs item spawning.
+/// Added at chunk spawn time, consumed by `spawn_items`.
+#[derive(Component)]
+pub struct NeedsItemSpawning;
+
+/// Tracks item entities belonging to a chunk for cleanup on unload.
+#[derive(Component, Default)]
+pub struct ChunkItems {
+    pub entities: Vec<Entity>,
+}
+
+/// Resource holding loaded `ItemData` templates, indexed by item type.
+#[derive(Resource, Default)]
+pub struct ItemRegistry {
+    items: HashMap<String, ItemData>,
+}
+
+impl ItemRegistry {
+    pub fn get(&self, item_type: &str) -> Option<&ItemData> {
+        self.items.get(item_type)
+    }
+
+    pub fn insert(&mut self, data: ItemData) {
+        self.items.insert(data.item_type.clone(), data);
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+/// Build an `ItemRegistry` by reading all `.item.ron` files from disk.
+pub fn load_item_registry() -> Result<ItemRegistry, String> {
+    let dir = crate::data::find_data_dir()?.join("items");
+    if !dir.is_dir() {
+        return Ok(ItemRegistry::default());
+    }
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+
+    let mut registry = ItemRegistry::default();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !name.ends_with(".item.ron") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let data: ItemData =
+            ron::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+        registry.insert(data);
+    }
+
+    Ok(registry)
 }
 
 #[cfg(test)]

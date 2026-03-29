@@ -150,6 +150,37 @@ pub fn plan_chunk_tree_spawns(
     spawns
 }
 
+/// Plan item spawns for a chunk based on its biome's item table.
+/// Returns Vec of (item_type, local_x, local_z, seed) for each spawn.
+pub fn plan_chunk_item_spawns(
+    biome: &BiomeData,
+    chunk_x: i32,
+    chunk_z: i32,
+    chunk_size: usize,
+    world_seed: u64,
+) -> Vec<(String, f32, f32, u64)> {
+    let mut spawns = Vec::new();
+    let item_base_seed = world_seed.wrapping_add(0xF00D_F00D);
+
+    for (entry_idx, entry) in biome.item_spawns.iter().enumerate() {
+        let entry_seed = item_base_seed.wrapping_add(entry_idx as u64 * 7919);
+        let count = creatures_to_spawn(entry, chunk_x, chunk_z, entry_seed);
+
+        if count > 0 {
+            let positions = spawn_positions(count, chunk_size, chunk_x, chunk_z, entry_seed);
+            for (i, (x, z)) in positions.into_iter().enumerate() {
+                let item_seed = entry_seed
+                    .wrapping_mul(chunk_x as u64)
+                    .wrapping_add(chunk_z as u64)
+                    .wrapping_add(i as u64);
+                spawns.push((entry.id.clone(), x, z, item_seed));
+            }
+        }
+    }
+
+    spawns
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

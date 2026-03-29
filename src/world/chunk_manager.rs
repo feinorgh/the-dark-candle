@@ -256,6 +256,7 @@ pub fn update_chunks(
     camera_q: Query<&Transform, With<FpsCamera>>,
     chunk_props_q: Query<&crate::procgen::props::ChunkProps>,
     chunk_creatures_q: Query<&crate::procgen::creatures::ChunkCreatures>,
+    chunk_items_q: Query<&crate::procgen::items::ChunkItems>,
 ) {
     let Ok(cam_transform) = camera_q.single() else {
         return;
@@ -284,6 +285,12 @@ pub fn update_chunks(
             if let Ok(chunk_creatures) = chunk_creatures_q.get(entity) {
                 for &creature_entity in &chunk_creatures.entities {
                     commands.entity(creature_entity).despawn();
+                }
+            }
+            // Despawn item entities tracked by this chunk
+            if let Ok(chunk_items) = chunk_items_q.get(entity) {
+                for &item_entity in &chunk_items.entities {
+                    commands.entity(item_entity).despawn();
                 }
             }
             commands.entity(entity).despawn();
@@ -374,6 +381,8 @@ pub fn collect_terrain_results(
                 crate::procgen::props::ChunkProps::default(),
                 crate::procgen::creatures::NeedsCreatureSpawning,
                 crate::procgen::creatures::ChunkCreatures::default(),
+                crate::procgen::items::NeedsItemSpawning,
+                crate::procgen::items::ChunkItems::default(),
                 crate::physics::amr_fluid::injection::NeedsFluidSeeding,
                 Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
             ))
