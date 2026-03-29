@@ -14,6 +14,18 @@ AI agents often hallucinate Bevy 0.14 or older code. You MUST adhere to modern B
 5. **STATES (0.18):** `set()` now always triggers `OnEnter`/`OnExit`. Use `set_if_neq()` if you want the old behavior of skipping transitions when the state hasn't changed.
 6. **EVENTS (0.18):** `EntityEvent` is immutable by default. Do not attempt to mutate event data directly without `SetEntityEventTarget`.
 
+## Memory Protocol
+
+At the start of every task:
+- Read `ai-context.json`
+- Check `meta.generated_from_commit` against current HEAD. If they differ by more than 10 commits, flag which sections are likely stale before proceeding.
+- Cross-reference the feature list against the files you're about to touch
+- If your task overlaps a `complete` feature, comment on the PR explaining why
+
+At the end of every task:
+- Update `ai-context.json` with any new features, changed paths, or new env vars
+- Include the updated file in your PR
+
 ## Coding Standard
 Read `docs/RUST_INSTRUCTIONS.md` and follow the guidelines there.
 
