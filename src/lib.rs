@@ -16,6 +16,7 @@ pub mod interaction;
 pub mod lighting;
 pub mod persistence;
 pub mod physics;
+pub mod planet;
 pub mod procgen;
 pub mod simulation;
 pub mod social;
