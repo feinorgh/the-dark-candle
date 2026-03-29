@@ -255,7 +255,7 @@ pub fn simulate_tick_dx(
     }
 
     // 2b. Radiative heat transfer — hot surfaces exchange heat at distance
-    let rad_deltas = radiate_chunk(voxels, size, dt, registry, STEFAN_BOLTZMANN, 500.0, 16);
+    let rad_deltas = radiate_chunk(voxels, size, dt, dx, registry, STEFAN_BOLTZMANN, 500.0, 16);
     for (v, &delta) in voxels.iter_mut().zip(rad_deltas.iter()) {
         v.temperature += delta;
     }

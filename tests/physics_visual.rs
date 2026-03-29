@@ -854,86 +854,6 @@ fn count_fuel(voxels: &[Voxel]) -> usize {
 /// within a small radius. Uses a buffer to cap total radiation per target voxel,
 /// preventing the positive-feedback cascade where hundreds of burning voxels
 /// heat the same target simultaneously.
-fn apply_radiation_heating(voxels: &mut [Voxel], size: usize, dt: f32, dx: f32) {
-    let h_rad = 5.0_f32; // W/(m²·K)
-    let radius: i32 = 3;
-    let cap_per_tick = 5.0_f32; // max temperature gain per voxel per tick from radiation
-
-    let mut hot: Vec<(usize, usize, usize, f32)> = Vec::new();
-    for z in 0..size {
-        for y in 0..size {
-            for x in 0..size {
-                let idx = z * size * size + y * size + x;
-                let v = &voxels[idx];
-                // Any voxel above 500K radiates — hot ash, hot air, burning fuel.
-                if v.temperature > 500.0 && !v.material.is_air() {
-                    hot.push((x, y, z, v.temperature));
-                }
-                // Hot air radiates too but at a higher threshold (less dense).
-                if v.material.is_air() && v.temperature > 600.0 {
-                    hot.push((x, y, z, v.temperature));
-                }
-            }
-        }
-    }
-
-    // Accumulate into buffer, capped per target.
-    let total = size * size * size;
-    let mut heat_buf = vec![0.0_f32; total];
-
-    for &(hx, hy, hz, t_hot) in &hot {
-        for dz in -radius..=radius {
-            for dy in -radius..=radius {
-                for ddx in -radius..=radius {
-                    if ddx == 0 && dy == 0 && dz == 0 {
-                        continue;
-                    }
-                    let nx = hx as i32 + ddx;
-                    let ny = hy as i32 + dy;
-                    let nz = hz as i32 + dz;
-                    if nx < 0
-                        || nx >= size as i32
-                        || ny < 0
-                        || ny >= size as i32
-                        || nz < 0
-                        || nz >= size as i32
-                    {
-                        continue;
-                    }
-                    let ni = nz as usize * size * size + ny as usize * size + nx as usize;
-                    if heat_buf[ni] >= cap_per_tick {
-                        continue; // already at cap
-                    }
-                    let v = &voxels[ni];
-                    let m = v.material;
-                    let combustible = m == MaterialId::WOOD
-                        || m == MaterialId::TWIG
-                        || m == MaterialId::DRY_LEAVES
-                        || m == MaterialId::BARK
-                        || m == MaterialId::CHARCOAL;
-                    if !combustible || v.temperature >= t_hot {
-                        continue;
-                    }
-
-                    let r_sq = (ddx * ddx + dy * dy + dz * dz) as f32;
-                    let r_m = r_sq.sqrt() * dx;
-                    let area = dx * dx;
-                    let q = h_rad * (t_hot - v.temperature) * area / (r_m * r_m).max(dx * dx);
-                    let thermal_mass = 80.0 * dx.powi(3) * 1500.0;
-                    let delta_t = q * dt / thermal_mass;
-                    heat_buf[ni] = (heat_buf[ni] + delta_t).min(cap_per_tick);
-                }
-            }
-        }
-    }
-
-    // Apply accumulated radiation.
-    for (i, &delt) in heat_buf.iter().enumerate() {
-        if delt > 0.0 {
-            voxels[i].temperature += delt;
-        }
-    }
-}
 
 #[test]
 fn burning_tree_video() {
@@ -1000,7 +920,6 @@ fn burning_tree_video() {
 
         for _ in 0..ticks_per_frame {
             simulate_tick_dx(&mut voxels, hi_size, &rules.0, &registry, dt, dx);
-            apply_radiation_heating(&mut voxels, hi_size, dt, dx);
         }
 
         let burning = count_actively_burning(&voxels);

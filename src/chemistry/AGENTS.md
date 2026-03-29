@@ -94,7 +94,7 @@ Line-of-sight is checked via `src/world/raycast.rs`: a discrete 3D grid march in
 - `effective_emissivity(eps1, eps2)` — gray-body ε_eff for two interacting surfaces.
 - `voxel_view_factor(distance, face_area)` — far-field view factor A/(πd²), capped at 0.20.
 - `net_radiative_flux(t1, t2, eps_eff, view_factor, sigma)` — signed net heat flux (W). Positive = heat flows from surface 1 to surface 2.
-- `radiate_chunk(voxels, size, dt, registry, sigma, emission_threshold, max_ray_steps)` — apply one radiation step to a `size³` voxel array. Returns `Vec<f32>` of temperature deltas (additive). Only processes surface voxels above `emission_threshold` (K). Deduplicates pairs via HashSet for energy conservation.
+- `radiate_chunk(voxels, size, dt, dx, registry, sigma, emission_threshold, max_ray_steps)` — apply one radiation step to a `size³` voxel array with voxel edge length `dx` (meters). Returns `Vec<f32>` of temperature deltas (additive). Only processes surface voxels above `emission_threshold` (K). Uses half-direction ray marching (13 of 26 directions) for pair deduplication. Temperature change scales as 1/dx for correct multiresolution physics.
 
 ### Performance
 

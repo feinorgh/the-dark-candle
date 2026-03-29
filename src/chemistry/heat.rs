@@ -281,18 +281,29 @@ pub fn net_radiative_flux(t1: f32, t2: f32, eps_eff: f32, view_factor: f32, sigm
 /// Returns a `Vec<f32>` of temperature deltas (additive, can be positive or
 /// negative). The caller should add these to the current temperatures.
 ///
+/// # Multiresolution scaling (`dx`)
+///
+/// At voxel edge length `dx` (meters), the radiated power scales as dx²
+/// (smaller emitter face area) while voxel thermal mass scales as dx³
+/// (smaller volume). The net effect is that temperature change scales as
+/// 1/dx — smaller voxels heat up faster per unit radiation, which is
+/// physically correct. At dx = 1.0 this reduces to the original formula.
+///
 /// # Parameters
 /// - `voxels`: flat `size³` array of voxels
 /// - `size`: grid edge length (voxels per axis)
 /// - `dt`: timestep in seconds
+/// - `dx`: voxel edge length in meters (1.0 for standard resolution)
 /// - `registry`: material property lookup
 /// - `sigma`: Stefan-Boltzmann constant (W/(m²·K⁴))
 /// - `emission_threshold`: minimum temperature (K) to consider a voxel as emitter
 /// - `max_ray_steps`: maximum ray march distance in voxel steps
+#[allow(clippy::too_many_arguments)]
 pub fn radiate_chunk(
     voxels: &[Voxel],
     size: usize,
     dt: f32,
+    dx: f32,
     registry: &MaterialRegistry,
     sigma: f64,
     emission_threshold: f32,
@@ -374,14 +385,19 @@ pub fn radiate_chunk(
                         sigma,
                     ) * attenuated.transmittance;
 
-                    let rho_cp_e = mat_e.density * mat_e.specific_heat_capacity;
-                    let rho_cp_r = mat_r.density * mat_r.specific_heat_capacity;
+                    // ΔT = Q × dt / (ρ × V × Cₚ), but Q itself scales as dx²
+                    // (emitter face area). Since the view factor A_recv/(πr²)
+                    // is scale-invariant (dx² cancels in numerator/denominator),
+                    // the net scaling is: ΔT = q × dx² × dt / (ρ × dx³ × Cₚ)
+                    //                       = q × dt / (ρ × dx × Cₚ).
+                    let rho_cp_dx_e = mat_e.density * mat_e.specific_heat_capacity * dx;
+                    let rho_cp_dx_r = mat_r.density * mat_r.specific_heat_capacity * dx;
 
-                    if rho_cp_e > 0.0 {
-                        deltas[idx] -= q * dt / rho_cp_e;
+                    if rho_cp_dx_e > 0.0 {
+                        deltas[idx] -= q * dt / rho_cp_dx_e;
                     }
-                    if rho_cp_r > 0.0 {
-                        deltas[hit.index] += q * dt / rho_cp_r;
+                    if rho_cp_dx_r > 0.0 {
+                        deltas[hit.index] += q * dt / rho_cp_dx_r;
                     }
                 }
             }
@@ -907,7 +923,7 @@ mod tests {
             }
         }
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
         // Interior stone at uniform 800K: pairs at same temperature → net flux = 0
         for z in 0..size {
             for y in 1..size {
@@ -953,7 +969,7 @@ mod tests {
             }
         }
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // Lava should lose heat (negative delta)
         let lava_center = idx(1, 4, 4);
@@ -997,7 +1013,7 @@ mod tests {
         // Total energy before
         let energy_before = rho_cp_stone * 1200.0 + rho_cp_stone * 300.0;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // Total energy after
         let energy_after = rho_cp_stone * (1200.0 + deltas[hot_idx] as f64)
@@ -1035,7 +1051,7 @@ mod tests {
         voxels[cold_idx].material = MaterialId::STONE;
         voxels[cold_idx].temperature = 300.0;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // Cold stone should NOT gain heat from the hot stone (wall blocks)
         // It may exchange with the wall, but the wall is near ambient.
@@ -1070,7 +1086,7 @@ mod tests {
         voxels[far_idx].material = MaterialId::STONE;
         voxels[far_idx].temperature = 300.0;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 16);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 16);
 
         // The close stone blocks the hot→far ray in +X direction,
         // but we still expect close stone to get more heat overall.
@@ -1100,7 +1116,7 @@ mod tests {
         voxels[idx].material = MaterialId::STONE;
         voxels[idx].temperature = 400.0;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 4);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 4);
         for d in &deltas {
             assert!(
                 d.abs() < f32::EPSILON,
@@ -1130,7 +1146,7 @@ mod tests {
         voxels[cold_idx].material = MaterialId::STONE;
         voxels[cold_idx].temperature = 288.15;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // With α=100 m⁻¹ and 1m of water: transmittance = exp(-100) ≈ 3.7e-44
         // This is below MIN_TRANSMITTANCE so the ray is fully absorbed.
@@ -1164,7 +1180,7 @@ mod tests {
         voxels[target_idx].material = MaterialId::STONE;
         voxels[target_idx].temperature = 288.15;
 
-        let deltas = radiate_chunk(&voxels, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas = radiate_chunk(&voxels, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // Iron wall should absorb from hot stone (it's the first hit in +x dir),
         // but target at x=5 should only receive radiation from wall itself
@@ -1205,14 +1221,14 @@ mod tests {
         voxels_clear[hot].temperature = 1200.0;
         voxels_clear[cold].material = MaterialId::STONE;
         voxels_clear[cold].temperature = 288.15;
-        let deltas_clear = radiate_chunk(&voxels_clear, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas_clear = radiate_chunk(&voxels_clear, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // Case 2: hot stone → water → cold stone (partial attenuation)
         let mut voxels_water = voxels_clear.clone();
         let water = 4 * size * size + 4 * size + 2;
         voxels_water[water].material = MaterialId::WATER;
         voxels_water[water].temperature = 288.15;
-        let deltas_water = radiate_chunk(&voxels_water, size, 1.0, &reg, SIGMA, 500.0, 8);
+        let deltas_water = radiate_chunk(&voxels_water, size, 1.0, 1.0, &reg, SIGMA, 500.0, 8);
 
         // With α=0.1 and 1m water: transmittance = exp(-0.1) ≈ 0.905
         // Cold stone should receive ~90.5% of the clear-path flux
