@@ -4,8 +4,6 @@
 // The action with the highest weighted utility score is chosen, with
 // a small random tiebreaker to prevent deterministic loops.
 
-#![allow(dead_code)]
-
 use super::needs::Needs;
 
 /// Possible actions a creature can take.

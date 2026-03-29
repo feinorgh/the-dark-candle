@@ -4,8 +4,6 @@
 // old creatures weaken. When age exceeds lifespan, the creature dies
 // of old age. Growth stages affect body size and metabolic rate.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 

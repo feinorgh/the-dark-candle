@@ -5,7 +5,7 @@
 // by a seeded RNG. This keeps every spawned creature slightly different
 // while staying within species bounds.
 
-#![allow(dead_code)]
+use std::collections::HashMap;
 
 use crate::data::{BodySize, CreatureData, Diet};
 use bevy::prelude::*;
@@ -100,6 +100,67 @@ pub fn creature_hitbox(template: &CreatureData) -> (f32, f32, f32) {
         template.hitbox.1 * 0.5,
         template.hitbox.2 * 0.5,
     )
+}
+
+/// Marker component: chunk needs creature spawning.
+/// Added at chunk spawn time, consumed by `spawn_creatures`.
+#[derive(Component)]
+pub struct NeedsCreatureSpawning;
+
+/// Tracks creature entities belonging to a chunk for cleanup on unload.
+#[derive(Component, Default)]
+pub struct ChunkCreatures {
+    pub entities: Vec<Entity>,
+}
+
+/// Resource holding loaded CreatureData templates, indexed by species ID.
+#[derive(Resource, Default)]
+pub struct CreatureRegistry {
+    creatures: HashMap<String, CreatureData>,
+}
+
+impl CreatureRegistry {
+    pub fn get(&self, species: &str) -> Option<&CreatureData> {
+        self.creatures.get(species)
+    }
+
+    pub fn insert(&mut self, data: CreatureData) {
+        self.creatures.insert(data.species.clone(), data);
+    }
+
+    pub fn len(&self) -> usize {
+        self.creatures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.creatures.is_empty()
+    }
+}
+
+/// Build a `CreatureRegistry` by reading all `.creature.ron` files from disk.
+pub fn load_creature_registry() -> Result<CreatureRegistry, String> {
+    let dir = crate::data::find_data_dir()?.join("creatures");
+    if !dir.is_dir() {
+        return Ok(CreatureRegistry::default());
+    }
+    let entries =
+        std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+
+    let mut registry = CreatureRegistry::default();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !name.ends_with(".creature.ron") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let data: CreatureData =
+            ron::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
+        registry.insert(data);
+    }
+
+    Ok(registry)
 }
 
 #[cfg(test)]

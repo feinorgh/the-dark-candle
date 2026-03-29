@@ -9,8 +9,6 @@
 // converted to Watts (J/s) for SI consistency.
 // Source: Wikipedia — Kleiber's law.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 

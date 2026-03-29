@@ -7,25 +7,25 @@
       "framework": "Bevy 0.18",
       "database": null,
       "key_dependencies": [
-        "bevy 0.18 — ECS game engine (Wayland + X11 on Linux)",
-        "bevy_common_assets 0.15 — RON/YAML asset loading pipeline",
-        "serde 1.0 — serialization for all data structs",
-        "ron 0.8 — Rusty Object Notation for data files",
-        "noise 0.9 — procedural noise (Perlin) for terrain generation",
-        "wgpu 27.0 — headless GPU compute (atmosphere renderer, particle simulation)",
-        "pollster 0.4 — async GPU device initialization",
-        "bytemuck 1.25 — zero-copy GPU buffer marshalling",
-        "clap 4 — CLI argument parsing (--scene presets)",
-        "image 0.25 — PNG texture/screenshot I/O"
+        "bevy 0.18 \u2014 ECS game engine (Wayland + X11 on Linux)",
+        "bevy_common_assets 0.15 \u2014 RON/YAML asset loading pipeline",
+        "serde 1.0 \u2014 serialization for all data structs",
+        "ron 0.8 \u2014 Rusty Object Notation for data files",
+        "noise 0.9 \u2014 procedural noise (Perlin) for terrain generation",
+        "wgpu 27.0 \u2014 headless GPU compute (atmosphere renderer, particle simulation)",
+        "pollster 0.4 \u2014 async GPU device initialization",
+        "bytemuck 1.25 \u2014 zero-copy GPU buffer marshalling",
+        "clap 4 \u2014 CLI argument parsing (--scene presets)",
+        "image 0.25 \u2014 PNG texture/screenshot I/O"
       ]
     }
   },
   "architecture": {
     "entry_points": [
-      "src/main.rs — CLI parsing, plugin registration, Bevy app startup",
-      "tests/simulations.rs — headless simulation test harness entry point",
-      "tests/scenarios.rs — physics/chemistry/terrain scenario tests",
-      "tests/validate_assets.rs — RON asset validation tests"
+      "src/main.rs \u2014 CLI parsing, plugin registration, Bevy app startup",
+      "tests/simulations.rs \u2014 headless simulation test harness entry point",
+      "tests/scenarios.rs \u2014 physics/chemistry/terrain scenario tests",
+      "tests/validate_assets.rs \u2014 RON asset validation tests"
     ],
     "major_modules": [
       {
@@ -66,7 +66,7 @@
       {
         "name": "simulation",
         "path": "src/simulation/",
-        "responsibility": "Deterministic headless test harness: RON-defined scenarios with composable geometry regions, multi-tick loop (reactions → heat → transitions → pressure), assertion types for physics verification"
+        "responsibility": "Deterministic headless test harness: RON-defined scenarios with composable geometry regions, multi-tick loop (reactions \u2192 heat \u2192 transitions \u2192 pressure), assertion types for physics verification"
       },
       {
         "name": "procgen",
@@ -76,7 +76,7 @@
       {
         "name": "biology",
         "path": "src/biology/",
-        "responsibility": "Lifecycle (Juvenile→Adult→Elder), Kleiber's law metabolism, health with 6 damage types, corpse decomposition, vegetation spreading. Data structures complete but plugin systems not yet wired"
+        "responsibility": "Lifecycle (Juvenile\u2192Adult\u2192Elder), Kleiber's law metabolism, health with 6 damage types, corpse decomposition, vegetation spreading. Data structures complete but plugin systems not yet wired"
       },
       {
         "name": "behavior",
@@ -106,7 +106,7 @@
       {
         "name": "hud",
         "path": "src/hud.rs",
-        "responsibility": "Health bar (gradient), temperature display (K→°C), 24-hour clock with day/night icons, 8-point compass, fall damage system (7 m/s threshold)"
+        "responsibility": "Health bar (gradient), temperature display (K\u2192\u00b0C), 24-hour clock with day/night icons, 8-point compass, fall damage system (7 m/s threshold)"
       },
       {
         "name": "interaction",
@@ -116,7 +116,7 @@
       {
         "name": "game_state",
         "path": "src/game_state.rs",
-        "responsibility": "State machine: Loading → Playing ↔ Paused. Loading screen, pause menu with save/load slot UI, virtual time control"
+        "responsibility": "State machine: Loading \u2192 Playing \u2194 Paused. Loading screen, pause menu with save/load slot UI, virtual time control"
       },
       {
         "name": "audio",
@@ -126,7 +126,7 @@
       {
         "name": "entities",
         "path": "src/entities/",
-        "responsibility": "Basic enemy component and data-driven spawning framework. Minimal — serves as template for entity expansion"
+        "responsibility": "Basic enemy component and data-driven spawning framework. Minimal \u2014 serves as template for entity expansion"
       }
     ],
     "patterns": [
@@ -148,11 +148,15 @@
     {
       "name": "Terrain generation (flat mode)",
       "status": "complete",
-      "paths": ["src/world/terrain.rs", "src/world/chunk_manager.rs", "src/world/chunk.rs"],
+      "paths": [
+        "src/world/terrain.rs",
+        "src/world/chunk_manager.rs",
+        "src/world/chunk.rs"
+      ],
       "implements": [
-        "TerrainGenerator::generate_chunk() — terrain.rs:148 (71 lines, material layering + cave integration)",
-        "TerrainGenerator::sample_height() — terrain.rs:99 (Perlin continent + detail noise blending)",
-        "TerrainGenerator::is_cave() — terrain.rs:114 (3D Perlin threshold)"
+        "TerrainGenerator::generate_chunk() \u2014 terrain.rs:148 (71 lines, material layering + cave integration)",
+        "TerrainGenerator::sample_height() \u2014 terrain.rs:99 (Perlin continent + detail noise blending)",
+        "TerrainGenerator::is_cave() \u2014 terrain.rs:114 (3D Perlin threshold)"
       ],
       "notes": "2D Perlin heightmap, cave carving via 3D Perlin, deterministic per-chunk",
       "uncertain": false
@@ -160,37 +164,47 @@
     {
       "name": "Terrain generation (spherical mode)",
       "status": "complete",
-      "paths": ["src/world/terrain.rs", "src/world/planet.rs"],
-      "implements": [
-        "SphericalTerrainGenerator::generate_chunk() — terrain.rs:288 (radial coordinate conversion + surface sampling)",
-        "SphericalTerrainGenerator::material_at_radius() — terrain.rs:312 (geological layer lookup)",
-        "PlanetConfig::layer_at_radius() — planet.rs:378 (binary search through geological layers)"
+      "paths": [
+        "src/world/terrain.rs",
+        "src/world/planet.rs"
       ],
-      "notes": "Planet-centered with configurable radius (32km default), geological layers (core→mantle→crust→soil)",
+      "implements": [
+        "SphericalTerrainGenerator::generate_chunk() \u2014 terrain.rs:288 (radial coordinate conversion + surface sampling)",
+        "SphericalTerrainGenerator::material_at_radius() \u2014 terrain.rs:312 (geological layer lookup)",
+        "PlanetConfig::layer_at_radius() \u2014 planet.rs:378 (binary search through geological layers)"
+      ],
+      "notes": "Planet-centered with configurable radius (32km default), geological layers (core\u2192mantle\u2192crust\u2192soil)",
       "uncertain": false
     },
     {
       "name": "Hydraulic erosion / valley carving",
       "status": "complete",
-      "paths": ["src/world/erosion.rs", "src/world/scene_presets.rs"],
-      "implements": [
-        "fill_sinks() — erosion.rs:424 (50 lines, priority-flood Planchon & Darboux)",
-        "compute_d8_directions() — erosion.rs:481 (32 lines, steepest descent with diagonal √2)",
-        "compute_flow_accumulation() — erosion.rs:518 (descending-height traversal)",
-        "carve_valley() — erosion.rs:583 (32 lines, V/U profile blending, material overrides)"
+      "paths": [
+        "src/world/erosion.rs",
+        "src/world/scene_presets.rs"
       ],
-      "notes": "Flat mode only. Depth ∝ ln(flow), width ∝ √flow",
+      "implements": [
+        "fill_sinks() \u2014 erosion.rs:424 (50 lines, priority-flood Planchon & Darboux)",
+        "compute_d8_directions() \u2014 erosion.rs:481 (32 lines, steepest descent with diagonal \u221a2)",
+        "compute_flow_accumulation() \u2014 erosion.rs:518 (descending-height traversal)",
+        "carve_valley() \u2014 erosion.rs:583 (32 lines, V/U profile blending, material overrides)"
+      ],
+      "notes": "Flat mode only. Depth \u221d ln(flow), width \u221d \u221aflow",
       "uncertain": false
     },
     {
       "name": "Octree / multiresolution voxel storage",
       "status": "complete",
-      "paths": ["src/world/octree.rs", "src/world/refinement.rs", "src/world/voxel_access.rs"],
+      "paths": [
+        "src/world/octree.rs",
+        "src/world/refinement.rs",
+        "src/world/voxel_access.rs"
+      ],
       "implements": [
-        "OctreeNode<T> enum — octree.rs:22 (Leaf(T) | Branch(Box<[OctreeNode<T>; 8]>))",
-        "analyze_chunk() — refinement.rs:115 (delegates to analyze_voxels(), 80+ lines)",
-        "build_refined_octree() — refinement.rs:219 (54 lines, pins candidates, collapses non-critical)",
-        "FlatVoxelStorage / OctreeVoxelStorage — voxel_access.rs (unified VoxelAccess trait)"
+        "OctreeNode<T> enum \u2014 octree.rs:22 (Leaf(T) | Branch(Box<[OctreeNode<T>; 8]>))",
+        "analyze_chunk() \u2014 refinement.rs:115 (delegates to analyze_voxels(), 80+ lines)",
+        "build_refined_octree() \u2014 refinement.rs:219 (54 lines, pins candidates, collapses non-critical)",
+        "FlatVoxelStorage / OctreeVoxelStorage \u2014 voxel_access.rs (unified VoxelAccess trait)"
       ],
       "notes": "Generic SVO with Morton indexing, adaptive subdivision on surface/material/thermal/pressure gradients",
       "uncertain": false
@@ -198,11 +212,13 @@
     {
       "name": "Async chunk meshing (Surface Nets)",
       "status": "complete",
-      "paths": ["src/world/meshing.rs"],
+      "paths": [
+        "src/world/meshing.rs"
+      ],
       "implements": [
-        "generate_chunk_mesh() — meshing.rs:641 (28 lines, dispatches to octree or flat variant)",
-        "dispatch_mesh_tasks() — meshing.rs:678 (88 lines, AsyncComputeTaskPool with LOD hysteresis)",
-        "collect_mesh_results() — meshing.rs:766 (57 lines, polls async results, updates Bevy mesh assets)"
+        "generate_chunk_mesh() \u2014 meshing.rs:641 (28 lines, dispatches to octree or flat variant)",
+        "dispatch_mesh_tasks() \u2014 meshing.rs:678 (88 lines, AsyncComputeTaskPool with LOD hysteresis)",
+        "collect_mesh_results() \u2014 meshing.rs:766 (57 lines, polls async results, updates Bevy mesh assets)"
       ],
       "notes": "Surface Nets algorithm, max 8 dispatches/frame, incandescence glow, LOD transitions",
       "uncertain": false
@@ -210,10 +226,12 @@
     {
       "name": "LOD system",
       "status": "complete",
-      "paths": ["src/world/lod.rs"],
+      "paths": [
+        "src/world/lod.rs"
+      ],
       "implements": [
-        "chunk_lod_level() — lod.rs:266 (delegates to config.level_for_distance())",
-        "summarize_voxels() — lod.rs:288 (65+ lines, dominant material, surface presence, color avg)"
+        "chunk_lod_level() \u2014 lod.rs:266 (delegates to config.level_for_distance())",
+        "summarize_voxels() \u2014 lod.rs:288 (65+ lines, dominant material, surface presence, color avg)"
       ],
       "notes": "Distance + screen-space error based with hysteresis (12% default). LodSummary per chunk",
       "uncertain": false
@@ -221,11 +239,13 @@
     {
       "name": "LBM gas simulation",
       "status": "complete",
-      "paths": ["src/physics/lbm_gas/"],
+      "paths": [
+        "src/physics/lbm_gas/"
+      ],
       "implements": [
-        "lbm_step() — lbm_gas/step.rs:27 (49 lines, buoyancy/Coriolis → BGK collision → Smagorinsky → streaming)",
-        "equilibrium() — lbm_gas/lattice.rs:106 (10 lines, D3Q19 Maxwell-Boltzmann equilibrium)",
-        "LbmGasPlugin — lbm_gas/plugin.rs:104 (registers systems)"
+        "lbm_step() \u2014 lbm_gas/step.rs:27 (49 lines, buoyancy/Coriolis \u2192 BGK collision \u2192 Smagorinsky \u2192 streaming)",
+        "equilibrium() \u2014 lbm_gas/lattice.rs:106 (10 lines, D3Q19 Maxwell-Boltzmann equilibrium)",
+        "LbmGasPlugin \u2014 lbm_gas/plugin.rs:104 (registers systems)"
       ],
       "notes": "D3Q19 lattice-Boltzmann: wind, pressure, convection, moisture. Phase change (rain/snow). Octree bridge",
       "uncertain": false
@@ -233,11 +253,13 @@
     {
       "name": "AMR fluid simulation",
       "status": "complete",
-      "paths": ["src/physics/amr_fluid/"],
+      "paths": [
+        "src/physics/amr_fluid/"
+      ],
       "implements": [
-        "fluid_step() — amr_fluid/step.rs:26 (38 lines, surface classify → advection → diffusion → projection)",
-        "project() — amr_fluid/pressure.rs:22 (Poisson pressure solver)",
-        "AmrFluidPlugin — amr_fluid/plugin.rs:69 (registers systems)"
+        "fluid_step() \u2014 amr_fluid/step.rs:26 (38 lines, surface classify \u2192 advection \u2192 diffusion \u2192 projection)",
+        "project() \u2014 amr_fluid/pressure.rs:22 (Poisson pressure solver)",
+        "AmrFluidPlugin \u2014 amr_fluid/plugin.rs:69 (registers systems)"
       ],
       "notes": "Incompressible Navier-Stokes: semi-Lagrangian advection, implicit diffusion, pressure projection. River injection",
       "uncertain": false
@@ -245,12 +267,14 @@
     {
       "name": "FLIP/PIC particle simulation",
       "status": "complete",
-      "paths": ["src/physics/flip_pic/"],
+      "paths": [
+        "src/physics/flip_pic/"
+      ],
       "implements": [
-        "flip_step() — flip_pic/step.rs:42 (67 lines, emission → P2G → pressure → G2P → advect → accumulate)",
-        "scatter_to_grid() — flip_pic/p2g.rs:9 (55+ lines, trilinear scatter with mass weighting)",
-        "gather_from_grid() — flip_pic/g2p.rs:19 (24 lines, 97% FLIP / 3% PIC blend)",
-        "FlipPicPlugin — flip_pic/plugin.rs:39 (registers systems)"
+        "flip_step() \u2014 flip_pic/step.rs:42 (67 lines, emission \u2192 P2G \u2192 pressure \u2192 G2P \u2192 advect \u2192 accumulate)",
+        "scatter_to_grid() \u2014 flip_pic/p2g.rs:9 (55+ lines, trilinear scatter with mass weighting)",
+        "gather_from_grid() \u2014 flip_pic/g2p.rs:19 (24 lines, 97% FLIP / 3% PIC blend)",
+        "FlipPicPlugin \u2014 flip_pic/plugin.rs:39 (registers systems)"
       ],
       "notes": "Hybrid particle-grid: rain/snow/spray/ash/sand. Ground accumulation. Octree bridge",
       "uncertain": false
@@ -258,12 +282,15 @@
     {
       "name": "Gravity / buoyancy / drag forces",
       "status": "complete",
-      "paths": ["src/physics/gravity.rs", "src/physics/constants.rs"],
+      "paths": [
+        "src/physics/gravity.rs",
+        "src/physics/constants.rs"
+      ],
       "implements": [
-        "gravitational_force() — gravity.rs:70 (mass × GRAVITY)",
-        "buoyancy_force() — gravity.rs:76 (ρ × V × g)",
-        "drag_force() — gravity.rs:82 (0.5 × ρ × v² × Cd × A)",
-        "apply_forces() — gravity.rs:164 (95+ lines, flat/spherical gravity, terminal velocity, ground friction)"
+        "gravitational_force() \u2014 gravity.rs:70 (mass \u00d7 GRAVITY)",
+        "buoyancy_force() \u2014 gravity.rs:76 (\u03c1 \u00d7 V \u00d7 g)",
+        "drag_force() \u2014 gravity.rs:82 (0.5 \u00d7 \u03c1 \u00d7 v\u00b2 \u00d7 Cd \u00d7 A)",
+        "apply_forces() \u2014 gravity.rs:164 (95+ lines, flat/spherical gravity, terminal velocity, ground friction)"
       ],
       "notes": "Force-model integration: emergent terminal velocity. PhysicsBody struct with mass and drag profile",
       "uncertain": false
@@ -271,11 +298,15 @@
     {
       "name": "Collision detection",
       "status": "complete",
-      "paths": ["src/physics/collision.rs", "src/physics/broad_phase.rs", "src/world/collision.rs"],
+      "paths": [
+        "src/physics/collision.rs",
+        "src/physics/broad_phase.rs",
+        "src/world/collision.rs"
+      ],
       "implements": [
-        "aabb_intersects_terrain() — collision.rs:46 (41 lines, voxel-space AABB query)",
-        "SpatialGrid::potential_pairs() — broad_phase.rs:78 (18 lines, hash-grid deduplication)",
-        "ground_height_at() / ground_height_radial() — world/collision.rs (surface queries)"
+        "aabb_intersects_terrain() \u2014 collision.rs:46 (41 lines, voxel-space AABB query)",
+        "SpatialGrid::potential_pairs() \u2014 broad_phase.rs:78 (18 lines, hash-grid deduplication)",
+        "ground_height_at() / ground_height_radial() \u2014 world/collision.rs (surface queries)"
       ],
       "notes": "AABB vs terrain/octree, broadphase spatial grid, ground height queries (flat + radial)",
       "uncertain": false
@@ -283,10 +314,12 @@
     {
       "name": "Structural integrity",
       "status": "complete",
-      "paths": ["src/physics/integrity.rs"],
+      "paths": [
+        "src/physics/integrity.rs"
+      ],
       "implements": [
-        "find_unsupported() — integrity.rs:48 (57 lines, BFS flood-fill from anchors)",
-        "collapse_unsupported() — integrity.rs:111 (22 lines, drops voxels into air below)"
+        "find_unsupported() \u2014 integrity.rs:48 (57 lines, BFS flood-fill from anchors)",
+        "collapse_unsupported() \u2014 integrity.rs:111 (22 lines, drops voxels into air below)"
       ],
       "notes": "Unsupported voxel detection and gravity-driven collapse (sand-like stacking)",
       "uncertain": false
@@ -294,26 +327,31 @@
     {
       "name": "Atmosphere model",
       "status": "complete",
-      "paths": ["src/physics/atmosphere.rs", "src/physics/constants.rs"],
-      "implements": [
-        "temperature_at_altitude() — atmosphere.rs:200 (7 lines, troposphere lapse rate + stratosphere constant)",
-        "pressure_at_altitude_full() — constants.rs:142 (barometric formula: P₀ × exp(−Mgh/RT))",
-        "air_density() — constants.rs:227 (ideal gas law: ρ = PM/(RT))"
+      "paths": [
+        "src/physics/atmosphere.rs",
+        "src/physics/constants.rs"
       ],
-      "notes": "ISA model. No single density_at_altitude() function — density derived via ideal gas law from pressure and temperature",
+      "implements": [
+        "temperature_at_altitude() \u2014 atmosphere.rs:200 (7 lines, troposphere lapse rate + stratosphere constant)",
+        "pressure_at_altitude_full() \u2014 constants.rs:142 (barometric formula: P\u2080 \u00d7 exp(\u2212Mgh/RT))",
+        "air_density() \u2014 constants.rs:227 (ideal gas law: \u03c1 = PM/(RT))"
+      ],
+      "notes": "ISA model. No single density_at_altitude() function \u2014 density derived via ideal gas law from pressure and temperature",
       "uncertain": false
     },
     {
       "name": "Heat transfer (conduction + radiation)",
       "status": "complete",
-      "paths": ["src/chemistry/heat.rs"],
+      "paths": [
+        "src/chemistry/heat.rs"
+      ],
       "implements": [
-        "diffuse_temperature() — heat.rs:67 (27 lines, Fourier's law with harmonic mean conductivity)",
-        "diffuse_chunk() — heat.rs:107 (CFL-safe adaptive sub-stepping: dt_stable = dx²/(6·α_max) × 0.9)",
-        "radiate_chunk() — heat.rs:302 (100+ lines, 26-direction ray-cast with Stefan-Boltzmann exchange)",
-        "stefan_boltzmann_flux() — heat.rs:231 (ε·σ·T⁴)",
-        "voxel_view_factor() — heat.rs:253 (A/(π·d²) capped)",
-        "effective_emissivity() — heat.rs:242 (gray-body: 1/(1/ε₁ + 1/ε₂ − 1))"
+        "diffuse_temperature() \u2014 heat.rs:67 (27 lines, Fourier's law with harmonic mean conductivity)",
+        "diffuse_chunk() \u2014 heat.rs:107 (CFL-safe adaptive sub-stepping: dt_stable = dx\u00b2/(6\u00b7\u03b1_max) \u00d7 0.9)",
+        "radiate_chunk() \u2014 heat.rs:302 (100+ lines, 26-direction ray-cast with Stefan-Boltzmann exchange)",
+        "stefan_boltzmann_flux() \u2014 heat.rs:231 (\u03b5\u00b7\u03c3\u00b7T\u2074)",
+        "voxel_view_factor() \u2014 heat.rs:253 (A/(\u03c0\u00b7d\u00b2) capped)",
+        "effective_emissivity() \u2014 heat.rs:242 (gray-body: 1/(1/\u03b5\u2081 + 1/\u03b5\u2082 \u2212 1))"
       ],
       "notes": "dx-aware for multiresolution. Radiation uses line-of-sight ray marching with absorption coefficients",
       "uncertain": false
@@ -321,11 +359,15 @@
     {
       "name": "Chemical reactions",
       "status": "complete",
-      "paths": ["src/chemistry/reactions.rs", "src/chemistry/runtime.rs", "assets/data/reactions/"],
+      "paths": [
+        "src/chemistry/reactions.rs",
+        "src/chemistry/runtime.rs",
+        "assets/data/reactions/"
+      ],
       "implements": [
-        "check_reaction() — reactions.rs:59 (30 lines, material match + temperature range + neighbor requirement)",
-        "ReactionData struct — reactions.rs:17 (name, input_a/b, min/max_temperature, output_a/b, heat_output)",
-        "load_reaction_rules() — runtime.rs (loads .reaction.ron files)"
+        "check_reaction() \u2014 reactions.rs:59 (30 lines, material match + temperature range + neighbor requirement)",
+        "ReactionData struct \u2014 reactions.rs:17 (name, input_a/b, min/max_temperature, output_a/b, heat_output)",
+        "load_reaction_rules() \u2014 runtime.rs (loads .reaction.ron files)"
       ],
       "notes": "8 reaction definitions (combustion variants, pyrolysis, oxyhydrogen). RON-defined neighbor-pair matching",
       "uncertain": false
@@ -333,12 +375,14 @@
     {
       "name": "State transitions (phase change)",
       "status": "complete",
-      "paths": ["src/chemistry/state_transitions.rs"],
+      "paths": [
+        "src/chemistry/state_transitions.rs"
+      ],
       "implements": [
-        "check_transition() — state_transitions.rs:30 (46 lines, solid↔liquid↔gas vs melting/boiling points)",
-        "apply_transitions() — state_transitions.rs:191 (54 lines, latent heat accumulation model)",
-        "latent_heat_for_transition() — state_transitions.rs:81",
-        "drain_latent_buffer() — state_transitions.rs:132"
+        "check_transition() \u2014 state_transitions.rs:30 (46 lines, solid\u2194liquid\u2194gas vs melting/boiling points)",
+        "apply_transitions() \u2014 state_transitions.rs:191 (54 lines, latent heat accumulation model)",
+        "latent_heat_for_transition() \u2014 state_transitions.rs:81",
+        "drain_latent_buffer() \u2014 state_transitions.rs:132"
       ],
       "notes": "Handles bidirectional transitions with cumulative latent-heat absorption before phase change completes",
       "uncertain": false
@@ -346,38 +390,48 @@
     {
       "name": "Fire propagation",
       "status": "complete",
-      "paths": ["src/chemistry/heat.rs", "src/chemistry/reactions.rs", "src/chemistry/state_transitions.rs"],
+      "paths": [
+        "src/chemistry/heat.rs",
+        "src/chemistry/reactions.rs",
+        "src/chemistry/state_transitions.rs"
+      ],
       "implements": [
         "Emergent from: diffuse_chunk() (heat spreads to adjacent wood) + check_reaction() (ignition above threshold) + apply_transitions() (charcoal/ash products)",
         "fire_propagation.rs is TEST CODE ONLY (#[test] functions verifying the emergent behavior)"
       ],
-      "notes": "No dedicated fire system — fire is emergent from heat diffusion + reaction matching + state transitions. Verified by integration tests in fire_propagation.rs",
+      "notes": "No dedicated fire system \u2014 fire is emergent from heat diffusion + reaction matching + state transitions. Verified by integration tests in fire_propagation.rs",
       "uncertain": false
     },
     {
       "name": "Orbital sun / day-night cycle",
       "status": "complete",
-      "paths": ["src/lighting/orbital.rs", "src/lighting/mod.rs"],
-      "implements": [
-        "compute_sun_direction() — orbital.rs:70 (51 lines, axial tilt + libration + daily rotation matrix)",
-        "advance_orbital_state() — orbital.rs:44 (14 lines, rotation_rate = TAU/day_length)",
-        "OrbitalState struct — orbital.rs:18 (rotation_angle, orbital_angle, time_scale, year_in_days)",
-        "time_of_day_from_rotation() — orbital.rs:127 (rotation angle → hours 0..24)",
-        "time_acceleration_input() — orbital.rs:138 (30 lines, [/]/\\/P keybinds)"
+      "paths": [
+        "src/lighting/orbital.rs",
+        "src/lighting/mod.rs"
       ],
-      "notes": "72× default time scale. Sun direction in planet body frame",
+      "implements": [
+        "compute_sun_direction() \u2014 orbital.rs:70 (51 lines, axial tilt + libration + daily rotation matrix)",
+        "advance_orbital_state() \u2014 orbital.rs:44 (14 lines, rotation_rate = TAU/day_length)",
+        "OrbitalState struct \u2014 orbital.rs:18 (rotation_angle, orbital_angle, time_scale, year_in_days)",
+        "time_of_day_from_rotation() \u2014 orbital.rs:127 (rotation angle \u2192 hours 0..24)",
+        "time_acceleration_input() \u2014 orbital.rs:138 (30 lines, [/]/\\/P keybinds)"
+      ],
+      "notes": "72\u00d7 default time scale. Sun direction in planet body frame",
       "uncertain": false
     },
     {
       "name": "Atmospheric scattering",
       "status": "complete",
-      "paths": ["src/lighting/scattering.rs", "src/lighting/sky.rs"],
+      "paths": [
+        "src/lighting/scattering.rs",
+        "src/lighting/sky.rs"
+      ],
       "implements": [
-        "sky_color() — scattering.rs:263 (100+ lines, 16-sample ray-march with Rayleigh+Mie in-scattering)",
-        "rayleigh_phase() — scattering.rs:132 ((3/16π)(1+cos²θ))",
-        "mie_phase() — scattering.rs:149 (Henyey-Greenstein forward-biased)",
-        "optical_depth() — scattering.rs:208 (40 lines, numerical integration along ray)",
-        "compute_scattering_params() — scattering.rs:88 (33 lines, λ⁻⁴ RGB Rayleigh coefficients)"
+        "sky_color() \u2014 scattering.rs:263 (100+ lines, 16-sample ray-march with Rayleigh+Mie in-scattering)",
+        "rayleigh_phase() \u2014 scattering.rs:132 ((3/16\u03c0)(1+cos\u00b2\u03b8))",
+        "mie_phase() \u2014 scattering.rs:149 (Henyey-Greenstein forward-biased)",
+        "optical_depth() \u2014 scattering.rs:208 (40 lines, numerical integration along ray)",
+        "compute_scattering_params() \u2014 scattering.rs:88 (33 lines, \u03bb\u207b\u2074 RGB Rayleigh coefficients)"
       ],
       "notes": "First-principles ray-marching. Beer-Lambert extinction. Tone-mapping to sRGB",
       "uncertain": false
@@ -385,13 +439,15 @@
     {
       "name": "Volumetric clouds",
       "status": "complete",
-      "paths": ["src/lighting/clouds.rs"],
+      "paths": [
+        "src/lighting/clouds.rs"
+      ],
       "implements": [
-        "sample_cloud_density() — clouds.rs:81 (55 lines, trilinear interpolation across voxel cube)",
-        "march_cloud_ray() — clouds.rs:169 (74 lines, Beer-Lambert + Henyey-Greenstein, early-exit at transmittance < 0.01)",
-        "henyey_greenstein_phase() — clouds.rs:147",
-        "composite_cloud_over_sky() — clouds.rs:252",
-        "estimate_cloud_coverage() — clouds.rs:271"
+        "sample_cloud_density() \u2014 clouds.rs:81 (55 lines, trilinear interpolation across voxel cube)",
+        "march_cloud_ray() \u2014 clouds.rs:169 (74 lines, Beer-Lambert + Henyey-Greenstein, early-exit at transmittance < 0.01)",
+        "henyey_greenstein_phase() \u2014 clouds.rs:147",
+        "composite_cloud_over_sky() \u2014 clouds.rs:252",
+        "estimate_cloud_coverage() \u2014 clouds.rs:271"
       ],
       "notes": "Volumetric density sampling with chunk-boundary handling. Standard-over compositing",
       "uncertain": false
@@ -399,13 +455,15 @@
     {
       "name": "Shadows and fog",
       "status": "complete",
-      "paths": ["src/lighting/shadows.rs"],
+      "paths": [
+        "src/lighting/shadows.rs"
+      ],
       "implements": [
-        "compute_terrain_shadows() — shadows.rs:456 (44 lines, cone-sampled ray-cast from surface toward sun)",
-        "fog_transmittance() — shadows.rs:247 (73 lines, 1m-step numerical integration, height-exponential + humidity + cold-pooling)",
-        "cloud_shadow_factor() — shadows.rs:90 (63 lines, ray-march toward sun through cloud field, Beer-Lambert τ)",
-        "fog_density() — shadows.rs:208 (height/humidity/cold-pooling factors)",
-        "compute_shadow_map() — shadows.rs:167 (pre-computes horizontal surface shadow)"
+        "compute_terrain_shadows() \u2014 shadows.rs:456 (44 lines, cone-sampled ray-cast from surface toward sun)",
+        "fog_transmittance() \u2014 shadows.rs:247 (73 lines, 1m-step numerical integration, height-exponential + humidity + cold-pooling)",
+        "cloud_shadow_factor() \u2014 shadows.rs:90 (63 lines, ray-march toward sun through cloud field, Beer-Lambert \u03c4)",
+        "fog_density() \u2014 shadows.rs:208 (height/humidity/cold-pooling factors)",
+        "compute_shadow_map() \u2014 shadows.rs:167 (pre-computes horizontal surface shadow)"
       ],
       "notes": "Soft terrain shadows via cone sampling. Distance fog with altitude-dependent density",
       "uncertain": false
@@ -413,50 +471,61 @@
     {
       "name": "Sunlight / light maps",
       "status": "complete",
-      "paths": ["src/lighting/light_map.rs"],
-      "implements": [
-        "propagate_sunlight() — light_map.rs:143 (42 lines, top-down column propagation with Beer-Lambert attenuation)",
-        "apply_light_map() — light_map.rs:201 (10 lines, modulates vertex colors by light level × shadow factor)",
-        "ChunkLightMap struct — light_map.rs:25 (per-voxel RGB [u8;3] + shadow f32)",
-        "propagate_sunlight_from_registry() — light_map.rs:187 (wrapper using material registry for absorption)"
+      "paths": [
+        "src/lighting/light_map.rs"
       ],
-      "notes": "Opaque materials block all light; transparent materials attenuate via exp(−α·1m) per voxel",
+      "implements": [
+        "propagate_sunlight() \u2014 light_map.rs:143 (42 lines, top-down column propagation with Beer-Lambert attenuation)",
+        "apply_light_map() \u2014 light_map.rs:201 (10 lines, modulates vertex colors by light level \u00d7 shadow factor)",
+        "ChunkLightMap struct \u2014 light_map.rs:25 (per-voxel RGB [u8;3] + shadow f32)",
+        "propagate_sunlight_from_registry() \u2014 light_map.rs:187 (wrapper using material registry for absorption)"
+      ],
+      "notes": "Opaque materials block all light; transparent materials attenuate via exp(\u2212\u03b1\u00b71m) per voxel",
       "uncertain": false
     },
     {
       "name": "Weather particle system",
       "status": "complete",
-      "paths": ["src/weather/"],
-      "implements": [
-        "scan_clouds_for_precipitation() — emitter.rs:182 (wraps pure function, registered as system)",
-        "extract_wind_field() — wind_upload.rs:118 (LBM→GPU wind transfer)",
-        "track_ground_impacts() — accumulation.rs:95 (42 lines, reads particle readback, updates per-column accumulation)",
-        "apply_accumulation() — accumulation.rs:140 (50+ lines, converts accumulated snow/water into voxel materials)",
-        "WeatherPlugin — mod.rs:20 (registers FixedUpdate + Update systems via .chain())"
+      "paths": [
+        "src/weather/"
       ],
-      "notes": "Plugin is NOT a stub — registers ParticleRenderPlugin, wind extraction, and accumulation chain",
+      "implements": [
+        "scan_clouds_for_precipitation() \u2014 emitter.rs:182 (wraps pure function, registered as system)",
+        "extract_wind_field() \u2014 wind_upload.rs:118 (LBM\u2192GPU wind transfer)",
+        "track_ground_impacts() \u2014 accumulation.rs:95 (42 lines, reads particle readback, updates per-column accumulation)",
+        "apply_accumulation() \u2014 accumulation.rs:140 (50+ lines, converts accumulated snow/water into voxel materials)",
+        "WeatherPlugin \u2014 mod.rs:20 (registers FixedUpdate + Update systems via .chain())"
+      ],
+      "notes": "Plugin is NOT a stub \u2014 registers ParticleRenderPlugin, wind extraction, and accumulation chain",
       "uncertain": false
     },
     {
       "name": "GPU atmosphere renderer",
       "status": "complete",
-      "paths": ["src/gpu/renderer.rs", "src/gpu/context.rs", "src/gpu/shaders/atmosphere_render.wgsl"],
-      "implements": [
-        "GpuRenderer::render_frame() — renderer.rs:358 (192 lines, constructs GPU structs, creates bind groups, dispatches compute, reads back RgbImage)",
-        "Compute dispatch — renderer.rs:520-541 (pass.dispatch_workgroups(wg_x, wg_y, 1))",
-        "WGSL shader — src/gpu/shaders/atmosphere_render.wgsl (confirmed present)"
+      "paths": [
+        "src/gpu/renderer.rs",
+        "src/gpu/context.rs",
+        "src/gpu/shaders/atmosphere_render.wgsl"
       ],
-      "notes": "Headless wgpu compute. Bypasses Bevy render graph. 1000× speedup over CPU path",
+      "implements": [
+        "GpuRenderer::render_frame() \u2014 renderer.rs:358 (192 lines, constructs GPU structs, creates bind groups, dispatches compute, reads back RgbImage)",
+        "Compute dispatch \u2014 renderer.rs:520-541 (pass.dispatch_workgroups(wg_x, wg_y, 1))",
+        "WGSL shader \u2014 src/gpu/shaders/atmosphere_render.wgsl (confirmed present)"
+      ],
+      "notes": "Headless wgpu compute. Bypasses Bevy render graph. 1000\u00d7 speedup over CPU path",
       "uncertain": false
     },
     {
       "name": "GPU particle compute",
       "status": "complete",
-      "paths": ["src/gpu/particles.rs", "src/gpu/shaders/particle_step.wgsl"],
+      "paths": [
+        "src/gpu/particles.rs",
+        "src/gpu/shaders/particle_step.wgsl"
+      ],
       "implements": [
-        "GpuParticle struct — particles.rs:31 (14 fields, 64 bytes, matches WGSL layout)",
-        "ParticleCompute::new() — particles.rs:80+ (creates pipeline from particle_step.wgsl)",
-        "WGSL shader — src/gpu/shaders/particle_step.wgsl (confirmed present)"
+        "GpuParticle struct \u2014 particles.rs:31 (14 fields, 64 bytes, matches WGSL layout)",
+        "ParticleCompute::new() \u2014 particles.rs:80+ (creates pipeline from particle_step.wgsl)",
+        "WGSL shader \u2014 src/gpu/shaders/particle_step.wgsl (confirmed present)"
       ],
       "notes": "Gravity, drag, wind on GPU. Rain/snow/sand/hail types with SI parameters. 256 threads/workgroup, 100k max",
       "uncertain": false
@@ -464,11 +533,14 @@
     {
       "name": "Material data pipeline",
       "status": "complete",
-      "paths": ["src/data/mod.rs", "assets/data/materials/"],
+      "paths": [
+        "src/data/mod.rs",
+        "assets/data/materials/"
+      ],
       "implements": [
-        "load_material_registry() — mod.rs:432 (23 lines, reads assets/data/materials/, parses RON, builds registry)",
-        "MaterialRegistry struct — mod.rs (get(), get_by_name(), resolve_name() — dual-indexed by u16 ID and String name)",
-        "MaterialData struct — mod.rs:73 (100+ lines, density, thermal_conductivity, specific_heat_capacity, latent_heat_fusion/vaporization, hardness, viscosity, heat_of_combustion, molar_mass, refractive_index, reflectivity, rgb absorption, albedo, phase transition targets)"
+        "load_material_registry() \u2014 mod.rs:432 (23 lines, reads assets/data/materials/, parses RON, builds registry)",
+        "MaterialRegistry struct \u2014 mod.rs (get(), get_by_name(), resolve_name() \u2014 dual-indexed by u16 ID and String name)",
+        "MaterialData struct \u2014 mod.rs:73 (100+ lines, density, thermal_conductivity, specific_heat_capacity, latent_heat_fusion/vaporization, hardness, viscosity, heat_of_combustion, molar_mass, refractive_index, reflectivity, rgb absorption, albedo, phase transition targets)"
       ],
       "notes": "20 materials with full SI properties. Sync-loaded at startup in DataPlugin::build()",
       "uncertain": false
@@ -476,23 +548,29 @@
     {
       "name": "Procedural tree generation",
       "status": "complete",
-      "paths": ["src/procgen/tree.rs", "assets/data/trees/oak.tree.ron"],
-      "implements": [
-        "generate_tree() — tree.rs:144 (45+ lines, recursive branching into octree, rasterises segments)",
-        "stamp_tree_into_chunk() — tree.rs:434 (56 lines, generates at base resolution, maps to chunk space)",
-        "TreeRegistry struct — tree.rs:494 (get/insert/len/is_empty)"
+      "paths": [
+        "src/procgen/tree.rs",
+        "assets/data/trees/oak.tree.ron"
       ],
-      "notes": "Bark shell → wood core → twigs → leaves. Stamped into chunks via biome system",
+      "implements": [
+        "generate_tree() \u2014 tree.rs:144 (45+ lines, recursive branching into octree, rasterises segments)",
+        "stamp_tree_into_chunk() \u2014 tree.rs:434 (56 lines, generates at base resolution, maps to chunk space)",
+        "TreeRegistry struct \u2014 tree.rs:494 (get/insert/len/is_empty)"
+      ],
+      "notes": "Bark shell \u2192 wood core \u2192 twigs \u2192 leaves. Stamped into chunks via biome system",
       "uncertain": false
     },
     {
       "name": "Biome system",
       "status": "complete",
-      "paths": ["src/procgen/biomes.rs", "assets/data/biomes/"],
+      "paths": [
+        "src/procgen/biomes.rs",
+        "assets/data/biomes/"
+      ],
       "implements": [
-        "select_biome() — biomes.rs:94 (10 lines, matches by height/temperature/moisture ranges)",
-        "BiomeData struct — biomes.rs:34 (name, ranges, surface_material, creature/item/prop/tree spawns)",
-        "BiomePlugin — biomes.rs:13 (registers RonAssetPlugin::<BiomeData>)"
+        "select_biome() \u2014 biomes.rs:94 (10 lines, matches by height/temperature/moisture ranges)",
+        "BiomeData struct \u2014 biomes.rs:34 (name, ranges, surface_material, creature/item/prop/tree spawns)",
+        "BiomePlugin \u2014 biomes.rs:13 (registers RonAssetPlugin::<BiomeData>)"
       ],
       "notes": "4 biomes (cave, forest, meadow, tundra). Weighted spawn entries per biome",
       "uncertain": false
@@ -500,11 +578,14 @@
     {
       "name": "Prop / decoration system",
       "status": "complete",
-      "paths": ["src/procgen/props.rs", "assets/data/props/"],
+      "paths": [
+        "src/procgen/props.rs",
+        "assets/data/props/"
+      ],
       "implements": [
-        "generate_prop() — props.rs:60 (16 lines, applies scale variation from template + seed)",
-        "decorate_chunks() — props.rs:164 (70+ lines, biome query → spawn planning → surface placement)",
-        "PropRegistry struct — props.rs:37 (get/insert/len/is_empty)"
+        "generate_prop() \u2014 props.rs:60 (16 lines, applies scale variation from template + seed)",
+        "decorate_chunks() \u2014 props.rs:164 (70+ lines, biome query \u2192 spawn planning \u2192 surface placement)",
+        "PropRegistry struct \u2014 props.rs:37 (get/insert/len/is_empty)"
       ],
       "notes": "6 prop types. Slope-aware surface placement, altitude restrictions",
       "uncertain": false
@@ -512,10 +593,14 @@
     {
       "name": "Creature generation",
       "status": "complete",
-      "paths": ["src/procgen/creatures.rs", "src/procgen/spawning.rs", "assets/data/creatures/"],
+      "paths": [
+        "src/procgen/creatures.rs",
+        "src/procgen/spawning.rs",
+        "assets/data/creatures/"
+      ],
       "implements": [
-        "generate_creature() — creatures.rs:61 (30 lines, stat variation via RNG on health/speed/attack/color)",
-        "plan_chunk_spawns() — spawning.rs:62 (30+ lines, iterates biome creature_spawns, calculates counts/positions)"
+        "generate_creature() \u2014 creatures.rs:61 (30 lines, stat variation via RNG on health/speed/attack/color)",
+        "plan_chunk_spawns() \u2014 spawning.rs:62 (30+ lines, iterates biome creature_spawns, calculates counts/positions)"
       ],
       "notes": "4 creature types (cave_spider, deer, rabbit, wolf). Template-based with biome-aware spawn planning",
       "uncertain": false
@@ -523,9 +608,12 @@
     {
       "name": "Item generation",
       "status": "complete",
-      "paths": ["src/procgen/items.rs", "assets/data/items/"],
+      "paths": [
+        "src/procgen/items.rs",
+        "assets/data/items/"
+      ],
       "implements": [
-        "generate_item() — items.rs:55 (40 lines, material modifiers on weight/durability/damage/armor)"
+        "generate_item() \u2014 items.rs:55 (40 lines, material modifiers on weight/durability/damage/armor)"
       ],
       "notes": "4 item types (apple, pickaxe, sword, wooden_shield). Categories: Tool, Weapon, Armor, Food, etc.",
       "uncertain": false
@@ -533,12 +621,14 @@
     {
       "name": "First-person camera",
       "status": "complete",
-      "paths": ["src/camera/mod.rs"],
+      "paths": [
+        "src/camera/mod.rs"
+      ],
       "implements": [
-        "camera_move() — mod.rs:208 (70+ lines, WASD + tangent-plane projection for spherical + jump + fly mode)",
-        "camera_look() — mod.rs:174 (27 lines, mouse accumulation → yaw/pitch → quaternion rotation)",
-        "camera_gravity() — mod.rs:314 (64 lines, radial/Y-axis gravity + ground collision)",
-        "CameraPlugin — mod.rs:15 (registers Startup spawn_camera + Update chain: look → move → gravity + cursor grab/release)"
+        "camera_move() \u2014 mod.rs:208 (70+ lines, WASD + tangent-plane projection for spherical + jump + fly mode)",
+        "camera_look() \u2014 mod.rs:174 (27 lines, mouse accumulation \u2192 yaw/pitch \u2192 quaternion rotation)",
+        "camera_gravity() \u2014 mod.rs:314 (64 lines, radial/Y-axis gravity + ground collision)",
+        "CameraPlugin \u2014 mod.rs:15 (registers Startup spawn_camera + Update chain: look \u2192 move \u2192 gravity + cursor grab/release)"
       ],
       "notes": "Walk 5 m/s, sprint 8 m/s, fly 20 m/s. 1.7m eye height. G key toggles gravity",
       "uncertain": false
@@ -546,12 +636,14 @@
     {
       "name": "HUD",
       "status": "complete",
-      "paths": ["src/hud.rs"],
+      "paths": [
+        "src/hud.rs"
+      ],
       "implements": [
-        "update_health_bar() — hud.rs:177 (23 lines, fill width + green→yellow→red gradient)",
-        "update_temperature() — hud.rs:214 (45 lines, K→°C + blue/white/red color coding)",
-        "update_compass() — hud.rs:289 (24 lines, yaw → 8-point cardinal direction)",
-        "HudPlugin — hud.rs:21 (registers OnEnter/Exit spawn/despawn + Update systems for all 5 HUD elements)"
+        "update_health_bar() \u2014 hud.rs:177 (23 lines, fill width + green\u2192yellow\u2192red gradient)",
+        "update_temperature() \u2014 hud.rs:214 (45 lines, K\u2192\u00b0C + blue/white/red color coding)",
+        "update_compass() \u2014 hud.rs:289 (24 lines, yaw \u2192 8-point cardinal direction)",
+        "HudPlugin \u2014 hud.rs:21 (registers OnEnter/Exit spawn/despawn + Update systems for all 5 HUD elements)"
       ],
       "notes": "Health bar, temperature, 24h clock, compass, fall damage (7 m/s threshold)",
       "uncertain": false
@@ -559,13 +651,15 @@
     {
       "name": "Block interaction",
       "status": "complete",
-      "paths": ["src/interaction.rs"],
+      "paths": [
+        "src/interaction.rs"
+      ],
       "implements": [
-        "world_raycast() — interaction.rs:66 (110+ lines, DDA ray marching with chunk lookup + face normal)",
-        "break_block() — interaction.rs:223 (50 lines, hold time tracking, breaks after 0.3s threshold)",
-        "place_block() — interaction.rs:276 (35+ lines, right-click on adjacent face, player collision prevention)",
-        "hotbar_input() — interaction.rs:371 (30 lines, number keys 1-9 + scroll wheel wrapping)",
-        "InteractionPlugin — interaction.rs:16 (registers OnEnter/Exit crosshair + Update chains: target → break → place, hotbar → UI → highlight)"
+        "world_raycast() \u2014 interaction.rs:66 (110+ lines, DDA ray marching with chunk lookup + face normal)",
+        "break_block() \u2014 interaction.rs:223 (50 lines, hold time tracking, breaks after 0.3s threshold)",
+        "place_block() \u2014 interaction.rs:276 (35+ lines, right-click on adjacent face, player collision prevention)",
+        "hotbar_input() \u2014 interaction.rs:371 (30 lines, number keys 1-9 + scroll wheel wrapping)",
+        "InteractionPlugin \u2014 interaction.rs:16 (registers OnEnter/Exit crosshair + Update chains: target \u2192 break \u2192 place, hotbar \u2192 UI \u2192 highlight)"
       ],
       "notes": "6 voxel reach. 9-slot hotbar (Stone, Dirt, Grass, Sand, Wood, Water, Ice, Lava, Glass)",
       "uncertain": false
@@ -573,35 +667,41 @@
     {
       "name": "Game state machine",
       "status": "complete",
-      "paths": ["src/game_state.rs"],
-      "implements": [
-        "GameState enum — game_state.rs:16 (#[derive(States)] with Loading (default), Playing, Paused)",
-        "GameStatePlugin — game_state.rs:27 (registers OnEnter/Exit for all 3 states: loading screen, playing entry, pause menu + Update systems for loading check, pause toggle)"
+      "paths": [
+        "src/game_state.rs"
       ],
-      "notes": "Loading → Playing ↔ Paused. Virtual time pause via Time<Virtual>. Save/load slot integration",
+      "implements": [
+        "GameState enum \u2014 game_state.rs:16 (#[derive(States)] with Loading (default), Playing, Paused)",
+        "GameStatePlugin \u2014 game_state.rs:27 (registers OnEnter/Exit for all 3 states: loading screen, playing entry, pause menu + Update systems for loading check, pause toggle)"
+      ],
+      "notes": "Loading \u2192 Playing \u2194 Paused. Virtual time pause via Time<Virtual>. Save/load slot integration",
       "uncertain": false
     },
     {
       "name": "Save / load system",
       "status": "complete",
-      "paths": ["src/persistence/"],
-      "implements": [
-        "save_game() — save.rs:82 (250+ lines, serializes player + terrain + chunks + creatures + items + enemies + factions)",
-        "load_game() — load.rs:101 (280+ lines, deserializes + version migration + entity respawn with SaveId mapping)",
-        "encode_rle() — types.rs:136 (22 lines, run-length encodes voxels)",
-        "decode_rle() — types.rs:161 (17 lines, expands RLE runs)",
-        "SaveId struct + SaveIdCounter resource — types.rs / mod.rs (stable u64 entity identifiers)"
+      "paths": [
+        "src/persistence/"
       ],
-      "notes": "3 manual slots + autosave (F5/F9). SAVE_VERSION=3 with v1→v2→v3 migration. Flat mode only",
+      "implements": [
+        "save_game() \u2014 save.rs:82 (250+ lines, serializes player + terrain + chunks + creatures + items + enemies + factions)",
+        "load_game() \u2014 load.rs:101 (280+ lines, deserializes + version migration + entity respawn with SaveId mapping)",
+        "encode_rle() \u2014 types.rs:136 (22 lines, run-length encodes voxels)",
+        "decode_rle() \u2014 types.rs:161 (17 lines, expands RLE runs)",
+        "SaveId struct + SaveIdCounter resource \u2014 types.rs / mod.rs (stable u64 entity identifiers)"
+      ],
+      "notes": "3 manual slots + autosave (F5/F9). SAVE_VERSION=3 with v1\u2192v2\u2192v3 migration. Flat mode only",
       "uncertain": false
     },
     {
       "name": "Audio",
       "status": "complete",
-      "paths": ["src/audio.rs"],
+      "paths": [
+        "src/audio.rs"
+      ],
       "implements": [
-        "footstep_system() — audio.rs:119 (60 lines, material-based sound selection on interval)",
-        "AudioPlugin — audio.rs:17 (registers Startup load_audio_assets + OnEnter/Exit ambient + Update footstep/block_sound systems)"
+        "footstep_system() \u2014 audio.rs:119 (60 lines, material-based sound selection on interval)",
+        "AudioPlugin \u2014 audio.rs:17 (registers Startup load_audio_assets + OnEnter/Exit ambient + Update footstep/block_sound systems)"
       ],
       "notes": "5 surface types (stone/dirt/wood/sand/water), block break/place, wind ambient, UI click",
       "uncertain": false
@@ -609,12 +709,14 @@
     {
       "name": "Diagnostics / debug tools",
       "status": "complete",
-      "paths": ["src/diagnostics/"],
+      "paths": [
+        "src/diagnostics/"
+      ],
       "implements": [
-        "ecs_dump_system() — mod.rs:106 (140+ lines, captures camera + chunk stats, writes RON on F11)",
-        "screenshot_system() — mod.rs:260 (captures PNG on F12)",
-        "update_frame_budget() — frame_budget.rs (EMA-based FPS/frame time)",
-        "DiagnosticsPlugin — mod.rs:36 (registers Update systems for F3 overlay, F11 dump, F12 screenshot, frame budget, system timings)"
+        "ecs_dump_system() \u2014 mod.rs:106 (140+ lines, captures camera + chunk stats, writes RON on F11)",
+        "screenshot_system() \u2014 mod.rs:260 (captures PNG on F12)",
+        "update_frame_budget() \u2014 frame_budget.rs (EMA-based FPS/frame time)",
+        "DiagnosticsPlugin \u2014 mod.rs:36 (registers Update systems for F3 overlay, F11 dump, F12 screenshot, frame budget, system timings)"
       ],
       "notes": "F3 (FPS/frame budget/chunk count), F11 (ECS dump to RON), F12 (screenshot)",
       "uncertain": false
@@ -622,63 +724,106 @@
     {
       "name": "Simulation test framework",
       "status": "complete",
-      "paths": ["src/simulation/", "tests/simulations.rs", "tests/cases/simulation/"],
+      "paths": [
+        "src/simulation/",
+        "tests/simulations.rs",
+        "tests/cases/simulation/"
+      ],
       "implements": [
-        "simulate_tick() — mod.rs:174 (wraps simulate_tick_dx with dx=1.0)",
-        "simulate_tick_dx() — mod.rs:188 (350+ lines: reactions → heat diffusion → radiation → transitions → pressure)",
-        "run_scenario() — scenario.rs:394 (285+ lines: build registry → create grid → apply regions → run loop → evaluate assertions)",
-        "Assertion enum — assertions.rs:22 (MaterialCountEq/Gt/Lt, MaterialAbsent, RegionAvgTempGt/Lt, VoxelTempGt, RegionAvgPressureGt, MaxTempGt, TotalReactionsGt, NoReactions)",
-        "Assertion::evaluate() — assertions.rs:115 (125+ lines, matches each variant against final grid)"
+        "simulate_tick() \u2014 mod.rs:174 (wraps simulate_tick_dx with dx=1.0)",
+        "simulate_tick_dx() \u2014 mod.rs:188 (350+ lines: reactions \u2192 heat diffusion \u2192 radiation \u2192 transitions \u2192 pressure)",
+        "run_scenario() \u2014 scenario.rs:394 (285+ lines: build registry \u2192 create grid \u2192 apply regions \u2192 run loop \u2192 evaluate assertions)",
+        "Assertion enum \u2014 assertions.rs:22 (MaterialCountEq/Gt/Lt, MaterialAbsent, RegionAvgTempGt/Lt, VoxelTempGt, RegionAvgPressureGt, MaxTempGt, TotalReactionsGt, NoReactions)",
+        "Assertion::evaluate() \u2014 assertions.rs:115 (125+ lines, matches each variant against final grid)"
       ],
       "notes": "6 simulation scenarios. 9 geometry types via Region enum. Deterministic multi-tick harness",
       "uncertain": false
     },
     {
       "name": "Biology system (lifecycle, metabolism, health)",
-      "status": "partial",
-      "paths": ["src/biology/"],
-      "implements": [
-        "Data structs and helpers exist (~1,212 LOC) but BiologyPlugin::build() registers NO ECS systems"
+      "status": "complete",
+      "paths": [
+        "src/biology/"
       ],
-      "notes": "Growth stages, Kleiber metabolism, 6 damage types, decomposition, vegetation spreading — all as standalone functions, none wired into the ECS update loop",
-      "uncertain": false
+      "implements": [
+        "src/biology/mod.rs: BiologyPlugin::build() \u2014 registers 4 systems + BiologySet + CreatureDied message",
+        "src/biology/mod.rs: tick_metabolism_system() \u2014 ticks energy, applies starvation damage",
+        "src/biology/mod.rs: tick_health_system() \u2014 regenerates health, emits CreatureDied on death",
+        "src/biology/mod.rs: tick_growth_system() \u2014 ages creatures, emits CreatureDied on lifespan expiry",
+        "src/biology/mod.rs: handle_creature_death() \u2014 despawns dead creature entities",
+        "src/biology/metabolism.rs: tick_metabolism(), energy_fraction(), Metabolism::for_body_size()",
+        "src/biology/health.rs: tick_health(), Health::take_damage(), Health::new()",
+        "src/biology/growth.rs: tick_growth(), Growth::new()"
+      ],
+      "notes": "Growth stages, Kleiber metabolism, 6 damage types, decomposition, vegetation spreading \u2014 all as standalone functions, none wired into the ECS update loop",
+      "uncertain": false,
+      "description": "ECS systems tick metabolism, health, growth on FixedUpdate. CreatureDied message on death. Ordered after ChemistrySet."
     },
     {
       "name": "Behavior AI (utility-based)",
-      "status": "partial",
-      "paths": ["src/behavior/"],
-      "implements": [
-        "Data structs and helpers exist (~1,786 LOC) but BehaviorPlugin::build() registers NO ECS systems"
+      "status": "complete",
+      "paths": [
+        "src/behavior/"
       ],
-      "notes": "Needs, A* pathfinding, perception, behavior execution — all as standalone functions, none wired into the ECS update loop",
-      "uncertain": false
+      "implements": [
+        "src/behavior/mod.rs: BehaviorPlugin::build() \u2014 registers 3 systems + BehaviorSet + NeedsConfig resource",
+        "src/behavior/mod.rs: tick_needs_system() \u2014 ticks passive needs + syncs hunger from metabolism",
+        "src/behavior/mod.rs: perceive_and_select_action() \u2014 O(n\u00b2) distance perception, builds ActionContext, scores via utility AI",
+        "src/behavior/mod.rs: execute_action_system() \u2014 executes chosen action via behavior functions, satisfies rest on sleep",
+        "src/behavior/mod.rs: CurrentAction component \u2014 wraps utility::Action for ECS storage",
+        "src/behavior/needs.rs: tick_needs(), update_hunger(), update_safety(), satisfy_need()",
+        "src/behavior/utility.rs: score_actions(), select_action(), Action enum, ActionContext",
+        "src/behavior/behaviors.rs: execute_idle/wander/eat/flee/sleep/socialize/attack() \u2192 BehaviorOutput",
+        "src/behavior/perception.rs: Senses component, sight/hearing/smell strength functions"
+      ],
+      "notes": "Needs, A* pathfinding, perception, behavior execution \u2014 all as standalone functions, none wired into the ECS update loop",
+      "uncertain": false,
+      "description": "ECS systems tick needs, perceive nearby creatures (distance-based), select actions via utility AI scoring, and execute behavior outputs. Ordered after BiologySet on FixedUpdate."
     },
     {
       "name": "Social system (factions, relationships)",
-      "status": "partial",
-      "paths": ["src/social/"],
-      "implements": [
-        "SocialPlugin initializes FactionRegistry resource only — NO active systems registered"
+      "status": "complete",
+      "paths": [
+        "src/social/"
       ],
-      "notes": "Factions, flocking, relationships, reputation — data structures only. ~1,387 LOC not wired into ECS",
-      "uncertain": false
+      "implements": [
+        "src/social/mod.rs: SocialPlugin::build() \u2014 registers 2 systems + SocialSet + SocialActionMessage + SocialTickCounter",
+        "src/social/mod.rs: relationship_decay_system() \u2014 periodic decay + prune of forgotten relationships",
+        "src/social/mod.rs: witness_social_actions() \u2014 processes SocialActionMessage, applies witness effects + faction propagation",
+        "src/social/relationships.rs: Relationships component, decay_relationships(), prune_forgotten(), CreatureId",
+        "src/social/reputation.rs: witness_action(), action_effects(), SocialAction, ActionKind",
+        "src/social/factions.rs: FactionRegistry resource, Faction, FactionId, join/leave/territory management"
+      ],
+      "notes": "Factions, flocking, relationships, reputation \u2014 data structures only. ~1,387 LOC not wired into ECS",
+      "uncertain": false,
+      "description": "ECS systems decay relationships over time, witness social actions, and propagate reputation through factions. SocialActionMessage for inter-system communication. Ordered after BehaviorSet on FixedUpdate."
     },
     {
       "name": "Entity spawning framework",
-      "status": "partial",
-      "paths": ["src/entities/mod.rs"],
+      "status": "complete",
+      "paths": [
+        "src/entities/mod.rs"
+      ],
       "implements": [
-        "Enemy component (speed field), asset loading for goblin. Minimal template only"
+        "src/procgen/mod.rs: spawn_creatures() \u2014 queries NeedsCreatureSpawning chunks, spawns creature entities",
+        "src/procgen/creatures.rs: CreatureRegistry resource, load_creature_registry(), generate_creature()",
+        "src/procgen/creatures.rs: NeedsCreatureSpawning marker, ChunkCreatures tracking component",
+        "src/procgen/spawning.rs: plan_chunk_spawns() \u2014 deterministic per-chunk creature placement",
+        "src/world/chunk_manager.rs: collect_terrain_results() adds NeedsCreatureSpawning + ChunkCreatures",
+        "src/world/chunk_manager.rs: update_chunks() despawns creature entities on chunk unload"
       ],
       "notes": "Data-driven framework in place but no substantive creature spawning logic",
-      "uncertain": false
+      "uncertain": false,
+      "description": "Chunk-load driven creature spawning pipeline: biome lookup \u2192 plan_chunk_spawns \u2192 generate_creature \u2192 spawn entity with full component set. Creatures despawned on chunk unload."
     },
     {
       "name": "Scene presets",
       "status": "partial",
-      "paths": ["src/world/scene_presets.rs"],
+      "paths": [
+        "src/world/scene_presets.rs"
+      ],
       "implements": [
-        "ScenePreset::from_name() — scene_presets.rs (case-insensitive, underscore/hyphen interchangeable)",
+        "ScenePreset::from_name() \u2014 scene_presets.rs (case-insensitive, underscore/hyphen interchangeable)",
         "Only ValleyRiver preset exists"
       ],
       "notes": "Expandable pattern via --scene CLI arg, but only 1 preset defined",
@@ -687,7 +832,9 @@
     {
       "name": "Spherical terrain persistence",
       "status": "planned",
-      "paths": ["src/persistence/"],
+      "paths": [
+        "src/persistence/"
+      ],
       "implements": [],
       "notes": "Save/load only supports flat mode. Spherical save/load not yet implemented",
       "uncertain": false
@@ -715,19 +862,19 @@
       "severity": "medium"
     },
     {
-      "description": "Save/load only supports flat terrain mode — spherical world persistence not implemented",
+      "description": "Save/load only supports flat terrain mode \u2014 spherical world persistence not implemented",
       "location": "src/persistence/",
       "severity": "low"
     },
     {
-      "description": "Only one scene preset (ValleyRiver) exists — expandable pattern but minimal content",
+      "description": "Only one scene preset (ValleyRiver) exists \u2014 expandable pattern but minimal content",
       "location": "src/world/scene_presets.rs",
       "severity": "low"
     }
   ],
   "environment": {
     "required_vars": [
-      "CARGO_MANIFEST_DIR — automatically set by Cargo; used at compile-time (env!) and runtime (std::env::var) for asset path resolution"
+      "CARGO_MANIFEST_DIR \u2014 automatically set by Cargo; used at compile-time (env!) and runtime (std::env::var) for asset path resolution"
     ],
     "setup_commands": [
       "rustup default stable (Rust 1.85+)",
@@ -741,26 +888,28 @@
     "file_structure": "One Bevy plugin per module directory with mod.rs. Data structs derive serde::Deserialize + bevy::asset::Asset + TypePath. All .ron data files in assets/data/ with descriptive suffixes (.material.ron, .reaction.ron, .biome.ron, etc.)",
     "other": [
       "Lines under 100 characters; rustfmt enforced; clippy warnings treated as errors (-D warnings)",
-      "No unwrap()/expect() in library code — use Result with ? operator",
+      "No unwrap()/expect() in library code \u2014 use Result with ? operator",
       "Prefer &T over cloning; use &str for function parameters; iterators over index-based loops",
-      "All physics use real-world SI units — no arbitrary constants or magic numbers",
+      "All physics use real-world SI units \u2014 no arbitrary constants or magic numbers",
       "Eagerly implement Debug, Clone, PartialEq, Eq, Hash, From, AsRef on types",
       "/// rustdoc comments for all public APIs with examples",
       "Unit tests in #[cfg(test)] mod tests alongside code",
-      "Pre-commit hook: cargo fmt --check → cargo clippy -D warnings → cargo test --lib",
+      "Pre-commit hook: cargo fmt --check \u2192 cargo clippy -D warnings \u2192 cargo test --lib",
       "Bevy 0.18: NO bundles (deprecated), spawn components as tuples, set_if_neq() for state transitions"
     ]
   },
   "meta": {
     "generated_date": "2026-03-29",
-    "generated_from_commit": "fdb0ebb110497b805671aa56cad86bf2d7046e29",
+    "generated_from_commit": "24b32ec",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
     "uncertain_areas": [
-      "Line numbers are approximate — may drift with future edits",
+      "Line numbers are approximate \u2014 may drift with future edits",
       "WGSL shader internals not audited (only confirmed files exist and are referenced by Rust dispatch code)",
-      "Biology/Behavior/Social modules have extensive standalone functions but no runtime verification since ECS systems are not wired"
+      "VoxelGrid/PerceptionGrid adapter for LOS-based perception not yet implemented (distance-only)",
+      "Creature movement is computed but not yet applied through physics solver (MovementIntent stored, not integrated)",
+      "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet"
     ]
   }
 }

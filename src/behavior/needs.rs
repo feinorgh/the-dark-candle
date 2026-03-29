@@ -4,8 +4,6 @@
 // satisfied by specific actions. The need values (0.0 = fully satisfied,
 // 1.0 = critical) feed into the utility AI to select actions.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 

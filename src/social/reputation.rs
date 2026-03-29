@@ -4,8 +4,6 @@
 // nearby witnesses update their relationship with the actor. Information can
 // propagate through social networks — faction members share reputation data.
 
-#![allow(dead_code)]
-
 use super::factions::FactionRegistry;
 use super::relationships::{CreatureId, Relationships};
 
@@ -41,14 +39,14 @@ pub enum ActionKind {
 
 /// How an action affects the observer's relationships.
 #[derive(Debug, Clone)]
-struct ReputationEffect {
+pub struct ReputationEffect {
     /// Trust change toward the actor.
-    trust_delta: f32,
+    pub trust_delta: f32,
     /// Hostility change toward the actor.
-    hostility_delta: f32,
+    pub hostility_delta: f32,
 }
 
-fn action_effects(kind: ActionKind, observer_likes_target: bool) -> ReputationEffect {
+pub fn action_effects(kind: ActionKind, observer_likes_target: bool) -> ReputationEffect {
     match kind {
         ActionKind::Attack => {
             if observer_likes_target {

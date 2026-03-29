@@ -4,8 +4,6 @@
 // tracking trust, familiarity, and hostility as float components.
 // These values drift over time and are modified by observed actions.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use bevy::prelude::*;

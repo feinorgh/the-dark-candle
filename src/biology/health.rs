@@ -4,8 +4,6 @@
 // over time (if well-fed). Different damage types interact with the
 // chemistry system — fire damage, cold damage, poison, etc.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 

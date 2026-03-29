@@ -7,8 +7,6 @@
 //
 // Perception generates sensory events that drive the needs and utility systems.
 
-#![allow(dead_code)]
-
 use bevy::prelude::*;
 
 /// Sensory capabilities of a creature.
