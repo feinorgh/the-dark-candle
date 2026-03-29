@@ -455,6 +455,33 @@ tests/
 
 The simulation harness (`simulate_tick`) is also used by `src/chemistry/fire_propagation.rs` unit tests, ensuring consistency between inline tests and data-driven scenarios.
 
+### Multiresolution Simulation
+
+The default `simulate_tick()` assumes 1 m voxels. For sub-meter simulations
+(e.g. fire through tree branches at 0.5 m or 0.25 m resolution), use
+`simulate_tick_dx()` which accepts an explicit `dx` parameter (voxel edge
+length in meters).
+
+```rust
+// Standard 1m simulation
+simulate_tick(&mut voxels, size, &rules, &registry, dt);
+
+// Multiresolution: 0.5m voxels
+simulate_tick_dx(&mut voxels, size, &rules, &registry, dt, 0.5);
+```
+
+The `dx` parameter affects:
+- **Conduction** — Heat flux scales as `k × ΔT × dx² / dx = k × ΔT × dx`.
+  CFL stability limit scales as `dx² / (6α)`.
+- **Radiation** — Temperature change scales as `1/dx` (smaller voxels have
+  less thermal mass but the same view factor). A 0.5 m voxel heats 2× faster
+  from radiation than a 1 m voxel.
+- **Reactions and transitions** — Operate per-voxel, unaffected by `dx`.
+
+The `.simulation.ron` scenarios currently use standard 1 m resolution. For
+multiresolution tests, use `simulate_tick_dx()` directly from Rust test code
+(see `tests/physics_visual.rs` for examples).
+
 ## Atmosphere Physics Tests
 
 Phase 9 added 14 integration tests for atmospheric phenomena in

@@ -29,7 +29,7 @@ Heat transfer (conduction + radiation), chemical reactions, material state trans
 
 ## Heat Transfer: Fourier's Law
 
-Heat diffusion uses **Fourier's law** on a discrete voxel grid (dx = 1 m, A = 1 m², V = 1 m³).
+Heat diffusion uses **Fourier's law** on a discrete voxel grid (default dx = 1 m, A = 1 m², V = 1 m³). For multiresolution simulation at other voxel sizes, use `simulate_tick_dx()` from `src/simulation/mod.rs` which passes `dx` to radiation (conduction does not yet take an explicit `dx` parameter — it assumes unit spacing).
 
 ### Per-face heat flux
 
@@ -104,7 +104,7 @@ Line-of-sight is checked via `src/world/raycast.rs`: a discrete 3D grid march in
 
 ### Integration
 
-`radiate_chunk` is called by `simulate_tick()` in `src/simulation/mod.rs` after conductive diffusion (step 1b). The radiation deltas are added to voxel temperatures before chemical reactions and state transitions run.
+`radiate_chunk` is called by `simulate_tick()` / `simulate_tick_dx()` in `src/simulation/mod.rs` after conductive diffusion (step 1b). The radiation deltas are added to voxel temperatures before chemical reactions and state transitions run. See `src/simulation/AGENTS.md` for the full tick loop documentation.
 
 ## Patterns
 

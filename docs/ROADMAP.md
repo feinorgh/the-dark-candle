@@ -84,7 +84,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 **All 7 original phases are complete.** The codebase has:
 - 100+ source files, ~34,000 lines of Rust (edition 2024)
-- 1173+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
+- 1182+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -103,6 +103,10 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `40ba85b` | Debugging and diagnostics documentation |
 | `a65d972` | Simulation video visualization pipeline (ffmpeg) |
 | `609259a` | Performance: reduce allocations in heat/LBM/chemistry hot loops |
+| `ea71ff1` | Named MaterialId constants replacing numeric IDs |
+| `0e035d5` | Procedural tree generator + biome integration |
+| `c178bc3` | dx-aware radiation in `radiate_chunk` (multiresolution physics) |
+| `6e5679a` | Forest fire demo: 8-tree ring with convection proxy |
 
 ### LOD / Octree Realism Overhaul (latest)
 
@@ -292,6 +296,45 @@ Tier 2 (refraction/reflection) and Tier 3 (Mie, caustics, dispersion) planned.
 
 Full design: **[optics-light.md](optics-light.md)**
 
+### Multiresolution Fire Propagation
+
+Realistic fire spread through procedurally generated trees, enabled by
+multiresolution simulation at sub-meter voxel scales.
+
+**New materials** — 4 kindling-class combustibles with thin-fuel properties:
+- Twig (ρ=100 kg/m³, ignition 473 K), DryLeaves (ρ=30, ignition 453 K),
+  Bark (ρ=350, ignition 553 K), Charcoal (ρ=250, ignition 623 K)
+
+**New reactions** — 5 combustion/pyrolysis rules:
+- Twig→Ash, DryLeaves→Air, Bark→Charcoal, Charcoal→Ash, Wood→Charcoal (pyrolysis)
+
+**dx-aware simulation** — `diffuse_chunk` and `radiate_chunk` accept a `dx`
+parameter (voxel edge length in meters). Heat transfer scales correctly:
+conduction CFL as dx², radiation ΔT as 1/dx. `simulate_tick_dx()` wraps
+the full tick loop with explicit voxel scale.
+
+**Procedural tree generator** — L-system tree builder in `src/procgen/tree.rs`:
+- `TreeConfig` RON defines species params (height, radius, branching)
+- Trunk (Bark shell + Wood core) → branches → twigs → leaf clusters
+- `TreeRegistry` resource, `stamp_tree_into_chunk()`, `plant_trees` ECS system
+- Wired into biome system for automatic terrain placement
+
+**Forest fire demo** — 8 trees around a central bonfire (64³ grid, dx=0.5 m).
+Convection proxy models buoyant plumes + firebrand transport (not yet in
+engine; test-only helper). Result: peak 4044 burning voxels, 26.7% consumed.
+
+**Known limitations:**
+- Pure radiation too weak at dx≥0.5 m between distant objects (view factor
+  ~0.006 at 3.5 m). Convective heat transport is the dominant real-world
+  fire-spread mechanism but is not yet implemented in the engine.
+- Interior wood cores pyrolyze to charcoal but can't combust without air
+  access, causing permanent stall. Rate-based detection handles this.
+- `diffuse_chunk` optical depth for absorption coefficient not yet dx-scaled
+  (only matters for radiation through steam/water at non-1m scales).
+
+**Future:** Engine-level convective heat transport (hot gas plumes via LBM
+coupling), GPU-accelerated fire at finer resolution, improved tree species.
+
 ### Phase 13: Electricity & Magnetism (planned)
 
 Electrical conductivity, resistance networks, Kirchhoff's laws, resistive
@@ -354,6 +397,11 @@ encode via ffmpeg.
   it transitions to steam. Temperature heatmap color mode
 - **Oxyhydrogen detonation** — H₂/O₂ checkerboard in a stone chamber with
   central ignition, chain reaction produces ~3073K white flame
+- **Forest fire** — 8 procedural trees in a ring around a central bonfire.
+  Multiresolution simulation (dx=0.5 m, 64³ grid). Fire spreads via
+  convection proxy modeling buoyant plumes and firebrand transport. Peak
+  4044 simultaneous burning voxels, 26.7% fuel consumed. Rate-based stall
+  detection stops when interior wood cores become oxygen-starved
 
 **Planned:**
 - **Bouncing balls** — 3 rubber spheres in an enclosed cube. Requires entity-vs-
