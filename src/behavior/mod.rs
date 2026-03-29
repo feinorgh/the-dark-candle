@@ -134,31 +134,37 @@ fn perceive_and_select_action(
     }
 }
 
-/// Execute the currently selected action, producing movement.
+/// Execute the currently selected action, producing movement and social events.
 fn execute_action_system(
     mut query: Query<(
+        Entity,
         &CurrentAction,
         &Transform,
         &Creature,
         &mut needs::Needs,
         &mut crate::physics::gravity::PhysicsBody,
     )>,
+    time: Res<Time<Fixed>>,
+    mut social_events: MessageWriter<crate::social::SocialActionMessage>,
 ) {
-    for (current, transform, creature, mut needs_comp, mut body) in &mut query {
+    // Tick counter mixed with entity bits gives per-creature-per-tick RNG.
+    let tick = (time.elapsed_secs() * 64.0) as u64;
+
+    for (entity, current, transform, creature, mut needs_comp, mut body) in &mut query {
         let pos = [
             transform.translation.x,
             transform.translation.y,
             transform.translation.z,
         ];
 
+        // Simple xorshift RNG seeded from entity + tick for wander variation.
+        let seed = entity.to_bits() ^ tick.wrapping_mul(6364136223846793005);
+        let rng_a = (seed & 0xFFFF) as f32 / 32768.0 - 1.0;
+        let rng_b = ((seed >> 16) & 0xFFFF) as f32 / 32768.0 - 1.0;
+
         let output = match &current.0 {
             utility::Action::Idle => behaviors::execute_idle(),
-            utility::Action::Wander => {
-                // Use position as deterministic wander seed.
-                let rx = (pos[0] * 13.7 + pos[2] * 7.3).sin();
-                let rz = (pos[2] * 11.3 + pos[0] * 5.7).cos();
-                behaviors::execute_wander(rx, rz)
-            }
+            utility::Action::Wander => behaviors::execute_wander(rng_a, rng_b),
             utility::Action::Eat { target } => behaviors::execute_eat(pos, *target, 1.5),
             utility::Action::Flee { from } => behaviors::execute_flee(pos, *from),
             utility::Action::Sleep => behaviors::execute_sleep(),
@@ -167,6 +173,27 @@ fn execute_action_system(
             }
             utility::Action::Attack { target } => behaviors::execute_attack(pos, *target, 2.0),
         };
+
+        // Emit social action messages for observable behaviors.
+        let actor = crate::social::relationships::CreatureId(entity.to_bits());
+        if output.wants_to_attack {
+            social_events.write(crate::social::SocialActionMessage(
+                crate::social::reputation::SocialAction {
+                    actor,
+                    target: None,
+                    kind: crate::social::reputation::ActionKind::Attack,
+                },
+            ));
+        }
+        if matches!(current.0, utility::Action::Flee { .. }) {
+            social_events.write(crate::social::SocialActionMessage(
+                crate::social::reputation::SocialAction {
+                    actor,
+                    target: None,
+                    kind: crate::social::reputation::ActionKind::Flee,
+                },
+            ));
+        }
 
         // Set horizontal velocity from movement intent; preserve vertical
         // velocity so gravity continues to work correctly.
