@@ -173,6 +173,7 @@ fn spawn_creatures(
                     crate::behavior::needs::Needs::default(),
                     crate::behavior::perception::Senses::default(),
                     crate::behavior::CurrentAction::default(),
+                    crate::behavior::CreaturePath::default(),
                     crate::social::relationships::Relationships::default(),
                     crate::physics::gravity::PhysicsBody::default().with_foot_offset(hy * 0.5),
                     crate::physics::collision::Collider::new(hx, hy, hz),

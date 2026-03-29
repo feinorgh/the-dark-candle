@@ -4,17 +4,58 @@
 // test grids). Supports walking on solid surfaces, jumping up 1 voxel,
 // dropping down, and swimming through water at reduced speed.
 
-#![allow(dead_code)]
-
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
+use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
 use crate::world::voxel::MaterialId;
 
 /// Trait abstracting voxel lookups so pathfinding works with any grid.
 pub trait VoxelGrid {
     /// Get material at (x, y, z). Returns None if out of bounds.
     fn get_material(&self, x: i32, y: i32, z: i32) -> Option<MaterialId>;
+}
+
+/// [`VoxelGrid`] backed by loaded world chunks.
+///
+/// Holds borrowed chunk references keyed by [`ChunkCoord`].  Build one per
+/// path-computation pass from the ECS `Query<(&Chunk, &ChunkCoord)>`.
+pub struct WorldVoxelGrid<'a> {
+    chunks: HashMap<(i32, i32, i32), &'a Chunk>,
+}
+
+impl<'a> WorldVoxelGrid<'a> {
+    pub fn new() -> Self {
+        Self {
+            chunks: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, coord: &ChunkCoord, chunk: &'a Chunk) {
+        self.chunks.insert((coord.x, coord.y, coord.z), chunk);
+    }
+}
+
+impl Default for WorldVoxelGrid<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VoxelGrid for WorldVoxelGrid<'_> {
+    fn get_material(&self, x: i32, y: i32, z: i32) -> Option<MaterialId> {
+        let cc = ChunkCoord::from_voxel_pos(x, y, z);
+        let chunk = self.chunks.get(&(cc.x, cc.y, cc.z))?;
+        let origin = cc.world_origin();
+        let lx = (x - origin.x) as usize;
+        let ly = (y - origin.y) as usize;
+        let lz = (z - origin.z) as usize;
+        if lx < CHUNK_SIZE && ly < CHUNK_SIZE && lz < CHUNK_SIZE {
+            Some(chunk.get(lx, ly, lz).material)
+        } else {
+            None
+        }
+    }
 }
 
 /// Result of a pathfinding query.

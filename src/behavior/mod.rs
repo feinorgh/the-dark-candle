@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use crate::biology::metabolism::Metabolism;
 use crate::procgen::creatures::Creature;
+use crate::world::chunk::{Chunk, ChunkCoord};
 
 /// System set for behavior systems running on `FixedUpdate`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -23,6 +24,21 @@ impl Default for CurrentAction {
     }
 }
 
+/// Cached A* path for a creature.  Recomputed when the action target changes
+/// by more than `REPLAN_THRESHOLD` voxels or the path is fully consumed.
+#[derive(Component, Debug, Clone, Default)]
+pub struct CreaturePath {
+    /// Remaining waypoints (next waypoint is index 0).
+    pub waypoints: Vec<[i32; 3]>,
+    /// The target position this path was computed toward.
+    pub target: Option<[i32; 3]>,
+}
+
+/// How far a target must move before we recompute the path.
+const REPLAN_THRESHOLD: f32 = 3.0;
+/// Max creatures to re-path per tick (budget to avoid frame spikes).
+const MAX_PATHS_PER_TICK: usize = 8;
+
 pub struct BehaviorPlugin;
 
 impl Plugin for BehaviorPlugin {
@@ -32,6 +48,9 @@ impl Plugin for BehaviorPlugin {
             (
                 tick_needs_system,
                 perceive_and_select_action.after(tick_needs_system),
+                compute_paths
+                    .after(perceive_and_select_action)
+                    .before(execute_action_system),
                 execute_action_system.after(perceive_and_select_action),
             )
                 .in_set(BehaviorSet)
@@ -162,11 +181,108 @@ fn perceive_and_select_action(
     }
 }
 
+/// Extract the target position from an [`Action`], if any.
+fn action_target(action: &utility::Action) -> Option<[i32; 3]> {
+    match action {
+        utility::Action::Eat { target }
+        | utility::Action::Socialize { target }
+        | utility::Action::Attack { target } => Some(*target),
+        utility::Action::Flee { from } => Some(*from),
+        _ => None,
+    }
+}
+
+fn target_distance(a: [i32; 3], b: [i32; 3]) -> f32 {
+    let dx = (a[0] - b[0]) as f32;
+    let dy = (a[1] - b[1]) as f32;
+    let dz = (a[2] - b[2]) as f32;
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+/// Compute or update A* paths for creatures whose action targets have changed.
+///
+/// Builds a [`WorldVoxelGrid`](pathfinding::WorldVoxelGrid) once per tick from
+/// loaded chunks, then runs [`find_path`](pathfinding::find_path) for up to
+/// [`MAX_PATHS_PER_TICK`] creatures that need re-planning.
+fn compute_paths(
+    mut creatures: Query<(&Transform, &CurrentAction, &Creature, &mut CreaturePath)>,
+    chunks: Query<(&Chunk, &ChunkCoord)>,
+) {
+    // Build world grid from loaded chunks.
+    let mut grid = pathfinding::WorldVoxelGrid::new();
+    for (chunk, coord) in &chunks {
+        grid.insert(coord, chunk);
+    }
+
+    let mut budget = MAX_PATHS_PER_TICK;
+
+    for (transform, action, creature, mut path) in &mut creatures {
+        let Some(target) = action_target(&action.0) else {
+            // No target — clear cached path.
+            path.waypoints.clear();
+            path.target = None;
+            continue;
+        };
+
+        // Check if we already have a valid path to (roughly) this target.
+        let needs_replan = match path.target {
+            Some(prev) => {
+                target_distance(prev, target) > REPLAN_THRESHOLD || path.waypoints.is_empty()
+            }
+            None => true,
+        };
+
+        if !needs_replan {
+            continue;
+        }
+
+        if budget == 0 {
+            continue;
+        }
+        budget -= 1;
+
+        let pos = transform.translation;
+        let start = [pos.x as i32, pos.y as i32, pos.z as i32];
+
+        // For Flee, pathfind *away* — pick a point opposite to the threat.
+        let goal = if matches!(action.0, utility::Action::Flee { .. }) {
+            let dx = start[0] - target[0];
+            let dz = start[2] - target[2];
+            let flee_dist = 12;
+            [
+                start[0] + dx.signum() * flee_dist,
+                start[1],
+                start[2] + dz.signum() * flee_dist,
+            ]
+        } else {
+            target
+        };
+
+        let config = pathfinding::PathConfig {
+            max_jump: 1,
+            max_drop: 3,
+            can_swim: creature.diet == crate::data::Diet::Omnivore,
+            max_nodes: 1000, // Reduced budget per creature for responsiveness.
+            ..Default::default()
+        };
+
+        if let Some(found) = pathfinding::find_path(&grid, start, goal, &config) {
+            path.waypoints = found.waypoints;
+            path.target = Some(target);
+        } else {
+            // No path found — clear so we fall back to direct-line movement.
+            path.waypoints.clear();
+            path.target = Some(target);
+        }
+    }
+}
+
 /// Execute the currently selected action, producing movement and social events.
 ///
 /// When a creature eats, the food entity is despawned and `Metabolism::feed()`
 /// restores energy. Item removal from `ChunkItems` tracking happens lazily when
 /// the chunk itself unloads.
+#[allow(clippy::type_complexity)]
 fn execute_action_system(
     mut commands: Commands,
     mut query: Query<(
@@ -177,6 +293,7 @@ fn execute_action_system(
         &mut needs::Needs,
         &mut crate::physics::gravity::PhysicsBody,
         &mut crate::biology::metabolism::Metabolism,
+        &mut CreaturePath,
     )>,
     food_query: Query<(Entity, &Transform, &crate::procgen::items::Item)>,
     time: Res<Time<Fixed>>,
@@ -185,14 +302,41 @@ fn execute_action_system(
     // Tick counter mixed with entity bits gives per-creature-per-tick RNG.
     let tick = (time.elapsed_secs() * 64.0) as u64;
 
-    for (entity, current, transform, creature, mut needs_comp, mut body, mut metabolism) in
-        &mut query
+    for (
+        entity,
+        current,
+        transform,
+        creature,
+        mut needs_comp,
+        mut body,
+        mut metabolism,
+        mut path,
+    ) in &mut query
     {
         let pos = [
             transform.translation.x,
             transform.translation.y,
             transform.translation.z,
         ];
+
+        // Advance waypoints: pop consumed waypoints that we're already near.
+        let waypoint_reach = 1.2_f32;
+        while let Some(&wp) = path.waypoints.first() {
+            let dx = wp[0] as f32 - pos[0];
+            let dy = wp[1] as f32 - pos[1];
+            let dz = wp[2] as f32 - pos[2];
+            if (dx * dx + dy * dy + dz * dz).sqrt() < waypoint_reach {
+                path.waypoints.remove(0);
+            } else {
+                break;
+            }
+        }
+
+        // Resolve the effective target: next waypoint if available,
+        // otherwise the raw action target (direct-line fallback).
+        let effective_target = |raw_target: [i32; 3]| -> [i32; 3] {
+            path.waypoints.first().copied().unwrap_or(raw_target)
+        };
 
         // Simple xorshift RNG seeded from entity + tick for wander variation.
         let seed = entity.to_bits() ^ tick.wrapping_mul(6364136223846793005);
@@ -202,13 +346,17 @@ fn execute_action_system(
         let output = match &current.0 {
             utility::Action::Idle => behaviors::execute_idle(),
             utility::Action::Wander => behaviors::execute_wander(rng_a, rng_b),
-            utility::Action::Eat { target } => behaviors::execute_eat(pos, *target, 1.5),
-            utility::Action::Flee { from } => behaviors::execute_flee(pos, *from),
+            utility::Action::Eat { target } => {
+                behaviors::execute_eat(pos, effective_target(*target), 1.5)
+            }
+            utility::Action::Flee { from } => behaviors::execute_flee(pos, effective_target(*from)),
             utility::Action::Sleep => behaviors::execute_sleep(),
             utility::Action::Socialize { target } => {
-                behaviors::execute_socialize(pos, *target, 3.0)
+                behaviors::execute_socialize(pos, effective_target(*target), 3.0)
             }
-            utility::Action::Attack { target } => behaviors::execute_attack(pos, *target, 2.0),
+            utility::Action::Attack { target } => {
+                behaviors::execute_attack(pos, effective_target(*target), 2.0)
+            }
         };
 
         // --- Food consumption ---
