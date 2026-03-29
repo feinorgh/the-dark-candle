@@ -157,6 +157,8 @@ fn spawn_creatures(
                     crate::behavior::perception::Senses::default(),
                     crate::behavior::CurrentAction::default(),
                     crate::social::relationships::Relationships::default(),
+                    crate::physics::gravity::PhysicsBody::default().with_foot_offset(hy * 0.5),
+                    crate::physics::collision::Collider::new(hx, hy, hz),
                     Mesh3d(meshes.add(Cuboid::new(hx, hy, hz))),
                     MeshMaterial3d(materials.add(StandardMaterial {
                         base_color: color,

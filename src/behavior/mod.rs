@@ -136,9 +136,15 @@ fn perceive_and_select_action(
 
 /// Execute the currently selected action, producing movement.
 fn execute_action_system(
-    mut query: Query<(&CurrentAction, &Transform, &Creature, &mut needs::Needs)>,
+    mut query: Query<(
+        &CurrentAction,
+        &Transform,
+        &Creature,
+        &mut needs::Needs,
+        &mut crate::physics::gravity::PhysicsBody,
+    )>,
 ) {
-    for (current, transform, creature, mut needs_comp) in &mut query {
+    for (current, transform, creature, mut needs_comp, mut body) in &mut query {
         let pos = [
             transform.translation.x,
             transform.translation.y,
@@ -162,22 +168,17 @@ fn execute_action_system(
             utility::Action::Attack { target } => behaviors::execute_attack(pos, *target, 2.0),
         };
 
-        // Apply movement intent to transform via velocity-like displacement.
-        // Full physics integration (rigid body forces) is deferred until
-        // creatures are connected to the physics solver.
-        // TODO: apply MovementIntent through the physics system instead of
-        // direct transform manipulation once entity bodies are implemented.
+        // Set horizontal velocity from movement intent; preserve vertical
+        // velocity so gravity continues to work correctly.
         if output.movement.speed_multiplier > 0.0 {
             let speed = creature.speed * output.movement.speed_multiplier;
             let dir = output.movement.direction;
-            let dt = 1.0 / 64.0; // FixedUpdate default rate
-            let displacement = Vec3::new(
-                dir[0] * speed * dt,
-                dir[1] * speed * dt,
-                dir[2] * speed * dt,
-            );
-            // Movement will be applied by a separate system once physics integration is ready.
-            let _ = displacement;
+            body.velocity.x = dir[0] * speed;
+            body.velocity.z = dir[2] * speed;
+        } else {
+            // No movement intent — apply ground friction (stop sliding).
+            body.velocity.x = 0.0;
+            body.velocity.z = 0.0;
         }
 
         // Satisfy rest if sleeping.
