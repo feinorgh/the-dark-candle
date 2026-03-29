@@ -838,6 +838,15 @@
       "implements": [],
       "notes": "Save/load only supports flat mode. Spherical save/load not yet implemented",
       "uncertain": false
+    },
+    {
+      "name": "Food consumption",
+      "module": "behavior",
+      "status": "complete",
+      "implements": [
+        "src/behavior/mod.rs: perceive_and_select_action() - food item queries, diet filtering",
+        "src/behavior/mod.rs: execute_action_system() - despawn food + metabolism.feed()"
+      ]
     }
   ],
   "tech_debt": [
@@ -900,7 +909,7 @@
   },
   "meta": {
     "generated_date": "2026-03-29",
-    "generated_from_commit": "24b32ec",
+    "generated_from_commit": "a480454",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
