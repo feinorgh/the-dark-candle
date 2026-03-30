@@ -25,7 +25,8 @@
       "src/main.rs \u2014 CLI parsing, plugin registration, Bevy app startup",
       "tests/simulations.rs \u2014 headless simulation test harness entry point",
       "tests/scenarios.rs \u2014 physics/chemistry/terrain scenario tests",
-      "tests/validate_assets.rs \u2014 RON asset validation tests"
+      "tests/validate_assets.rs \u2014 RON asset validation tests",
+      "src/bin/worldgen.rs \u2014 standalone CLI binary: planetary generation pipeline + stats output"
     ],
     "major_modules": [
       {
@@ -127,6 +128,11 @@
         "name": "entities",
         "path": "src/entities/",
         "responsibility": "Basic enemy component and data-driven spawning framework. Minimal \u2014 serves as template for entity expansion"
+      },
+      {
+        "name": "planet",
+        "path": "src/planet/",
+        "responsibility": "Standalone planetary generation pipeline: icosahedral geodesic grid, tectonic simulation, astronomical impact events, celestial mechanics (star/moons/rings/Keplerian orbits), static climate model, biome classification, geological rock/ore assignment. Used by the worldgen binary and planned for future game integration."
       }
     ],
     "patterns": [
@@ -856,6 +862,126 @@
         "src/behavior/pathfinding.rs: VoxelGrid trait, WorldVoxelGrid (chunk-backed), find_path() A* with jump/drop/swim",
         "src/behavior/mod.rs: CreaturePath component, compute_paths system (budgeted per-tick), waypoint following in execute_action_system"
       ]
+    },
+    {
+      "name": "Icosahedral geodesic grid",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/grid.rs"
+      ],
+      "implements": [
+        "IcosahedralGrid::new(level) \u2014 recursive subdivision, 10\u00d74^level+2 cells",
+        "CellId::cell_position() \u2014 unit-sphere DVec3 via bevy::math",
+        "IcosahedralGrid::cell_neighbors() \u2014 CCW-sorted via Gram-Schmidt tangent frame",
+        "IcosahedralGrid::nearest_cell_from_pos() \u2014 O(n) brute-force, used by crater stamping",
+        "IcosahedralGrid::all_areas() \u2014 dual-cell areas via Van Oosterom\u2013Strackee, sum = 4\u03c0"
+      ],
+      "notes": "15 unit tests. Y-up convention: pos.y = sin(latitude). Level 7 = 163,842 cells. 12 pentagon cells at all levels.",
+      "uncertain": false
+    },
+    {
+      "name": "Tectonic simulation",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/tectonics.rs"
+      ],
+      "implements": [
+        "run_tectonics(data, progress_cb) \u2014 entry point, 150 steps default",
+        "fibonacci_sphere_points() \u2014 uniform seed placement for plate origins",
+        "bfs_flood_fill() \u2014 round-robin BFS assigns cells to plates",
+        "detect_boundaries() \u2014 velocity dot-product classifies Convergent/Divergent/Transform",
+        "apply_boundary_forces() \u2014 height changes per boundary type (\u00b180\u2013100 m/step)",
+        "erode() \u2014 2% neighbor diffusion per step",
+        "compute_sea_level() \u2014 area-weighted percentile targeting 30% land"
+      ],
+      "notes": "12 unit tests. Fixed-boundary model; rand=0.9 SmallRng for determinism. Sample: seed=42, level=4 \u2192 -8533 m to +6440 m, 30.2% land, 12.6 ms.",
+      "uncertain": false
+    },
+    {
+      "name": "Astronomical impact events",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/impacts.rs"
+      ],
+      "implements": [
+        "run_impacts(data) \u2014 applies giant impact + stamps all ordinary craters",
+        "generate_impact_events(intensity, seed) \u2014 log-uniform size distribution",
+        "stamp_crater(data, event) \u2014 BFS footprint + radial depth profile (bowl/rim/ejecta)",
+        "apply_giant_impact(data, seed) \u2014 hemisphere depression + antipodal uplift",
+        "crater_depth_profile(r) \u2014 piecewise: bowl r<0.5, rim r<1.0, ejecta r<2.0"
+      ],
+      "notes": "13 unit tests. BFS depth-limited to MAX_BFS_DEPTH=8 hops. Ejecta covers 2\u00d7 crater radius.",
+      "uncertain": false
+    },
+    {
+      "name": "Celestial mechanics",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/celestial.rs"
+      ],
+      "implements": [
+        "CelestialSystem::generate(mass, radius, seed) \u2014 star + moons + ring + orbital params",
+        "solve_kepler(m, e) \u2014 Newton-Raphson, \u03b5<1e-12 in \u226410 steps",
+        "moon_position(moon, t) \u2014 3-1-3 Euler rotation (\u03a9, i, \u03c9) into inertial frame",
+        "CelestialSystem::tidal_height_at(cell_pos, t) \u2014 P\u2082(cos\u03b8) equilibrium formula",
+        "CelestialSystem::find_eclipses(start, end, dt) \u2014 angular radius solar/lunar detection",
+        "CelestialSystem::star_direction_at(t) \u2014 planet orbital position at time t"
+      ],
+      "notes": "14 unit tests. Star: log-uniform mass [0.6\u20131.8]\u00d7M\u2609, L\u221dM^4, T\u221dM^0.505. Moons: 0\u20134, Kepler 3rd law periods. Rings: ~15% probability.",
+      "uncertain": false
+    },
+    {
+      "name": "Climate and biome assignment",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/biomes.rs"
+      ],
+      "implements": [
+        "run_biomes(data) \u2014 populates temperature_k, precipitation_mm, ocean_proximity, biome",
+        "equatorial_temperature(data) \u2014 stellar energy balance: T\u2605\u00d7\u221a(R\u2605/2d)\u00d7(1-\u03b1)^0.25 + 33K greenhouse",
+        "cell_temperatures(data, t_equator) \u2014 lat gradient (60K\u00d7sin\u00b2lat) + lapse rate (6.5K/km)",
+        "ocean_proximity_bfs(data) \u2014 O(n) BFS from ocean cells, 20-hop linear decay",
+        "cell_precipitation(data, temp, prox) \u2014 Clausius-Clapeyron humidity \u00d7 orographic reduction",
+        "assign_biomes() \u2014 14-type simplified Whittaker diagram classification"
+      ],
+      "notes": "10 unit tests. 14 biomes: Ocean, DeepOcean, IceCap, Tundra, BorealForest, ColdSteppe, TemperateForest, Alpine, TropicalSavanna, TropicalRainforest, HotDesert, ColdDesert, Wetland, Mangrove. Must run before run_geology.",
+      "uncertain": false
+    },
+    {
+      "name": "Geological layering and ore placement",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/geology.rs"
+      ],
+      "implements": [
+        "run_geology(data) \u2014 populates surface_rock, geological_age, ore_deposits",
+        "assign_surface_rocks(data) \u2014 10 RockTypes from tectonic context",
+        "compute_geological_age(data) \u2014 boundary-type base + volcanic boost + deterministic noise",
+        "place_ore_deposits(data, rocks) \u2014 per-cell SmallRng with 7 ORE_* bitmask constants"
+      ],
+      "notes": "8 unit tests. 10 rock types: Basalt, Granite, Sandstone, Limestone, Shale, Marble, Quartzite, Obsidian, Peridotite, Gneiss. 7 ore types: ORE_IRON/COPPER/GOLD/COAL/SULFUR/GEMS/OIL. Must run after run_biomes.",
+      "uncertain": false
+    },
+    {
+      "name": "Worldgen CLI binary",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/bin/worldgen.rs"
+      ],
+      "implements": [
+        "main() \u2014 sequential pipeline: new PlanetData \u2192 tectonics \u2192 impacts \u2192 biomes \u2192 geology",
+        "--stats flag: full output of grid, tectonic, impact, celestial, biome, geology stats",
+        "--level, --seed, --radius-km CLI arguments"
+      ],
+      "notes": "Full pipeline at level 4 (2562 cells) runs in ~11 ms. Level 7 (163842 cells) ~400 ms. Run with: cargo run --bin worldgen -- --seed 42 --level 4 --stats",
+      "uncertain": false
     }
   ],
   "tech_debt": [
@@ -928,6 +1054,10 @@
       "VoxelGrid/PerceptionGrid adapter for LOS-based perception not yet implemented (distance-only)",
       "Creature movement is computed but not yet applied through physics solver (MovementIntent stored, not integrated)",
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet"
+    ],
+    "last_updated": "2026-03-30",
+    "notes": [
+      "Phases 1-5 of planetary generation pipeline complete (src/planet/). Phases 6-7 (globe renderer + map projections) pending."
     ]
   }
 }
