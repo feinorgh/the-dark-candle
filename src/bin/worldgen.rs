@@ -35,6 +35,7 @@ fn main() {
         seed: args.seed,
         grid_level: args.level,
         radius_m: args.radius_km * 1000.0,
+        mass_kg: 5.972e24, // Earth-like mass
         ..Default::default()
     };
 
@@ -154,6 +155,62 @@ fn main() {
                 .map(|e| e.radius_cells)
                 .fold(f64::NEG_INFINITY, f64::max);
             println!("    Largest crater: depth {max_depth:.0} m, radius {max_radius:.1} cells");
+        }
+
+        // Celestial stats.
+        let cel = &planet.celestial;
+        let star = &cel.star;
+        let star_class = match star.temperature_k as u32 {
+            0..=3700 => "M",
+            3701..=5200 => "K",
+            5201..=6000 => "G",
+            6001..=7500 => "F",
+            7501..=10000 => "A",
+            _ => "B/O",
+        };
+        println!("\n  Celestial system:");
+        println!(
+            "    Star: {star_class}-type, T={:.0} K, L={:.3e} W, R={:.3e} m",
+            star.temperature_k, star.luminosity_w, star.radius_m
+        );
+        println!(
+            "    Planet orbit: {:.3e} m ({:.2} AU), period {:.2} Earth-years",
+            cel.planet_orbit_m,
+            cel.planet_orbit_m / the_dark_candle::planet::celestial::AU,
+            cel.planet_orbital_period_s / 3.156e7
+        );
+        println!("    Moons: {}", cel.moons.len());
+        for (i, moon) in cel.moons.iter().enumerate() {
+            println!(
+                "      Moon {}: R={:.0} km, a={:.3e} m, T={:.2} days",
+                i + 1,
+                moon.radius_m / 1000.0,
+                moon.semi_major_axis_m,
+                moon.orbital_period_s / 86400.0
+            );
+        }
+        if let Some(ring) = &cel.ring {
+            println!(
+                "    Ring: {:.3e}–{:.3e} m, opacity={:.2}",
+                ring.inner_radius_m, ring.outer_radius_m, ring.opacity
+            );
+        } else {
+            println!("    Ring: none");
+        }
+
+        // Tidal range at epoch 0 over a sample of cells.
+        if !cel.moons.is_empty() {
+            use the_dark_candle::planet::grid::CellId;
+            let t = 0.0;
+            let tidal: Vec<f64> = (0..planet.grid.cell_count())
+                .map(|i| {
+                    let pos = planet.grid.cell_position(CellId(i as u32));
+                    cel.tidal_height_at(pos, t)
+                })
+                .collect();
+            let t_min = tidal.iter().copied().fold(f64::INFINITY, f64::min);
+            let t_max = tidal.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            println!("    Tidal range at epoch: {t_min:.2} m to {t_max:.2} m");
         }
     }
 }

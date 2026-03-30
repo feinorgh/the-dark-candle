@@ -7,10 +7,12 @@
 //! Generation code is pure Rust (no ECS scheduling) so it can run both inside
 //! the game and from the standalone `worldgen` binary.
 
+pub mod celestial;
 pub mod grid;
 pub mod impacts;
 pub mod tectonics;
 
+use celestial::CelestialSystem;
 use grid::IcosahedralGrid;
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +52,8 @@ pub struct PlanetConfig {
     pub grid_level: u32,
     /// Planet radius in meters.
     pub radius_m: f64,
+    /// Planet mass in kilograms.
+    pub mass_kg: f64,
     /// Number of tectonic simulation steps.
     pub tectonic_steps: u32,
     /// Meteorite bombardment intensity (0.0–1.0).
@@ -64,6 +68,7 @@ impl Default for PlanetConfig {
             seed: 42,
             grid_level: 7,
             radius_m: 6_371_000.0, // Earth-like
+            mass_kg: 5.972e24,     // Earth mass
             tectonic_steps: 150,
             bombardment_intensity: 0.3,
             giant_impact_probability: 0.1,
@@ -74,7 +79,7 @@ impl Default for PlanetConfig {
 /// The complete state of a generated planet.
 ///
 /// Populated incrementally by each generation phase:
-/// grid → tectonics → impacts → biomes.
+/// grid → tectonics → impacts → celestial → biomes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanetData {
     /// Generation parameters.
@@ -95,6 +100,8 @@ pub struct PlanetData {
     pub volcanic_activity: Vec<f32>,
     /// Accumulated fault stress per cell (0.0–1.0).
     pub fault_stress: Vec<f32>,
+    /// Celestial system: star, moons, rings, and orbital mechanics.
+    pub celestial: CelestialSystem,
 }
 
 impl PlanetData {
@@ -102,6 +109,7 @@ impl PlanetData {
     pub fn new(config: PlanetConfig) -> Self {
         let grid = IcosahedralGrid::new(config.grid_level);
         let n = grid.cell_count();
+        let celestial = CelestialSystem::generate(config.mass_kg, config.radius_m, config.seed);
         Self {
             config,
             grid,
@@ -112,6 +120,7 @@ impl PlanetData {
             boundary_type: vec![BoundaryType::default(); n],
             volcanic_activity: vec![0.0; n],
             fault_stress: vec![0.0; n],
+            celestial,
         }
     }
 }
