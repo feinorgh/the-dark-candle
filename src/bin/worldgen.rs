@@ -3,6 +3,10 @@
 //! Usage: `cargo run --bin worldgen -- --seed 42 --level 6 --stats`
 
 use clap::Parser;
+use the_dark_candle::planet::biomes::run_biomes;
+use the_dark_candle::planet::geology::{
+    ORE_COAL, ORE_COPPER, ORE_GEMS, ORE_GOLD, ORE_IRON, ORE_OIL, ORE_SULFUR, run_geology,
+};
 use the_dark_candle::planet::impacts::run_impacts;
 use the_dark_candle::planet::tectonics::run_tectonics;
 use the_dark_candle::planet::{PlanetConfig, PlanetData};
@@ -58,6 +62,16 @@ fn main() {
     run_impacts(&mut planet);
     let imp_elapsed = imp_start.elapsed();
     println!("  Impacts done in {imp_elapsed:.2?}");
+
+    let bio_start = std::time::Instant::now();
+    run_biomes(&mut planet);
+    let bio_elapsed = bio_start.elapsed();
+    println!("  Biomes done in {bio_elapsed:.2?}");
+
+    let geo_start = std::time::Instant::now();
+    run_geology(&mut planet);
+    let geo_elapsed = geo_start.elapsed();
+    println!("  Geology done in {geo_elapsed:.2?}");
 
     let elapsed = start.elapsed();
     println!("Total: {elapsed:.2?}");
@@ -212,5 +226,78 @@ fn main() {
             let t_max = tidal.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             println!("    Tidal range at epoch: {t_min:.2} m to {t_max:.2} m");
         }
+
+        // Biome stats.
+        use the_dark_candle::planet::BiomeType;
+        let n = planet.grid.cell_count() as f32;
+        let ocean_cells = planet
+            .biome
+            .iter()
+            .filter(|&&b| matches!(b, BiomeType::Ocean | BiomeType::DeepOcean))
+            .count();
+        let land_cells = n as usize - ocean_cells;
+        let temp_min = planet
+            .temperature_k
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        let temp_max = planet
+            .temperature_k
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let temp_mean = planet.temperature_k.iter().sum::<f32>() / n;
+        let precip_mean = planet.precipitation_mm.iter().sum::<f32>() / n;
+
+        println!("\n  Biome results:");
+        println!("    Temperature: {temp_min:.0} K to {temp_max:.0} K (mean {temp_mean:.0} K)");
+        println!("    Mean precipitation: {precip_mean:.0} mm/year");
+        println!("    Land cells with biome data: {land_cells}");
+
+        // Count top biomes.
+        let mut biome_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for &b in &planet.biome {
+            *biome_counts.entry(format!("{b:?}")).or_default() += 1;
+        }
+        let mut biome_list: Vec<_> = biome_counts.iter().collect();
+        biome_list.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        for (name, count) in biome_list.iter().take(5) {
+            println!("      {name}: {count} ({:.1}%)", 100.0 * **count as f32 / n);
+        }
+
+        println!("\n  Geology results:");
+        let mut rock_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for &r in &planet.surface_rock {
+            *rock_counts.entry(format!("{r:?}")).or_default() += 1;
+        }
+        let mut rock_list: Vec<_> = rock_counts.iter().collect();
+        rock_list.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        for (name, count) in rock_list.iter().take(5) {
+            println!("      {name}: {count} ({:.1}%)", 100.0 * **count as f32 / n);
+        }
+
+        let ore_cells = |mask: u16| {
+            planet
+                .ore_deposits
+                .iter()
+                .filter(|&&d| d & mask != 0)
+                .count()
+        };
+        println!("    Ore deposits (land cells with each type):");
+        println!(
+            "      Iron: {}, Copper: {}, Gold: {}, Coal: {}",
+            ore_cells(ORE_IRON),
+            ore_cells(ORE_COPPER),
+            ore_cells(ORE_GOLD),
+            ore_cells(ORE_COAL)
+        );
+        println!(
+            "      Sulfur: {}, Gems: {}, Oil: {}",
+            ore_cells(ORE_SULFUR),
+            ore_cells(ORE_GEMS),
+            ore_cells(ORE_OIL)
+        );
     }
 }

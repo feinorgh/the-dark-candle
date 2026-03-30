@@ -7,7 +7,9 @@
 //! Generation code is pure Rust (no ECS scheduling) so it can run both inside
 //! the game and from the standalone `worldgen` binary.
 
+pub mod biomes;
 pub mod celestial;
+pub mod geology;
 pub mod grid;
 pub mod impacts;
 pub mod tectonics;
@@ -15,6 +17,70 @@ pub mod tectonics;
 use celestial::CelestialSystem;
 use grid::IcosahedralGrid;
 use serde::{Deserialize, Serialize};
+
+// ─── Biome type ───────────────────────────────────────────────────────────────
+
+/// Surface biome classification for a planetary cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BiomeType {
+    /// Open ocean (elevation < 0 m).
+    #[default]
+    Ocean,
+    /// Deep ocean trench (elevation < −4000 m).
+    DeepOcean,
+    /// Permanent polar ice sheet (T < 263 K).
+    IceCap,
+    /// Cold treeless plain with permafrost (T 263–273 K).
+    Tundra,
+    /// Coniferous boreal forest / taiga (T 273–283 K, moderate moisture).
+    BorealForest,
+    /// Cold, dry grassland or steppe (T 273–293 K, low moisture).
+    ColdSteppe,
+    /// Temperate mixed or deciduous forest (T 283–295 K, moderate moisture).
+    TemperateForest,
+    /// High-altitude shrubland above tree line.
+    Alpine,
+    /// Warm semi-arid grassland (T > 293 K, low-moderate moisture).
+    TropicalSavanna,
+    /// Dense tropical rainforest (T > 295 K, high moisture).
+    TropicalRainforest,
+    /// Hot desert (T > 293 K, very low moisture).
+    HotDesert,
+    /// Cold desert (polar or high-altitude, dry).
+    ColdDesert,
+    /// Low-lying waterlogged land near the coast.
+    Wetland,
+    /// Coastal tropical mangrove belt.
+    Mangrove,
+}
+
+// ─── Rock type ────────────────────────────────────────────────────────────────
+
+/// Dominant surface rock type at a planetary cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RockType {
+    /// Extrusive volcanic rock; oceanic crust and rift zones.
+    #[default]
+    Basalt,
+    /// Felsic intrusive rock; continental interiors.
+    Granite,
+    /// Clastic sedimentary rock; arid plains and ancient dunes.
+    Sandstone,
+    /// Marine carbonate sedimentary rock; shallow-sea deposits.
+    Limestone,
+    /// Fine-grained marine or lacustrine sedimentary rock.
+    Shale,
+    /// Contact metamorphic (from limestone); collision zones.
+    Marble,
+    /// High-grade metamorphic (from sandstone/shale); ancient mountain cores.
+    Quartzite,
+    /// Volcanic glass; high-silica lava flows.
+    Obsidian,
+    /// Mantle-derived ultramafic rock; exposed at oceanic rifts.
+    Peridotite,
+    /// High-grade continental metamorphic; deep crustal roots.
+    Gneiss,
+}
 
 /// Type of tectonic plate crust.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -102,6 +168,21 @@ pub struct PlanetData {
     pub fault_stress: Vec<f32>,
     /// Celestial system: star, moons, rings, and orbital mechanics.
     pub celestial: CelestialSystem,
+    // ── Phase 5: biome & geology ──────────────────────────────────────────
+    /// Mean annual surface temperature per cell (K).
+    pub temperature_k: Vec<f32>,
+    /// Mean annual precipitation per cell (mm/year).
+    pub precipitation_mm: Vec<f32>,
+    /// Ocean proximity per cell (0 = landlocked, 1 = at ocean).
+    pub ocean_proximity: Vec<f32>,
+    /// Biome classification per cell.
+    pub biome: Vec<BiomeType>,
+    /// Dominant surface rock type per cell.
+    pub surface_rock: Vec<RockType>,
+    /// Geological age per cell (0 = ancient craton, 1 = freshly-formed).
+    pub geological_age: Vec<f32>,
+    /// Ore deposit bitmask per cell (see `geology::ORE_*` constants).
+    pub ore_deposits: Vec<u16>,
 }
 
 impl PlanetData {
@@ -121,6 +202,13 @@ impl PlanetData {
             volcanic_activity: vec![0.0; n],
             fault_stress: vec![0.0; n],
             celestial,
+            temperature_k: vec![0.0; n],
+            precipitation_mm: vec![0.0; n],
+            ocean_proximity: vec![0.0; n],
+            biome: vec![BiomeType::default(); n],
+            surface_rock: vec![RockType::default(); n],
+            geological_age: vec![0.5; n],
+            ore_deposits: vec![0; n],
         }
     }
 }
