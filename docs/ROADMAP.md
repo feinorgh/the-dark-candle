@@ -20,7 +20,7 @@ Simulation Stack (each layer reads/writes shared ECS components):
 ```
 
 Modules: `camera`, `world`, `physics`, `chemistry`, `biology`, `entities`,
-`procgen`, `behavior`, `social`, `data`, `persistence`.
+`procgen`, `behavior`, `social`, `data`, `persistence`, `planet`.
 
 All entity/material/reaction data is loaded from `.ron` files under `assets/data/`.
 
@@ -83,11 +83,12 @@ identity and territory. Reputation from observed actions. Group behaviors
 ## Current State
 
 **All 7 original phases are complete.** The codebase has:
-- 100+ source files, ~34,000 lines of Rust (edition 2024)
-- 1182+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
+- 110+ source files, ~39,000 lines of Rust (edition 2024)
+- 1270+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
+- Standalone worldgen binary: `cargo run --bin worldgen` (planetary generation + globe + projections)
 
 ### Recent work (post-Phase 7)
 
@@ -107,6 +108,42 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `0e035d5` | Procedural tree generator + biome integration |
 | `c178bc3` | dx-aware radiation in `radiate_chunk` (multiresolution physics) |
 | `6e5679a` | Forest fire demo: 8-tree ring with convection proxy |
+
+### Planetary World Generation Pipeline ✅
+
+Standalone world generation binary (`cargo run --bin worldgen`) implementing the
+geodesic terrain design document's generation pipeline (Sections 3.3, 8.1–8.8).
+Produces a complete, physically consistent planet from a seed, with interactive
+3D visualization and 2D map export.
+
+**Module:** `src/planet/` (~4,700 LOC, 120+ tests)
+
+| Phase | File | Description |
+|-------|------|-------------|
+| 1 — Geodesic Grid | `grid.rs` | Icosahedral subdivision with configurable level (10×4^n+2 cells) |
+| 2 — Tectonics | `tectonics.rs` | Plate simulation: Voronoi seeding, boundary detection, orogenesis, erosion |
+| 3 — Impacts | `impacts.rs` | Asteroid/comet impacts: craters, ejecta, crust thinning |
+| 4 — Celestial | `celestial.rs` | Star, moons, rings, Keplerian orbits, tidal forces |
+| 5 — Biomes & Geology | `biomes.rs`, `geology.rs` | Climate zones, 14 biome types, rock strata, 7 ore types |
+| 6 — Globe Renderer | `render.rs` | Bevy 3D globe with orbital camera, 8 colour modes, screenshot |
+| 7 — Map Projections | `projections.rs` | Equirectangular, Mollweide, orthographic + rotating animation |
+
+**CLI usage:**
+```bash
+# Generate and print stats
+cargo run --bin worldgen -- --seed 42 --level 4 --stats
+
+# Interactive 3D globe
+cargo run --bin worldgen -- --seed 42 --level 4 --globe
+
+# Export map projection
+cargo run --bin worldgen -- --seed 42 --level 4 --projection mollweide --colourmode biome --output world.png
+
+# Rotating animation
+cargo run --bin worldgen -- --seed 42 --level 4 --animate rotation.mp4 --colourmode elevation
+```
+
+Full design: **[geodesic-terrain-design.md](geodesic-terrain-design.md)**
 
 ### LOD / Octree Realism Overhaul (latest)
 
@@ -558,9 +595,14 @@ Full design: **[valley-river-milestone.md](valley-river-milestone.md)**
 - **Fluid coupling strategy?** Interface cells? Overlapping domains? TBD.
 - **Sound design?** Bevy has built-in audio. Not prioritized yet.
 - **Planet scale?** Default is 32 km radius. Earth-scale (6,371 km) requires
-  multi-resolution octree leaves for the deep interior — deferred.
-- **Tectonic simulation fidelity?** Full mantle convection vs. plate-boundary-only
-  stress model. TBD when world-gen pipeline is built.
+  multi-resolution octree leaves for the deep interior — deferred. The standalone
+  worldgen pipeline supports arbitrary radius via `--radius-km`.
+- **Tectonic simulation fidelity?** Implemented as boundary-only stress model
+  with configurable step count (default 100). Full mantle convection deferred.
+- **Geodesic grid integration?** The standalone pipeline (`src/planet/`) proves
+  the generation algorithms. Full integration with the Cartesian voxel game
+  (CellGrid trait, hex chunks, physics migration) remains Phase 0–5 of the
+  geodesic design document.
 - **Geoid precision?** Exact equipotential surface vs. oblate spheroid approximation
   for sea level. Spherical harmonics are overkill for a game — ellipsoid is likely
   sufficient.

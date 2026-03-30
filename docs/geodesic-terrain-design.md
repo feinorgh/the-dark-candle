@@ -1,8 +1,43 @@
 # Geodesic Hexagonal Terrain System — Design Document
 
-> **Status:** Proposal / Brainstorming  
-> **Date:** 2026-03-29  
-> **Context:** Exploration of replacing the flat Cartesian voxel grid with a planet-scale geodesic hexagonal system to support realistic weather simulation.
+> **Status:** Standalone Pipeline Implemented / Full Migration Planned  
+> **Date:** 2026-03-30 (updated)  
+> **Context:** Exploration of replacing the flat Cartesian voxel grid with a planet-scale geodesic hexagonal system to support realistic weather simulation. The standalone generation pipeline (Sections 3–8) is now **implemented and tested** in `src/planet/`. Full integration with the Cartesian voxel game (Section 9: Migration Phases 0–5) remains future work.
+
+---
+
+## Implementation Status
+
+The standalone planetary generation pipeline is **complete** in `src/planet/`,
+runnable via `cargo run --bin worldgen`. It implements sections 3.3, 8.1–8.8 of
+this design document as a 7-phase pipeline:
+
+| Phase | Design Section | Module | Description |
+|-------|---------------|--------|-------------|
+| 1 | §3.3 | `grid.rs` | Icosahedral geodesic grid with configurable subdivision level |
+| 2 | §8.2–8.6 | `tectonics.rs` | Plate tectonic simulation (Voronoi seeding, boundary detection, orogenesis, erosion) |
+| 3 | §8.7 | `impacts.rs` | Astronomical impact events (minor/major/catastrophic/giant impacts) |
+| 4 | §8.8 | `celestial.rs` | Celestial system generation (star, moons, rings, Keplerian orbits, tidal forces) |
+| 5 | — | `biomes.rs`, `geology.rs` | Climate/biome classification + geological layering and ore deposits |
+| 6 | — | `render.rs` | Interactive 3D globe viewer (Bevy app with orbital camera, colour modes) |
+| 7 | — | `projections.rs` | 2D map projection export (equirectangular, Mollweide, orthographic) + animation |
+
+**Key metrics:**
+- ~4,700 LOC across 8 files (including `mod.rs`)
+- 120+ unit tests, all passing
+- Level 4 (2,562 cells) generates in ~11 ms; level 7 (163,842 cells) in ~2 s
+- Full CLI: `cargo run --bin worldgen -- --seed 42 --level 4 --stats --globe`
+
+**What is NOT yet implemented** (Section 9: Migration Plan):
+- CellGrid trait abstraction (Phase 0)
+- Hex-prism chunk storage replacing cubic chunks (Phase 2)
+- Physics migration to hex lattice (Phase 3)
+- Hex-prism meshing (Phase 4)
+- Weather on geodesic grid (Phase 5)
+
+These remain the long-term plan for integrating the geodesic system into the
+live game. The standalone pipeline proves the generation algorithms work and
+provides visual validation tooling for when the migration begins.
 
 ---
 

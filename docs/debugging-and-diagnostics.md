@@ -16,6 +16,10 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Run visual rendering tests | `cargo test --test visual_rendering` | MP4 videos in `test_output/` |
 | Run atmosphere visual tests (CPU) | `cargo test --test atmosphere_visual --release -- --ignored` | MP4 videos in `test_output/` |
 | Run atmosphere visual tests (GPU) | `cargo test --test atmosphere_visual_gpu` | MP4 videos in `test_output/` |
+| Generate planet (stats) | `cargo run --bin worldgen -- --seed 42 --level 4 --stats` | Pipeline timing + cell/plate/biome counts |
+| Generate planet (globe) | `cargo run --bin worldgen -- --seed 42 --level 4 --globe` | Interactive 3D Bevy window |
+| Export planet map | `cargo run --bin worldgen -- --seed 42 --projection mollweide --output world.png` | PNG image |
+| Export planet animation | `cargo run --bin worldgen -- --seed 42 --animate rotation.mp4` | MP4 rotating globe |
 | Enable verbose logging | `RUST_LOG=info cargo run --features bevy/dynamic_linking` | Bevy + game logs on stderr |
 | Enable debug logging | `RUST_LOG=debug,bevy=info cargo run --features bevy/dynamic_linking` | Game debug logs without Bevy noise |
 | See test stderr output | `cargo test -- --nocapture` | Prints `eprintln!` messages from tests |
