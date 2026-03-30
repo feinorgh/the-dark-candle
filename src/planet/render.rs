@@ -49,11 +49,26 @@ impl ColourMode {
             Self::Temperature => "Temperature",
         }
     }
+
+    /// Parse a colour mode from a CLI name string.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "elevation" => Some(Self::Elevation),
+            "biome" => Some(Self::Biome),
+            "plates" => Some(Self::Plates),
+            "age" | "geological_age" => Some(Self::GeologicalAge),
+            "crust" | "crust_depth" => Some(Self::CrustDepth),
+            "tidal" | "tidal_amplitude" => Some(Self::TidalAmplitude),
+            "rock" => Some(Self::Rock),
+            "temperature" | "temp" => Some(Self::Temperature),
+            _ => None,
+        }
+    }
 }
 
 // ─── Colour mapping ───────────────────────────────────────────────────────────
 
-fn cell_color(data: &PlanetData, cell: usize, mode: &ColourMode) -> [f32; 4] {
+pub(crate) fn cell_color(data: &PlanetData, cell: usize, mode: &ColourMode) -> [f32; 4] {
     match mode {
         ColourMode::Elevation => elevation_color(data.elevation[cell]),
         ColourMode::Biome => biome_color(data.biome[cell]),

@@ -34,6 +34,27 @@ struct Args {
     /// Open interactive 3D globe viewer.
     #[arg(long)]
     globe: bool,
+
+    /// Export map projection (equirectangular, mollweide, orthographic).
+    #[arg(long)]
+    projection: Option<String>,
+
+    /// Output file path for projection export.
+    #[arg(long, default_value = "world.png")]
+    output: String,
+
+    /// Image width for projection / animation export (pixels).
+    #[arg(long, default_value_t = 2048)]
+    width: u32,
+
+    /// Colour mode for projection / globe (elevation, biome, plates, age,
+    /// crust, tidal, rock, temp).
+    #[arg(long, default_value = "elevation")]
+    colourmode: String,
+
+    /// Export a rotating orthographic animation to the given path.
+    #[arg(long)]
+    animate: Option<String>,
 }
 
 fn main() {
@@ -303,6 +324,42 @@ fn main() {
             ore_cells(ORE_GEMS),
             ore_cells(ORE_OIL)
         );
+    }
+
+    // ── Projection export ─────────────────────────────────────────────────
+    use the_dark_candle::planet::projections::{Projection, render_animation, render_projection};
+    use the_dark_candle::planet::render::ColourMode;
+
+    let mode = ColourMode::from_name(&args.colourmode).unwrap_or_default();
+
+    if let Some(proj_name) = &args.projection {
+        let Some(projection) = Projection::from_name(proj_name) else {
+            eprintln!(
+                "Unknown projection '{proj_name}'. Use: equirectangular, mollweide, orthographic"
+            );
+            return;
+        };
+        let start = std::time::Instant::now();
+        let img = render_projection(&planet, &projection, &mode, args.width);
+        println!(
+            "Projection rendered in {:.2?} ({}×{})",
+            start.elapsed(),
+            img.width(),
+            img.height()
+        );
+        img.save(&args.output)
+            .expect("Failed to save projection image");
+        println!("Saved to {}", args.output);
+    }
+
+    if let Some(anim_path) = &args.animate {
+        let start = std::time::Instant::now();
+        println!("Rendering animation ({} frames)...", 360);
+        if let Err(e) = render_animation(&planet, &mode, args.width, 360, anim_path) {
+            eprintln!("Animation error: {e}");
+        } else {
+            println!("Animation done in {:.2?} → {anim_path}", start.elapsed());
+        }
     }
 
     if args.globe {
