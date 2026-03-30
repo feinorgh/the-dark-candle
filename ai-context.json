@@ -1000,6 +1000,24 @@
       ],
       "notes": "7 unit tests. Colour modes: elevation, biome, plates, geological age, crust depth, tidal amplitude, rock, temperature. CLI: --globe flag.",
       "uncertain": false
+    },
+    {
+      "name": "Map projection export",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/projections.rs",
+        "src/bin/worldgen.rs"
+      ],
+      "implements": [
+        "Projection enum: Equirectangular, Mollweide, Orthographic",
+        "SpatialIndex \u2014 1deg grid accelerator for O(1) nearest-cell lookup",
+        "render_projection(data, proj, mode, width) \u2192 RgbImage",
+        "render_animation(data, mode, width, frames, path) \u2192 rotating orthographic via FrameEncoder",
+        "CLI: --projection, --output, --width, --colourmode, --animate flags"
+      ],
+      "notes": "10 unit tests. CPU rasterization, no GPU needed. Equirect 512px in ~80ms at level 4.",
+      "uncertain": false
     }
   ],
   "tech_debt": [
@@ -1075,7 +1093,7 @@
     ],
     "last_updated": "2026-03-30",
     "notes": [
-      "Phases 1-5 of planetary generation pipeline complete (src/planet/). Phases 6-7 (globe renderer + map projections) pending."
+      "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed."
     ]
   }
 }
