@@ -2,19 +2,26 @@
 //!
 //! ## Algorithm overview
 //!
-//! This module uses a **fixed-boundary plate model**: plate assignments are
-//! computed at initialisation and remain fixed throughout the simulation.
+//! This module uses a **dynamic-boundary plate model**: plate assignments are
+//! initially set via weighted BFS flood-fill (producing Earth-like size
+//! variation), then refined each simulation step as subduction consumes
+//! oceanic cells at convergent boundaries.
+//!
 //! Forces at plate boundaries drive elevation changes each step, producing
 //! mountains at convergent boundaries, rifts/trenches at divergent boundaries,
 //! and fault zones at transform boundaries.
 //!
 //! ### Pipeline
 //! 1. Seed N plate centres using a Fibonacci sphere lattice for uniform coverage.
-//! 2. BFS flood-fill from seeds assigns every cell to its nearest plate.
-//! 3. Each plate receives a random type (continental/oceanic), angular velocity,
-//!    and density.
-//! 4. Run `steps` tectonic iterations: boundary detection → height update →
-//!    volcanic activity decay → erosion smoothing.
+//! 2. Weighted BFS flood-fill assigns cells; growth rate per plate drawn from a
+//!    Pareto distribution gives a power-law size distribution (few large plates,
+//!    many small ones — mirroring Earth).
+//! 3. Each plate receives a random type (continental/oceanic — larger plates
+//!    skew oceanic), angular velocity, and density.
+//! 4. Run `steps` tectonic iterations:
+//!    a. Recompute boundary normals (boundaries shift due to subduction).
+//!    b. Boundary detection → height update → subduction reassignment.
+//!    c. Volcanic activity decay → erosion smoothing.
 //! 5. Post-process: compute sea level so ~30% of surface area is land.
 
 use bevy::math::DVec3;
@@ -74,6 +81,22 @@ const TARGET_LAND_FRACTION: f64 = 0.30;
 /// transform rather than convergent/divergent.
 const VELOCITY_THRESHOLD: f64 = 1e-4;
 
+/// Pareto shape parameter for plate growth weight distribution.
+/// Lower α → more extreme size variation. α ≈ 1.0–1.5 is Earth-like.
+const PLATE_SIZE_PARETO_ALPHA: f64 = 1.3;
+
+/// Maximum ratio between the largest and smallest plate growth weight.
+/// Caps the Pareto tail to prevent one plate dominating the entire surface.
+const MAX_PLATE_WEIGHT_RATIO: f64 = 15.0;
+
+/// Probability per step that an oceanic cell at a convergent boundary is
+/// consumed by the overriding continental plate (subduction advance rate).
+const SUBDUCTION_RATE: f64 = 0.03;
+
+/// Minimum plate size as a fraction of total cells. Plates below this
+/// threshold are protected from further subduction consumption.
+const MIN_PLATE_FRACTION: f64 = 0.01;
+
 // ---------------------------------------------------------------------------
 // Plate data
 // ---------------------------------------------------------------------------
@@ -119,11 +142,13 @@ where
     let steps = data.config.tectonic_steps;
 
     let plates = init_plates(data, seed);
-    let boundary_normals = precompute_boundary_normals(data);
 
     for step in 0..steps {
+        // Recompute each step: plate assignments shift due to subduction.
+        let boundary_normals = precompute_boundary_normals(data);
         detect_boundaries(data, &plates, &boundary_normals);
         apply_boundary_forces(data);
+        subduction_reassign(data, step);
         update_volcanic_activity(data);
         erode(data);
         progress(step);
@@ -154,15 +179,23 @@ fn init_plates(data: &mut PlanetData, seed: u64) -> Vec<Plate> {
         })
         .collect();
 
-    // Assign each cell to the nearest seed via BFS flood-fill.
-    // This guarantees contiguous plates (unlike nearest-centroid).
-    let plate_id = bfs_flood_fill(&data.grid, &seeds);
+    // Power-law growth weights give Earth-like plate size variation.
+    let weights = generate_plate_weights(&mut rng, n_plates);
 
-    // Build Plate structs with random properties.
+    // Assign each cell via weighted BFS flood-fill.
+    let plate_id = weighted_bfs_flood_fill(&data.grid, &seeds, &weights);
+
+    // Build Plate structs with size-biased properties.
+    let min_w = weights.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_w = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let weight_range = max_w - min_w + 1e-10;
+
     let plates: Vec<Plate> = (0..n_plates)
-        .map(|_| {
-            // 70% chance of oceanic.
-            let crust_type = if rng.random::<f64>() < 0.70 {
+        .map(|p| {
+            // Larger plates are more likely oceanic (like Earth's Pacific).
+            let weight_frac = (weights[p] - min_w) / weight_range;
+            let oceanic_prob = 0.40 + weight_frac * 0.50;
+            let crust_type = if rng.random::<f64>() < oceanic_prob {
                 CrustType::Oceanic
             } else {
                 CrustType::Continental
@@ -212,11 +245,43 @@ fn fibonacci_sphere_points(n: usize, seed: u64) -> Vec<DVec3> {
         .collect()
 }
 
-/// BFS flood-fill from `seeds` to assign every cell a plate id.
+/// Generate per-plate growth weights from a Pareto (power-law) distribution.
 ///
-/// Each seed initialises a queue frontier. The BFS alternately expands each
-/// frontier until all cells are assigned, producing roughly Voronoi regions.
-fn bfs_flood_fill(grid: &crate::planet::grid::IcosahedralGrid, seeds: &[DVec3]) -> Vec<u8> {
+/// Returns weights in `[1.0, MAX_PLATE_WEIGHT_RATIO]` — the ratio between the
+/// largest and smallest controls the plate size variance. A Pareto with
+/// α ≈ 1.3 produces a few dominant plates and many small ones, mirroring
+/// Earth's tectonic plate size distribution.
+fn generate_plate_weights(rng: &mut SmallRng, n: usize) -> Vec<f64> {
+    let mut weights: Vec<f64> = (0..n)
+        .map(|_| {
+            // Inverse-CDF of Pareto(x_min=1, α): X = 1 / U^(1/α).
+            let u = rng.random_range(0.01_f64..1.0_f64);
+            1.0_f64 / u.powf(1.0 / PLATE_SIZE_PARETO_ALPHA)
+        })
+        .collect();
+
+    // Clamp the Pareto tail: no weight exceeds MAX_PLATE_WEIGHT_RATIO × minimum.
+    let min_w = weights.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_allowed = min_w * MAX_PLATE_WEIGHT_RATIO;
+    for w in weights.iter_mut() {
+        if *w > max_allowed {
+            *w = max_allowed;
+        }
+    }
+
+    weights
+}
+
+/// Weighted BFS flood-fill from `seeds` to assign every cell a plate id.
+///
+/// Each seed initialises a queue frontier. Each round, plate `p` expands
+/// `floor(weight[p] + accumulated_fraction)` cells from its frontier.
+/// High-weight plates grow faster, producing larger final regions.
+fn weighted_bfs_flood_fill(
+    grid: &crate::planet::grid::IcosahedralGrid,
+    seeds: &[DVec3],
+    weights: &[f64],
+) -> Vec<u8> {
     let n = grid.cell_count();
     let n_plates = seeds.len();
     let mut plate_id: Vec<i16> = vec![-1; n];
@@ -231,18 +296,25 @@ fn bfs_flood_fill(grid: &crate::planet::grid::IcosahedralGrid, seeds: &[DVec3]) 
         }
     }
 
-    // Round-robin BFS: expand each plate one step at a time for fairness.
+    // Weighted BFS: each plate expands proportionally to its weight.
+    let mut accumulators = vec![0.0_f64; n_plates];
     let mut remaining = n.saturating_sub(n_plates);
     while remaining > 0 {
         let mut made_progress = false;
         for (p, queue) in queues.iter_mut().enumerate() {
-            if let Some(current) = queue.pop_front() {
-                for &nb in grid.cell_neighbors(CellId(current)) {
-                    if plate_id[nb as usize] < 0 {
-                        plate_id[nb as usize] = p as i16;
-                        queue.push_back(nb);
-                        remaining -= 1;
-                        made_progress = true;
+            accumulators[p] += weights[p];
+            let n_expand = accumulators[p] as usize;
+            accumulators[p] -= n_expand as f64;
+
+            for _ in 0..n_expand {
+                if let Some(current) = queue.pop_front() {
+                    for &nb in grid.cell_neighbors(CellId(current)) {
+                        if plate_id[nb as usize] < 0 {
+                            plate_id[nb as usize] = p as i16;
+                            queue.push_back(nb);
+                            remaining -= 1;
+                            made_progress = true;
+                        }
                     }
                 }
             }
@@ -473,6 +545,90 @@ fn erode(data: &mut PlanetData) {
 }
 
 // ---------------------------------------------------------------------------
+// Subduction — boundary deformation
+// ---------------------------------------------------------------------------
+
+/// Reassign oceanic cells at convergent boundaries to the overriding
+/// continental plate, simulating subduction advance.
+///
+/// For each convergent boundary cell with oceanic crust that has a
+/// continental neighbour on a different plate, there is a small probability
+/// per step (`SUBDUCTION_RATE`) of reassignment. Plates below
+/// `MIN_PLATE_FRACTION` of total cells are protected from further consumption.
+fn subduction_reassign(data: &mut PlanetData, step: u32) {
+    let n = data.grid.cell_count();
+    let min_plate_size = ((n as f64) * MIN_PLATE_FRACTION).max(1.0) as usize;
+
+    // Count current plate sizes.
+    let n_plates = *data.plate_id.iter().max().unwrap_or(&0) as usize + 1;
+    let mut plate_sizes = vec![0_usize; n_plates];
+    for &pid in &data.plate_id {
+        plate_sizes[pid as usize] += 1;
+    }
+
+    // Collect reassignments first, then apply (avoids order-dependent results).
+    let mut reassignments: Vec<(usize, u8)> = Vec::new();
+
+    for i in 0..n {
+        if data.boundary_type[i] != BoundaryType::Convergent {
+            continue;
+        }
+        if data.crust_type[i] != CrustType::Oceanic {
+            continue;
+        }
+
+        let my_plate = data.plate_id[i] as usize;
+        if plate_sizes[my_plate] <= min_plate_size {
+            continue;
+        }
+
+        // Find a continental neighbour from a different plate.
+        let id = CellId(i as u32);
+        let mut target_plate: Option<u8> = None;
+        for &nb in data.grid.cell_neighbors(id) {
+            let nb_idx = nb as usize;
+            if data.plate_id[nb_idx] != data.plate_id[i]
+                && data.crust_type[nb_idx] == CrustType::Continental
+            {
+                target_plate = Some(data.plate_id[nb_idx]);
+                break;
+            }
+        }
+
+        if let Some(new_plate) = target_plate {
+            let roll = subduction_noise(data.config.seed, i, step);
+            if roll < SUBDUCTION_RATE {
+                reassignments.push((i, new_plate));
+            }
+        }
+    }
+
+    // Apply all reassignments.
+    for &(cell, new_plate) in &reassignments {
+        let old_plate = data.plate_id[cell] as usize;
+        // Double-check minimum size (other reassignments this step may have
+        // already shrunk the plate).
+        if plate_sizes[old_plate] <= min_plate_size {
+            continue;
+        }
+        plate_sizes[old_plate] -= 1;
+        plate_sizes[new_plate as usize] += 1;
+        data.plate_id[cell] = new_plate;
+    }
+}
+
+/// Deterministic per-cell-per-step noise in [0, 1) for subduction rolls.
+fn subduction_noise(seed: u64, cell: usize, step: u32) -> f64 {
+    let h = seed
+        .wrapping_add(cell as u64)
+        .wrapping_mul(0x517c_c1b7_2722_0a95)
+        .wrapping_add((step as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+        .rotate_left(23)
+        ^ 0xdead_beef_1234_5678;
+    h as f64 / u64::MAX as f64
+}
+
+// ---------------------------------------------------------------------------
 // Post-processing
 // ---------------------------------------------------------------------------
 
@@ -693,5 +849,108 @@ mod tests {
         let mut planet = small_planet(8);
         run_tectonics(&mut planet, |_| {});
         assert_eq!(planet.boundary_type.len(), planet.grid.cell_count());
+    }
+
+    #[test]
+    fn plate_sizes_are_varied() {
+        // Use a higher grid level so plate sizes are statistically meaningful.
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 4, // 2562 cells
+            tectonic_steps: 30,
+            ..Default::default()
+        };
+        let mut planet = PlanetData::new(config);
+        run_tectonics(&mut planet, |_| {});
+
+        let n_plates = *planet.plate_id.iter().max().unwrap() as usize + 1;
+        let mut sizes = vec![0_usize; n_plates];
+        for &pid in &planet.plate_id {
+            sizes[pid as usize] += 1;
+        }
+
+        let min_size = *sizes.iter().min().unwrap() as f64;
+        let max_size = *sizes.iter().max().unwrap() as f64;
+        let ratio = max_size / min_size.max(1.0);
+
+        assert!(
+            ratio > 3.0,
+            "Plate size max/min ratio {ratio:.1} too low (expected >3); sizes: {sizes:?}"
+        );
+
+        // Coefficient of variation should be substantial.
+        let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+        let variance = sizes
+            .iter()
+            .map(|&s| (s as f64 - mean).powi(2))
+            .sum::<f64>()
+            / sizes.len() as f64;
+        let cv = variance.sqrt() / mean;
+        assert!(
+            cv > 0.3,
+            "Plate size coefficient of variation {cv:.3} too low (expected >0.3)"
+        );
+    }
+
+    #[test]
+    fn weighted_bfs_respects_weights() {
+        // Directly test weighted BFS: a plate with 10× weight should be much larger.
+        let config = PlanetConfig {
+            seed: 1,
+            grid_level: 3, // 642 cells
+            ..Default::default()
+        };
+        let grid = crate::planet::grid::IcosahedralGrid::new(config.grid_level);
+        let seeds = fibonacci_sphere_points(4, 1);
+        let weights = vec![1.0, 1.0, 10.0, 1.0];
+        let plate_id = weighted_bfs_flood_fill(&grid, &seeds, &weights);
+
+        let mut sizes = [0_usize; 4];
+        for &pid in &plate_id {
+            sizes[pid as usize] += 1;
+        }
+
+        // Plate 2 (weight 10) should be the largest.
+        let max_plate = sizes.iter().enumerate().max_by_key(|&(_, &s)| s).unwrap().0;
+        assert_eq!(
+            max_plate, 2,
+            "Plate 2 (weight 10) should be largest; sizes: {sizes:?}"
+        );
+        // And substantially larger than the smallest.
+        let min_size = *sizes.iter().min().unwrap();
+        assert!(
+            sizes[2] > min_size * 3,
+            "Weight-10 plate ({}) should be >3× smallest ({min_size}); sizes: {sizes:?}",
+            sizes[2]
+        );
+    }
+
+    #[test]
+    fn subduction_noise_deterministic_and_in_range() {
+        for cell in 0..100 {
+            for step in 0..10 {
+                let v1 = subduction_noise(42, cell, step);
+                let v2 = subduction_noise(42, cell, step);
+                assert_eq!(v1, v2, "Subduction noise must be deterministic");
+                assert!(
+                    (0.0..1.0).contains(&v1),
+                    "Subduction noise {v1} out of [0, 1)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generate_weights_clamped_to_max_ratio() {
+        let mut rng = SmallRng::seed_from_u64(999);
+        let weights = generate_plate_weights(&mut rng, 20);
+        let min_w = weights.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_w = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let ratio = max_w / min_w;
+        assert!(
+            ratio <= MAX_PLATE_WEIGHT_RATIO + 0.001,
+            "Weight ratio {ratio:.2} exceeds cap {MAX_PLATE_WEIGHT_RATIO}"
+        );
+        assert!(min_w >= 1.0, "Minimum weight {min_w} below 1.0");
     }
 }

@@ -9,15 +9,15 @@
 ## Implementation Status
 
 The standalone planetary generation pipeline is **complete** in `src/planet/`,
-runnable via `cargo run --bin worldgen`. It implements sections 3.3, 8.1–8.8 of
+runnable via `cargo run --bin worldgen`. It implements sections 3.3, 8.1–8.9 of
 this design document as a 7-phase pipeline:
 
 | Phase | Design Section | Module | Description |
 |-------|---------------|--------|-------------|
 | 1 | §3.3 | `grid.rs` | Icosahedral geodesic grid with configurable subdivision level |
-| 2 | §8.2–8.6 | `tectonics.rs` | Plate tectonic simulation (Voronoi seeding, boundary detection, orogenesis, erosion) |
-| 3 | §8.7 | `impacts.rs` | Astronomical impact events (minor/major/catastrophic/giant impacts) |
-| 4 | §8.8 | `celestial.rs` | Celestial system generation (star, moons, rings, Keplerian orbits, tidal forces) |
+| 2 | §8.2–8.7 | `tectonics.rs` | Plate tectonic simulation (weighted BFS seeding, power-law size distribution, dynamic-boundary subduction, orogenesis, erosion) |
+| 3 | §8.8 | `impacts.rs` | Astronomical impact events (minor/major/catastrophic/giant impacts) |
+| 4 | §8.9 | `celestial.rs` | Celestial system generation (star, moons, rings, Keplerian orbits, tidal forces) |
 | 5 | — | `biomes.rs`, `geology.rs` | Climate/biome classification + geological layering and ore deposits |
 | 6 | — | `render.rs` | Interactive 3D globe viewer (Bevy app with orbital camera, colour modes) |
 | 7 | — | `projections.rs` | 2D map projection export (equirectangular, Mollweide, orthographic) + animation |
@@ -298,8 +298,9 @@ World Seed
     │
     ▼
 ┌─────────────────────────────┐
-│  1. Plate Initialisation    │  Seed → 8–15 plates as Voronoi regions
-│     (~160K cells)           │  Each plate: velocity vector, type (continental/oceanic)
+│  1. Plate Initialisation    │  Seed → 8–15 plates via weighted BFS flood-fill
+│     (~160K cells)           │  Growth weights drawn from Pareto distribution (α=1.3)
+│                             │  Each plate: velocity vector, type (continental/oceanic)
 └─────────────┬───────────────┘
               │
               ▼
@@ -322,11 +323,25 @@ World Seed
 └─────────────────────────────┘
 ```
 
-### 8.3 Tectonic Simulation Detail
+### 8.3 Plate Initialisation Detail
+
+Plate centres are seeded using a Fibonacci sphere lattice for near-uniform coverage, then cells are
+assigned via **weighted BFS flood-fill**. Each plate's growth weight is sampled from a
+**Pareto power-law distribution** (shape α = 1.3, max weight ratio capped at 15×). This naturally
+produces a small number of very large plates and many small ones — mirroring Earth's observed
+plate size distribution. Larger plates are biased toward oceanic crust (analogous to Earth's
+Pacific Plate), while smaller plates skew continental.
+
+### 8.4 Tectonic Simulation Detail
+
+The model uses a **dynamic-boundary** approach: plate assignments are not fixed after
+initialisation. Each step, subduction can consume cells at convergent boundaries, shifting
+plate extents over time.
 
 Each simulation step:
 
-1. **Move plates:** Shift each plate's cells along its velocity vector. Plates can rotate slowly over time.
+1. **Recompute boundary normals:** Because subduction shifts plate boundaries each step, normals
+   are recomputed at the start of every iteration rather than cached.
 
 2. **Detect boundaries:** For each cell, check if any neighbor belongs to a different plate. Classify the boundary:
    - **Convergent:** Plates moving toward each other → mountain building (orogenesis)
@@ -340,11 +355,16 @@ Each simulation step:
    - Divergent: Lower elevation at rift. Thin crust. Volcanic activity.
    - Transform: No elevation change. Fault line marked. Earthquake potential stored.
 
-4. **Global erosion pass:** Smooth heightmap slightly each step. River-like erosion from high to low elevation. Sediment accumulation in basins.
+4. **Subduction boundary deformation:** Oceanic cells at convergent boundaries have a ~3% per step
+   probability of being consumed by the overriding continental plate. This advances the subduction
+   front over time, producing irregular boundaries and further varying plate sizes. Plates that
+   fall below 1% of total surface cells are protected from further consumption.
 
-5. **Thermal evolution:** Track geological age per cell. Older crust is cooler, thicker, more stable. Younger crust is thinner, more volcanically active.
+5. **Global erosion pass:** Smooth heightmap slightly each step. River-like erosion from high to low elevation. Sediment accumulation in basins.
 
-### 8.4 Geological Layering
+6. **Thermal evolution:** Track geological age per cell. Older crust is cooler, thicker, more stable. Younger crust is thinner, more volcanically active.
+
+### 8.5 Geological Layering
 
 After tectonic simulation, each column gets a vertical geological profile:
 
@@ -361,7 +381,7 @@ The exact layer thicknesses and compositions vary based on:
 - **Age:** Older crust has more metamorphic rock at depth
 - **Volcanic activity:** Intrusions of igneous rock, ore veins along fault boundaries
 
-### 8.5 Resource Placement
+### 8.6 Resource Placement
 
 Mineral and ore deposits are placed geologically rather than randomly:
 
@@ -377,7 +397,7 @@ Mineral and ore deposits are placed geologically rather than randomly:
 
 This gives resource distribution a logical, discoverable pattern — players can learn that "gold is found near fault lines" and use geological reasoning to find deposits.
 
-### 8.6 Computational Cost
+### 8.7 Computational Cost
 
 On a level-8 geodesic grid (~2.6M cells), 200 tectonic steps:
 
@@ -393,11 +413,11 @@ On a level-8 geodesic grid (~2.6M cells), 200 tectonic steps:
 
 This fits comfortably in a "Generating world..." loading screen.
 
-### 8.7 Astronomical Events During World Generation
+### 8.8 Astronomical Events During World Generation
 
 In addition to plate tectonics, a planet's geological history is shaped by astronomical events. These can be simulated as **random punctuated events** injected at various points during the tectonic generation timeline, producing dramatic surface features that tectonics alone cannot explain.
 
-#### 8.7.1 Event Types
+#### 8.8.1 Event Types
 
 **Meteorite Impacts**
 
@@ -434,7 +454,7 @@ Solar activity doesn't directly alter surface geometry but influences atmospheri
 - **Solar flares / coronal mass ejections:** During generation, periodic intense radiation events can be modelled as surface oxidation layers — ancient "rust bands" visible in cliff faces as distinctive red/orange strata.
 - **Stellar luminosity evolution:** The star's brightness changes over geological time. Early dim periods favor ice deposits at lower latitudes; later bright periods push ice to poles. This governs where fossil ice deposits exist underground.
 
-#### 8.7.2 Integration with Tectonic Timeline
+#### 8.8.2 Integration with Tectonic Timeline
 
 Astronomical events are injected into the tectonic simulation as discrete interrupts:
 
@@ -453,7 +473,7 @@ The frequency and severity are controlled by world seed parameters:
 | `giant_impact_chance` | 0.0–0.3 | Probability of a world-defining giant impact. |
 | `solar_activity` | 0.0–1.0 | Intensity of solar weathering effects on surface chemistry. |
 
-#### 8.7.3 Gameplay Consequences
+#### 8.8.3 Gameplay Consequences
 
 Astronomical events during generation create unique exploration opportunities:
 
@@ -463,7 +483,7 @@ Astronomical events during generation create unique exploration opportunities:
 - **Solar weathering strata** are visible in cliff faces, giving the world a sense of deep history
 - **Impact-weakened crust** near old craters has thinner depth to the core — volcanic activity and hot springs are more likely nearby
 
-#### 8.7.4 Computational Cost
+#### 8.8.4 Computational Cost
 
 Astronomical events add negligible cost to generation:
 
@@ -474,7 +494,7 @@ Astronomical events add negligible cost to generation:
 | Solar weathering pass | ~2.6M cell reads + conditional writes |
 | **Total for ~50 impacts + 1 giant + solar** | **~10M additional ops (<1 second)** |
 
-### 8.8 Celestial System Generation
+### 8.9 Celestial System Generation
 
 The world generator doesn't just produce a planet surface — it generates an entire **celestial neighbourhood** from the world seed. Moons, rings, a star, asteroid belts, and background stars are all procedurally determined at world creation time, then simulated at runtime using Keplerian orbital mechanics. These aren't cosmetic — they drive tides, eclipses, night illumination, and sky appearance.
 
@@ -508,7 +528,7 @@ The world seed determines 0–4 moons, each with orbital and physical parameters
 
 **Formation history** (flavour, affects surface features visible in sky):
 - **Capture moon:** Irregular shape, dark surface, inclined orbit
-- **Impact-origin moon** (from giant impact in §8.7): Large, round, close orbit, shares composition with planet crust
+- **Impact-origin moon** (from giant impact in §8.8): Large, round, close orbit, shares composition with planet crust
 - **Co-accretion moon:** Regular orbit, similar composition to planet
 
 Each moon is rendered as a textured sphere in the skybox, with correct phase (illuminated fraction based on star-moon-planet angle), apparent size (angular diameter from orbital distance), and position (from orbital mechanics).
@@ -525,7 +545,7 @@ Rings are generated with probability ~0.15 per world (rare but dramatic):
 | `composition` | Ice, rock, mixed | Colour and brightness of the ring |
 | `inclination` | Matches planet axial tilt | Ring plane visible at angle from surface |
 
-**Formation:** Rings are typically generated as a consequence of a moon being inside the Roche limit, or from a catastrophic impact event (§8.7). The world generation log records the origin.
+**Formation:** Rings are typically generated as a consequence of a moon being inside the Roche limit, or from a catastrophic impact event (§8.8). The world generation log records the origin.
 
 **Gameplay effects:**
 - **Ring shadow bands:** Dense rings cast shadow stripes across the planet surface as the planet rotates. These are periodic bands of reduced sunlight — affecting temperature, crop growth, and creature behavior in shadowed latitudes.
@@ -570,7 +590,7 @@ Generated from two sources:
 - **Asteroid belt debris:** If the system has an asteroid belt, periodic meteor showers occur when the planet's orbit intersects belt debris streams. Predictable, seasonal.
 - **Random interplanetary debris:** Sporadic meteors at low frequency.
 
-Visual: bright streaks across the night sky. Rare large ones impact the surface (small crater events from §8.7, runtime variant).
+Visual: bright streaks across the night sky. Rare large ones impact the surface (small crater events from §8.8, runtime variant).
 
 **Night Sky Illumination**
 
@@ -626,7 +646,7 @@ Added to world seed:
 | `asteroid_belt` | true/false | Random (0.3 probability) |
 | `meteor_shower_frequency` | 0.0–1.0 | 0.5 |
 
-### 8.9 Runtime Geological and Astronomical Events (Future Possibility)
+### 8.10 Runtime Geological and Astronomical Events (Future Possibility)
 
 While tectonic movement and historical impacts are generation-only, the geological and astronomical metadata enables runtime events:
 
@@ -649,8 +669,8 @@ These are all local events using existing voxel manipulation — the tectonic an
 
 **Goal:** Implement plate tectonic simulation as a standalone world generation step.
 
-- Define plate initialisation from world seed (Voronoi regions on sphere)
-- Iterative tectonic simulation: plate movement, boundary detection, height accumulation, erosion
+- Define plate initialisation from world seed (weighted BFS flood-fill, Pareto power-law size distribution)
+- Dynamic-boundary tectonic simulation: boundary detection, height accumulation, subduction deformation, erosion
 - Output: heightmap + crust depth + geological metadata + fault/volcanic zone maps
 - Geological layering: assign rock types and mineral deposits per column
 - Can be developed and tested independently of any grid migration — operates on abstract cell positions
