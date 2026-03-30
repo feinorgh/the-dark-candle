@@ -984,9 +984,11 @@
         "main() — sequential pipeline: new PlanetData → tectonics → impacts → biomes → geology",
         "--stats flag: full output of grid, tectonic, impact, celestial, biome, geology stats",
         "--level, --seed, --radius-km CLI arguments",
-        "--timelapse flag: when combined with --globe, captures TectonicHistory during generation and enables playback mode"
+        "--tectonic-mode <quick|normal|extended>: sets TectonicMode (default: normal)",
+        "--tectonic-age <Gyr>: simulated geological age in billions of years (default: 3.0)",
+        "--timelapse flag: when combined with --globe, captures TectonicHistory and enables playback mode"
       ],
-      "notes": "Full pipeline at level 4 (2562 cells) runs in ~11 ms. Level 7 (163842 cells) ~400 ms. Run with: cargo run --bin worldgen -- --seed 42 --level 4 --stats. Time-lapse: --globe --timelapse captures tectonic evolution snapshots.",
+      "notes": "Full pipeline at level 4 (2562 cells) runs in ~11 ms. Level 7 (163842 cells) ~400 ms. Run with: cargo run --bin worldgen -- --seed 42 --level 4 --stats. Tectonic modes: quick (~50 steps, 0.2s), normal (~200 steps, 0.8s), extended (~600 steps, 2.4s) at level 7. Time-lapse: --globe --timelapse captures tectonic evolution snapshots.",
       "uncertain": false
     },
     {
@@ -1130,7 +1132,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "9b64241",
+    "generated_from_commit": "0cf7c05",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1148,7 +1150,8 @@
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
       "Stefan-Boltzmann energy balance formula fixed in biomes.rs (replaces prior approximation).",
       "Comprehensive README.md with 6 showcase images committed.",
-      "Tectonic simulation upgraded: power-law plate sizes, geological time calibration (SI velocities), acceleration model, time-lapse snapshot capture and playback."
+      "Tectonic simulation upgraded: power-law plate sizes, geological time calibration (SI velocities), acceleration model, time-lapse snapshot capture and playback.",
+      "Worldgen binary: added --tectonic-mode (quick/normal/extended) and --tectonic-age <Gyr> CLI flags."
     ]
   }
 }
