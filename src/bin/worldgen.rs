@@ -55,6 +55,10 @@ struct Args {
     /// Export a rotating orthographic animation to the given path.
     #[arg(long)]
     animate: Option<String>,
+
+    /// Use GPU compute shaders for projection rendering.
+    #[arg(long)]
+    gpu: bool,
 }
 
 fn main() {
@@ -340,7 +344,13 @@ fn main() {
             return;
         };
         let start = std::time::Instant::now();
-        let img = render_projection(&planet, &projection, &mode, args.width);
+        let img = if args.gpu {
+            use the_dark_candle::gpu::render_projection_gpu;
+            println!("Using GPU compute path...");
+            render_projection_gpu(&planet, &projection, &mode, args.width)
+        } else {
+            render_projection(&planet, &projection, &mode, args.width)
+        };
         println!(
             "Projection rendered in {:.2?} ({}×{})",
             start.elapsed(),
@@ -355,7 +365,14 @@ fn main() {
     if let Some(anim_path) = &args.animate {
         let start = std::time::Instant::now();
         println!("Rendering animation ({} frames)...", 360);
-        if let Err(e) = render_animation(&planet, &mode, args.width, 360, anim_path) {
+        let result = if args.gpu {
+            use the_dark_candle::gpu::render_animation_gpu;
+            println!("Using GPU compute path...");
+            render_animation_gpu(&planet, &mode, args.width, 360, anim_path)
+        } else {
+            render_animation(&planet, &mode, args.width, 360, anim_path)
+        };
+        if let Err(e) = result {
             eprintln!("Animation error: {e}");
         } else {
             println!("Animation done in {:.2?} → {anim_path}", start.elapsed());

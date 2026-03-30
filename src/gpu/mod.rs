@@ -8,6 +8,8 @@
 mod context;
 pub mod particles;
 mod renderer;
+pub mod terrain_projection;
 
 pub use context::GpuContext;
 pub use renderer::{GpuRenderParams, GpuRenderer};
+pub use terrain_projection::{GpuProjectionRenderer, render_animation_gpu, render_projection_gpu};
