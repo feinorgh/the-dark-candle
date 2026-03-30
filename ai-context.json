@@ -982,6 +982,24 @@
       ],
       "notes": "Full pipeline at level 4 (2562 cells) runs in ~11 ms. Level 7 (163842 cells) ~400 ms. Run with: cargo run --bin worldgen -- --seed 42 --level 4 --stats",
       "uncertain": false
+    },
+    {
+      "name": "Interactive globe renderer",
+      "module": "planet",
+      "status": "complete",
+      "paths": [
+        "src/planet/render.rs",
+        "src/bin/worldgen.rs"
+      ],
+      "implements": [
+        "build_globe_mesh(data, mode, exaggeration) \u2014 geodesic cell polygon fan mesh with vertex colors",
+        "run_globe_viewer(data) \u2014 Bevy app with orbital camera, 8 colour modes, star/moon/ring overlays",
+        "orbital_camera \u2014 left-drag rotate, scroll zoom via AccumulatedMouseMotion/Scroll",
+        "switch_colour_mode \u2014 keys 1-8, +/- exaggeration, rebuilds mesh on change",
+        "screenshot_system \u2014 F12 saves PNG via Bevy screenshot API"
+      ],
+      "notes": "7 unit tests. Colour modes: elevation, biome, plates, geological age, crust depth, tidal amplitude, rock, temperature. CLI: --globe flag.",
+      "uncertain": false
     }
   ],
   "tech_debt": [
