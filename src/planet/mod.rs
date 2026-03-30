@@ -9,6 +9,7 @@
 
 pub mod biomes;
 pub mod celestial;
+pub mod detail;
 pub mod geology;
 pub mod grid;
 pub mod impacts;

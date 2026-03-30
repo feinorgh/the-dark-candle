@@ -2,6 +2,8 @@
 //!
 //! Renders planetary data as equirectangular, Mollweide, or orthographic
 //! projection images. Uses a spatial index for fast nearest-cell lookups.
+//! When detail is enabled (default), applies IDW interpolation, procedural
+//! noise, and hillshading for realistic terrain relief.
 
 use std::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 
@@ -9,8 +11,11 @@ use bevy::math::DVec3;
 use image::{Rgb, RgbImage};
 
 use super::PlanetData;
+use super::detail::{
+    HillshadeParams, TerrainNoise, hillshade_pixel, lat_lon_to_pos, sample_detailed_elevation,
+};
 use super::grid::{CellId, IcosahedralGrid};
-use super::render::{ColourMode, cell_color};
+use super::render::{ColourMode, cell_color, elevation_color};
 
 // ─── Projection types ─────────────────────────────────────────────────────────
 
@@ -210,7 +215,8 @@ fn color_f32_to_rgb(c: [f32; 4]) -> Rgb<u8> {
 
 /// Render a map projection of planet data as an RGB image.
 ///
-/// The image height is determined by the projection's natural aspect ratio.
+/// Uses two-pass rendering: first computes detailed elevation at every pixel
+/// (interpolated + noise), then applies hillshading and colour mapping.
 pub fn render_projection(
     data: &PlanetData,
     projection: &Projection,
@@ -219,15 +225,61 @@ pub fn render_projection(
 ) -> RgbImage {
     let height = projection.natural_height(width);
     let index = SpatialIndex::new(&data.grid);
-    let mut img = RgbImage::from_pixel(width, height, BACKGROUND);
+    let noise = TerrainNoise::new(data.config.seed);
+    let w = width as usize;
+    let h = height as usize;
+
+    // Pass 1: compute detailed elevation and nearest-cell for every pixel.
+    let mut elevations = vec![f64::NAN; w * h];
+    let mut cells = vec![0usize; w * h];
 
     for y in 0..height {
         for x in 0..width {
             if let Some((lat, lon)) = projection.inverse(x, y, width, height) {
                 let cell = index.nearest_cell(&data.grid, lat, lon);
-                let color = cell_color(data, cell.index(), mode);
-                img.put_pixel(x, y, color_f32_to_rgb(color));
+                let pos = lat_lon_to_pos(lat, lon);
+                let (elev, ci) = sample_detailed_elevation(data, &noise, pos, cell);
+                let idx = y as usize * w + x as usize;
+                elevations[idx] = elev;
+                cells[idx] = ci;
             }
+        }
+    }
+
+    // Approximate ground distance per pixel (using equatorial circumference).
+    let cell_size_m = PI * data.config.radius_m / h as f64;
+
+    // Pass 2: hillshade and colour.
+    let hs = HillshadeParams::default();
+    let z_factor = 15.0;
+    let mut img = RgbImage::from_pixel(width, height, BACKGROUND);
+
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y as usize * w + x as usize;
+            if elevations[idx].is_nan() {
+                continue;
+            }
+
+            let shade = hillshade_pixel(
+                &elevations,
+                x as usize,
+                y as usize,
+                w,
+                h,
+                cell_size_m,
+                z_factor,
+                &hs,
+            );
+
+            // Use detailed elevation for Elevation mode; nearest cell for others.
+            let base = match mode {
+                ColourMode::Elevation => elevation_color(elevations[idx]),
+                _ => cell_color(data, cells[idx], mode),
+            };
+
+            let shaded = [base[0] * shade, base[1] * shade, base[2] * shade, base[3]];
+            img.put_pixel(x, y, color_f32_to_rgb(shaded));
         }
     }
 
@@ -248,20 +300,63 @@ pub fn render_animation(
     use crate::diagnostics::video::FrameEncoder;
 
     let height = width; // orthographic is 1:1
+    let w = width as usize;
+    let h = height as usize;
     let index = SpatialIndex::new(&data.grid);
+    let noise = TerrainNoise::new(data.config.seed);
+    let hs = HillshadeParams::default();
+    let cell_size_m = PI * data.config.radius_m / h as f64;
+    let z_factor = 15.0;
     let mut encoder = FrameEncoder::new(output_path, width, height, 30)?;
+
+    let mut elevations = vec![f64::NAN; w * h];
+    let mut cells = vec![0usize; w * h];
 
     for f in 0..frames {
         let center_lon = TAU * f as f64 / frames as f64;
-        let mut img = RgbImage::from_pixel(width, height, BACKGROUND);
 
+        // Reset buffers.
+        elevations.fill(f64::NAN);
+
+        // Pass 1: elevation.
         for y in 0..height {
             for x in 0..width {
                 if let Some((lat, lon)) = orthographic_inverse(x, y, width, height, center_lon) {
                     let cell = index.nearest_cell(&data.grid, lat, lon);
-                    let color = cell_color(data, cell.index(), mode);
-                    img.put_pixel(x, y, color_f32_to_rgb(color));
+                    let pos = lat_lon_to_pos(lat, lon);
+                    let (elev, ci) = sample_detailed_elevation(data, &noise, pos, cell);
+                    let idx = y as usize * w + x as usize;
+                    elevations[idx] = elev;
+                    cells[idx] = ci;
                 }
+            }
+        }
+
+        // Pass 2: hillshade + colour.
+        let mut img = RgbImage::from_pixel(width, height, BACKGROUND);
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y as usize * w + x as usize;
+                if elevations[idx].is_nan() {
+                    continue;
+                }
+
+                let shade = hillshade_pixel(
+                    &elevations,
+                    x as usize,
+                    y as usize,
+                    w,
+                    h,
+                    cell_size_m,
+                    z_factor,
+                    &hs,
+                );
+                let base = match mode {
+                    ColourMode::Elevation => elevation_color(elevations[idx]),
+                    _ => cell_color(data, cells[idx], mode),
+                };
+                let shaded = [base[0] * shade, base[1] * shade, base[2] * shade, base[3]];
+                img.put_pixel(x, y, color_f32_to_rgb(shaded));
             }
         }
 

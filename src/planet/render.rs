@@ -92,7 +92,7 @@ fn lerp_rgb(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-fn elevation_color(elev: f64) -> [f32; 4] {
+pub(crate) fn elevation_color(elev: f64) -> [f32; 4] {
     let e = elev as f32;
     let rgb = if e < -4000.0 {
         [0.05, 0.05, 0.3]
@@ -207,32 +207,41 @@ fn temperature_color(temp_k: f32) -> [f32; 4] {
 /// Each geodesic cell becomes a polygon fan of 5 (pentagon) or 6 (hexagon)
 /// triangles. Ring vertices sit at the spherical centroids of the Delaunay
 /// triangles meeting at each cell. Positions are displaced radially by
-/// `elevation × exaggeration / radius`.
+/// `elevation × exaggeration / radius`. Procedural noise adds sub-cell
+/// detail, and normals are computed from the displaced geometry.
 pub fn build_globe_mesh(data: &PlanetData, mode: &ColourMode, exaggeration: f64) -> Mesh {
+    use super::detail::{TerrainNoise, terrain_roughness};
+
     let n = data.grid.cell_count();
     let radius = data.config.radius_m;
+    let noise = TerrainNoise::new(data.config.seed);
 
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(7 * n);
-    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(7 * n);
     let mut colors: Vec<[f32; 4]> = Vec::with_capacity(7 * n);
     let mut indices: Vec<u32> = Vec::with_capacity(18 * n);
 
     for ci in 0..n {
         let cell_pos = data.grid.cell_position(CellId(ci as u32));
         let cell_elev = data.elevation[ci];
-        let cell_r = 1.0 + exaggeration * cell_elev / radius;
+        let roughness = terrain_roughness(
+            data.biome[ci],
+            cell_elev,
+            data.volcanic_activity[ci],
+            data.boundary_type[ci],
+        );
+
+        let cell_noise = noise.sample(cell_pos, roughness);
+        let cell_r = 1.0 + exaggeration * (cell_elev + cell_noise) / radius;
         let center = cell_pos * cell_r;
-        let normal = [cell_pos.x as f32, cell_pos.y as f32, cell_pos.z as f32];
         let color = cell_color(data, ci, mode);
 
         let base_idx = positions.len() as u32;
 
         // Center vertex.
         positions.push([center.x as f32, center.y as f32, center.z as f32]);
-        normals.push(normal);
         colors.push(color);
 
-        // Ring vertices at triangle centroids.
+        // Ring vertices at triangle centroids with noise.
         let neighbors = data.grid.cell_neighbors(CellId(ci as u32));
         let nn = neighbors.len();
         let nn_u32 = nn as u32;
@@ -245,11 +254,11 @@ pub fn build_globe_mesh(data: &PlanetData, mode: &ColourMode, exaggeration: f64)
                 + data.elevation[neighbors[j] as usize]
                 + data.elevation[neighbors[(j + 1) % nn] as usize])
                 / 3.0;
-            let v_r = 1.0 + exaggeration * avg_elev / radius;
+            let ring_noise = noise.sample(centroid, roughness);
+            let v_r = 1.0 + exaggeration * (avg_elev + ring_noise) / radius;
             let v = centroid * v_r;
 
             positions.push([v.x as f32, v.y as f32, v.z as f32]);
-            normals.push([centroid.x as f32, centroid.y as f32, centroid.z as f32]);
             colors.push(color);
         }
 
@@ -261,6 +270,9 @@ pub fn build_globe_mesh(data: &PlanetData, mode: &ColourMode, exaggeration: f64)
         }
     }
 
+    // Compute smooth normals from the actual displaced geometry.
+    let normals = compute_smooth_normals(&positions, &indices);
+
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -270,6 +282,45 @@ pub fn build_globe_mesh(data: &PlanetData, mode: &ColourMode, exaggeration: f64)
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
+}
+
+/// Compute smooth normals by accumulating face normals at shared vertices.
+fn compute_smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+    let mut normals = vec![[0.0f32; 3]; positions.len()];
+
+    for tri in indices.chunks_exact(3) {
+        let a = positions[tri[0] as usize];
+        let b = positions[tri[1] as usize];
+        let c = positions[tri[2] as usize];
+
+        let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let face_n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+
+        for &idx in tri {
+            let n = &mut normals[idx as usize];
+            n[0] += face_n[0];
+            n[1] += face_n[1];
+            n[2] += face_n[2];
+        }
+    }
+
+    for n in &mut normals {
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len > 1e-8 {
+            n[0] /= len;
+            n[1] /= len;
+            n[2] /= len;
+        } else {
+            *n = [0.0, 1.0, 0.0];
+        }
+    }
+
+    normals
 }
 
 /// Build a flat annular mesh in the XZ plane (for planetary rings).
