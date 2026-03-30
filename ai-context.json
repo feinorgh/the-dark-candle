@@ -1,7 +1,7 @@
 {
   "project": {
     "name": "The Dark Candle",
-    "purpose": "A data-driven voxel game built on Bevy with real-world SI physics, procedural terrain generation, and multi-resolution octree storage. Targets both Linux (Wayland) and Windows.",
+    "purpose": "A data-driven voxel game built on Bevy with real-world SI physics, procedural planetary generation, and multi-resolution octree storage. Targets both Linux (Wayland) and Windows.",
     "stack": {
       "language": "Rust 1.85+ (edition 2024)",
       "framework": "Bevy 0.18",
@@ -943,13 +943,13 @@
       ],
       "implements": [
         "run_biomes(data) — populates temperature_k, precipitation_mm, ocean_proximity, biome",
-        "equatorial_temperature(data) — stellar energy balance: T★×√(R★/2d)×(1-α)^0.25 + 33K greenhouse",
+        "equatorial_temperature(data) — Stefan-Boltzmann energy balance: (L★(1−α)/(16πd²σ))^0.25 + 33K greenhouse",
         "cell_temperatures(data, t_equator) — lat gradient (60K×sin²lat) + lapse rate (6.5K/km)",
         "ocean_proximity_bfs(data) — O(n) BFS from ocean cells, 20-hop linear decay",
         "cell_precipitation(data, temp, prox) — Clausius-Clapeyron humidity × orographic reduction",
         "assign_biomes() — 14-type simplified Whittaker diagram classification"
       ],
-      "notes": "10 unit tests. 14 biomes: Ocean, DeepOcean, IceCap, Tundra, BorealForest, ColdSteppe, TemperateForest, Alpine, TropicalSavanna, TropicalRainforest, HotDesert, ColdDesert, Wetland, Mangrove. Must run before run_geology.",
+      "notes": "20 unit tests. 14 biomes: Ocean, DeepOcean, IceCap, Tundra, BorealForest, ColdSteppe, TemperateForest, Alpine, TropicalSavanna, TropicalRainforest, HotDesert, ColdDesert, Wetland, Mangrove. Earth-like system yields 287.6K (14.4°C) global mean. Must run before run_geology.",
       "uncertain": false
     },
     {
@@ -1099,7 +1099,7 @@
       "rustup default stable (Rust 1.85+)",
       "Install lld linker for fast compile times on Linux"
     ],
-    "test_command": "cargo test --lib (fast, 1147+ tests) OR cargo test (all including integration) OR cargo test --test simulations (simulation scenarios only)",
+    "test_command": "cargo test --lib (fast, 1282+ tests) OR cargo test (all including integration) OR cargo test --test simulations (simulation scenarios only)",
     "build_command": "cargo run --features bevy/dynamic_linking (dev) OR cargo run --release (perf) OR cargo build --target x86_64-pc-windows-gnu --release (Windows cross-compile)"
   },
   "conventions": {
@@ -1118,8 +1118,8 @@
     ]
   },
   "meta": {
-    "generated_date": "2026-03-29",
-    "generated_from_commit": "a6664c8",
+    "generated_date": "2026-03-30",
+    "generated_from_commit": "41440e9",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1128,11 +1128,15 @@
       "WGSL shader internals not audited (only confirmed files exist and are referenced by Rust dispatch code)",
       "VoxelGrid/PerceptionGrid adapter for LOS-based perception not yet implemented (distance-only)",
       "Creature movement is computed but not yet applied through physics solver (MovementIntent stored, not integrated)",
-      "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet"
+      "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
+      "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled — basic latitude/altitude/proximity model only"
     ],
     "last_updated": "2026-03-30",
     "notes": [
-      "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed."
+      "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
+      "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
+      "Stefan-Boltzmann energy balance formula fixed in biomes.rs (replaces prior approximation).",
+      "Comprehensive README.md with 6 showcase images committed."
     ]
   }
 }
