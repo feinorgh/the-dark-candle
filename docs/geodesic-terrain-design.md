@@ -27,6 +27,7 @@ this design document as a 7-phase pipeline:
 - 120+ unit tests, all passing
 - Level 4 (2,562 cells) generates in ~11 ms; level 7 (163,842 cells) in ~2 s
 - Full CLI: `cargo run --bin worldgen -- --seed 42 --level 4 --stats --globe`
+- Tectonic modes: `--tectonic-mode <quick|normal|extended>`, geological age: `--tectonic-age <Gyr>`
 
 **What is NOT yet implemented** (Section 9: Migration Plan):
 - CellGrid trait abstraction (Phase 0)
@@ -760,7 +761,11 @@ The tectonic simulation can now capture **snapshots** at regular intervals and p
 **Usage:**
 
 ```bash
+# Normal mode (default)
 cargo run --bin worldgen -- --globe --timelapse
+
+# Extended mode over 4.5 Gyr for maximum detail
+cargo run --bin worldgen -- --tectonic-mode extended --tectonic-age 4.5 --globe --timelapse
 ```
 
 When the `--timelapse` flag is combined with `--globe`, the simulation records intermediate states during the tectonic phase and enters **playback mode** instead of showing the final result statically.

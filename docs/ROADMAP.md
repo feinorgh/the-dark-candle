@@ -139,6 +139,9 @@ cargo run --bin worldgen -- --seed 42 --level 4 --stats
 # Interactive 3D globe
 cargo run --bin worldgen -- --seed 42 --level 4 --globe
 
+# High-fidelity extended simulation over 4.5 Gyr
+cargo run --bin worldgen -- --seed 42 --level 4 --tectonic-mode extended --tectonic-age 4.5 --globe
+
 # Export map projection
 cargo run --bin worldgen -- --seed 42 --level 4 --projection mollweide --colourmode biome --output world.png
 

@@ -137,6 +137,9 @@ cargo run --release
 # Generate a planet and print statistics
 cargo run --bin worldgen -- --seed 42 --level 6 --stats
 
+# Use a specific tectonic mode and geological age
+cargo run --bin worldgen -- --seed 42 --level 6 --tectonic-mode extended --tectonic-age 4.5 --stats
+
 # Export an elevation map
 cargo run --release --bin worldgen -- \
   --seed 42 --level 6 \
@@ -163,6 +166,8 @@ cargo run --release --bin worldgen -- \
 **Colour modes:** `elevation`, `biome`, `plate`, `geology`, `age`, `crust_depth`, `tidal`
 
 **Projections:** `equirect`, `mollweide`, `orthographic`
+
+**Tectonic modes:** `quick` (50 steps, ~0.2s), `normal` (200 steps, ~0.8s), `extended` (600 steps, ~2.4s) at level 7
 
 ### Run Tests
 

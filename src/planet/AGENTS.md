@@ -57,9 +57,14 @@ run_geology(&mut data);                    // rock types + ores
 cargo run --bin worldgen -- --seed 42 --level 4 --stats
 cargo run --bin worldgen -- --seed 42 --level 4 --globe
 cargo run --bin worldgen -- --seed 42 --level 4 --globe --timelapse
+cargo run --bin worldgen -- --seed 42 --level 4 --tectonic-mode extended --tectonic-age 4.5 --stats
 cargo run --bin worldgen -- --seed 42 --level 4 --projection mollweide --colourmode biome --output world.png
 cargo run --bin worldgen -- --seed 42 --level 4 --animate rotation.mp4 --width 512
 ```
+
+**Tectonic flags:**
+- `--tectonic-mode <quick|normal|extended>` — simulation fidelity (default: `normal`)
+- `--tectonic-age <GYR>` — geological age in billions of years (default: `3.0`)
 
 ## Bevy 0.18 Notes (render.rs)
 
