@@ -54,12 +54,17 @@ pub fn run_biomes(data: &mut PlanetData) {
 
 /// Mean annual temperature at the equator (K) from stellar parameters.
 ///
-/// Zero-dimensional energy balance: T_eq = T★ × √(R★ / 2d) × (1−α)^0.25 + ΔT_GH
+/// Stefan-Boltzmann energy balance: the planet absorbs a fraction (1−α) of the
+/// stellar flux and re-radiates as a black body. Greenhouse warming is added as
+/// a constant offset.
+///
+/// T_eq = ( L★ (1−α) / (16 π d² σ) )^0.25 + ΔT_GH
 fn equatorial_temperature(data: &PlanetData) -> f64 {
-    let star = &data.celestial.star;
+    let luminosity = data.celestial.star.luminosity_w;
     let d = data.celestial.planet_orbit_m;
-    star.temperature_k * (star.radius_m / (2.0 * d)).sqrt() * (1.0 - ALBEDO).powf(0.25)
-        + GREENHOUSE_K
+    let sigma = 5.670_374_419e-8_f64; // Stefan-Boltzmann constant (W/(m²·K⁴))
+    let absorbed = luminosity * (1.0 - ALBEDO) / (16.0 * std::f64::consts::PI * d * d * sigma);
+    absorbed.powf(0.25) + GREENHOUSE_K
 }
 
 /// Per-cell mean annual temperature (K), adjusting for latitude and elevation.
