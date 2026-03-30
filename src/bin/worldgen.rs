@@ -3,6 +3,7 @@
 //! Usage: `cargo run --bin worldgen -- --seed 42 --level 6 --stats`
 
 use clap::Parser;
+use the_dark_candle::planet::TectonicMode;
 use the_dark_candle::planet::biomes::run_biomes;
 use the_dark_candle::planet::geology::{
     ORE_COAL, ORE_COPPER, ORE_GEMS, ORE_GOLD, ORE_IRON, ORE_OIL, ORE_SULFUR, run_geology,
@@ -64,22 +65,44 @@ struct Args {
     /// Captures simulation snapshots for step-by-step playback.
     #[arg(long)]
     timelapse: bool,
+
+    /// Tectonic simulation fidelity: quick, normal, or extended.
+    /// Quick: 50 steps × 60 Myr (~0.2s at level 7).
+    /// Normal: 200 steps × 15 Myr (~0.8s). Extended: 600 steps × 5 Myr (~2.4s).
+    #[arg(long, default_value = "normal", value_name = "MODE")]
+    tectonic_mode: String,
+
+    /// Simulated geological age of the planet in billions of years (Gyr).
+    #[arg(long, default_value_t = 3.0)]
+    tectonic_age: f64,
 }
 
 fn main() {
     let args = Args::parse();
+
+    let tectonic_mode = match args.tectonic_mode.to_lowercase().as_str() {
+        "quick" => TectonicMode::Quick,
+        "extended" => TectonicMode::Extended,
+        _ => TectonicMode::Normal,
+    };
 
     let config = PlanetConfig {
         seed: args.seed,
         grid_level: args.level,
         radius_m: args.radius_km * 1000.0,
         mass_kg: 5.972e24, // Earth-like mass
+        tectonic_mode,
+        tectonic_age_gyr: args.tectonic_age,
         ..Default::default()
     };
 
     println!(
-        "Generating planet (seed={}, level={})...",
-        config.seed, config.grid_level
+        "Generating planet (seed={}, level={}, mode={:?}, age={:.1} Gyr, {} steps)...",
+        config.seed,
+        config.grid_level,
+        config.tectonic_mode,
+        config.tectonic_age_gyr,
+        config.tectonic_steps()
     );
 
     let start = std::time::Instant::now();
