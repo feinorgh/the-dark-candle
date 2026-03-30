@@ -8,6 +8,7 @@
 //! the game and from the standalone `worldgen` binary.
 
 pub mod grid;
+pub mod impacts;
 pub mod tectonics;
 
 use grid::IcosahedralGrid;

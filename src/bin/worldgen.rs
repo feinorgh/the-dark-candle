@@ -3,6 +3,7 @@
 //! Usage: `cargo run --bin worldgen -- --seed 42 --level 6 --stats`
 
 use clap::Parser;
+use the_dark_candle::planet::impacts::run_impacts;
 use the_dark_candle::planet::tectonics::run_tectonics;
 use the_dark_candle::planet::{PlanetConfig, PlanetData};
 
@@ -51,6 +52,11 @@ fn main() {
     run_tectonics(&mut planet, |_| {});
     let tec_elapsed = tec_start.elapsed();
     println!("  Tectonics done in {tec_elapsed:.2?}");
+
+    let imp_start = std::time::Instant::now();
+    run_impacts(&mut planet);
+    let imp_elapsed = imp_start.elapsed();
+    println!("  Impacts done in {imp_elapsed:.2?}");
 
     let elapsed = start.elapsed();
     println!("Total: {elapsed:.2?}");
@@ -131,5 +137,23 @@ fn main() {
             .filter(|&&v| v > 0.01)
             .count();
         println!("    Active volcanic cells: {volcanic}");
+
+        // Impact stats.
+        use the_dark_candle::planet::impacts::generate_impact_events;
+        let events =
+            generate_impact_events(planet.config.bombardment_intensity, planet.config.seed);
+        println!("\n  Impact results:");
+        println!("    Events generated: {}", events.len());
+        if !events.is_empty() {
+            let max_depth = events
+                .iter()
+                .map(|e| e.depth_m)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let max_radius = events
+                .iter()
+                .map(|e| e.radius_cells)
+                .fold(f64::NEG_INFINITY, f64::max);
+            println!("    Largest crater: depth {max_depth:.0} m, radius {max_radius:.1} cells");
+        }
     }
 }
