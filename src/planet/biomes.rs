@@ -240,13 +240,14 @@ mod tests {
     use super::*;
     use crate::planet::impacts::run_impacts;
     use crate::planet::tectonics::run_tectonics;
-    use crate::planet::{PlanetConfig, PlanetData};
+    use crate::planet::{PlanetConfig, PlanetData, TectonicMode};
 
     fn test_planet() -> PlanetData {
         let config = PlanetConfig {
             seed: 42,
             grid_level: 3,
-            tectonic_steps: 30,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.8,
             ..Default::default()
         };
         let mut data = PlanetData::new(config);

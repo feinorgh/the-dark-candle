@@ -59,6 +59,11 @@ struct Args {
     /// Use GPU compute shaders for projection rendering.
     #[arg(long)]
     gpu: bool,
+
+    /// Enable tectonic time-lapse mode in the globe viewer.
+    /// Captures simulation snapshots for step-by-step playback.
+    #[arg(long)]
+    timelapse: bool,
 }
 
 fn main() {
@@ -83,9 +88,20 @@ fn main() {
     println!("  Grid built in {grid_elapsed:.2?}");
 
     let tec_start = std::time::Instant::now();
-    run_tectonics(&mut planet, |_| {});
-    let tec_elapsed = tec_start.elapsed();
-    println!("  Tectonics done in {tec_elapsed:.2?}");
+    let history = if args.timelapse {
+        use the_dark_candle::planet::tectonics::run_tectonics_with_history;
+        let h = run_tectonics_with_history(&mut planet, None, |_| {});
+        println!(
+            "  Tectonics done in {:.2?} ({} frames captured)",
+            tec_start.elapsed(),
+            h.frame_count()
+        );
+        Some(h)
+    } else {
+        run_tectonics(&mut planet, |_| {});
+        println!("  Tectonics done in {:.2?}", tec_start.elapsed());
+        None
+    };
 
     let imp_start = std::time::Instant::now();
     run_impacts(&mut planet);
@@ -381,6 +397,6 @@ fn main() {
 
     if args.globe {
         use the_dark_candle::planet::render::run_globe_viewer;
-        run_globe_viewer(planet);
+        run_globe_viewer(planet, history);
     }
 }

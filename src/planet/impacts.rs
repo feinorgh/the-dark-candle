@@ -289,13 +289,14 @@ fn random_sphere_point(rng: &mut SmallRng) -> DVec3 {
 mod tests {
     use super::*;
     use crate::planet::tectonics::run_tectonics;
-    use crate::planet::{PlanetConfig, PlanetData};
+    use crate::planet::{PlanetConfig, PlanetData, TectonicMode};
 
     fn small_planet(seed: u64) -> PlanetData {
         let config = PlanetConfig {
             seed,
             grid_level: 3,
-            tectonic_steps: 20,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.2,
             bombardment_intensity: 0.5,
             giant_impact_probability: 0.0, // disable for most tests
             ..Default::default()
@@ -471,7 +472,8 @@ mod tests {
         let config = PlanetConfig {
             seed: 42,
             grid_level: 2,
-            tectonic_steps: 10,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 0.6,
             bombardment_intensity: 0.0,
             giant_impact_probability: 0.0,
             ..Default::default()
@@ -521,7 +523,8 @@ mod tests {
         let config = PlanetConfig {
             seed: 7,
             grid_level: 2,
-            tectonic_steps: 5,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 0.3,
             bombardment_intensity: 0.0,
             giant_impact_probability: 1.0, // always trigger
             ..Default::default()

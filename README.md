@@ -45,7 +45,8 @@ terrain detail.
 
 ### 🌍 Planetary Generation
 - **Geodesic grid** — icosahedral subdivision (configurable level 0–8, up to 655 362 cells)
-- **Tectonic simulation** — plate drift, convergent/divergent/transform boundaries, mountain building
+- **Tectonic simulation** — power-law plate sizes, configurable geological time (Quick/Normal/Extended modes), physical plate velocities (2–10 cm/yr SI), subduction deformation, mountain building
+- **Tectonic time-lapse** — step-by-step playback of plate evolution with play/pause, speed control (0.25×–32×), and frame stepping
 - **Impact events** — asteroid craters with ejecta blankets and central peaks
 - **Celestial system** — procedural star, moons, rings, and orbital mechanics
 - **Climate model** — Stefan-Boltzmann energy balance, latitude gradients, altitude lapse rates, ocean proximity
@@ -53,7 +54,7 @@ terrain detail.
 - **10 rock types & 7 ore types** — geological age, metamorphism, and hydrothermal deposits
 - **GPU-accelerated rendering** — WGSL compute shaders for terrain projection (35× speedup at 4K)
 - **Map projections** — equirectangular, Mollweide, orthographic with hillshading
-- **Interactive 3D globe** — Bevy renderer with orbital camera and colour modes
+- **Interactive 3D globe** — Bevy renderer with orbital camera, colour modes, and tectonic time-lapse playback
 
 ### 🧱 Voxel World
 - **Octree chunks** — 32³ base resolution with adaptive multi-resolution subdivision
@@ -151,6 +152,9 @@ cargo run --release --bin worldgen -- \
 # Launch the interactive 3D globe viewer
 cargo run --release --bin worldgen -- --seed 42 --level 6 --globe
 
+# Launch the globe with tectonic time-lapse playback
+cargo run --release --bin worldgen -- --seed 42 --level 6 --globe --timelapse
+
 # Generate a rotating globe animation
 cargo run --release --bin worldgen -- \
   --seed 42 --level 6 --animate --width 1024 --gpu
@@ -163,7 +167,7 @@ cargo run --release --bin worldgen -- \
 ### Run Tests
 
 ```bash
-cargo test --lib                 # 1282 unit tests
+cargo test --lib                 # 1296 unit tests
 cargo test --test simulations    # Physics simulation scenarios
 cargo test --test validate_assets  # Asset loading validation
 ```
@@ -194,7 +198,7 @@ The codebase is organised into focused ECS modules:
 | `simulation/` | Headless tick-based simulation runner for tests |
 | `camera/` | First-person camera controller |
 
-**145 source files · ~48K lines of Rust · 1282+ tests**
+**146 source files · ~60K lines of Rust · 1296+ tests**
 
 ### Data-Driven Design
 

@@ -10,12 +10,12 @@ layering, interactive 3D globe rendering, and 2D map projection export.
 |------|---------|
 | `mod.rs` | Hub: submodule declarations, core enums (BiomeType, RockType, CrustType, BoundaryType), PlanetData, PlanetConfig |
 | `grid.rs` | Icosahedral geodesic grid (subdivision, CellId, cell_position, cell_neighbors, cell_lat_lon, nearest_cell_from_pos) |
-| `tectonics.rs` | Plate tectonic simulation (Voronoi seeding, boundary detection, convergent/divergent/transform, orogenesis, erosion) |
+| `tectonics.rs` | Plate tectonic simulation (power-law seeding, physical velocities 2–10 cm/yr, geological time calibration, boundary detection, orogenesis, subduction, erosion, time-lapse snapshot capture) |
 | `impacts.rs` | Astronomical impacts (crater stamping, ejecta, crust thinning, giant impacts) |
 | `celestial.rs` | Celestial system (Star, Moon, Ring generation, Keplerian orbits, tidal forces) |
 | `biomes.rs` | Climate classification (temperature from latitude/elevation, precipitation, 14 BiomeType variants) |
 | `geology.rs` | Geological layering (RockType assignment by depth/context, ore deposit placement, 7 ore types) |
-| `render.rs` | Interactive 3D globe (Bevy app, polygon fan mesh, orbital camera, 8 ColourMode variants, screenshot) |
+| `render.rs` | Interactive 3D globe (Bevy app, polygon fan mesh, orbital camera, 8 ColourMode variants, screenshot, tectonic time-lapse playback with speed control) |
 | `projections.rs` | 2D map projections (equirectangular, Mollweide, orthographic), SpatialIndex, animation export |
 
 ## Key Types
@@ -24,7 +24,7 @@ layering, interactive 3D globe rendering, and 2D map projection export.
   plate IDs, biomes, geology, celestial system). Passed by `&mut` through the
   pipeline, consumed by the globe viewer.
 - **`PlanetConfig`** — Generation parameters (seed, grid_level, radius_m, mass_kg,
-  tectonic_steps, etc.).
+  tectonic_mode, tectonic_age_gyr, etc.).
 - **`IcosahedralGrid`** — The geodesic grid. Level n = 10×4^n + 2 cells. Exactly
   12 pentagons at all levels. Y-up coordinate convention.
 - **`CellId(u32)`** — Opaque cell identifier. Use `.index()` for array indexing.
@@ -56,6 +56,7 @@ run_geology(&mut data);                    // rock types + ores
 ```bash
 cargo run --bin worldgen -- --seed 42 --level 4 --stats
 cargo run --bin worldgen -- --seed 42 --level 4 --globe
+cargo run --bin worldgen -- --seed 42 --level 4 --globe --timelapse
 cargo run --bin worldgen -- --seed 42 --level 4 --projection mollweide --colourmode biome --output world.png
 cargo run --bin worldgen -- --seed 42 --level 4 --animate rotation.mp4 --width 512
 ```

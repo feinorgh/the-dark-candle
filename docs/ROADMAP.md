@@ -84,7 +84,7 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 **All 7 original phases are complete.** The codebase has:
 - 110+ source files, ~39,000 lines of Rust (edition 2024)
-- 1270+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
+- 1296+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -108,6 +108,9 @@ identity and territory. Reputation from observed actions. Group behaviors
 | `0e035d5` | Procedural tree generator + biome integration |
 | `c178bc3` | dx-aware radiation in `radiate_chunk` (multiresolution physics) |
 | `6e5679a` | Forest fire demo: 8-tree ring with convection proxy |
+| *wip* | Power-law plate sizes (Pareto α=1.3) + subduction boundary deformation |
+| *wip* | Geological time calibration: TectonicMode (Quick/Normal/Extended), SI plate velocities, acceleration model |
+| *wip* | Tectonic time-lapse visualization: snapshot capture, playback controls in globe viewer |
 
 ### Planetary World Generation Pipeline ✅
 
@@ -121,11 +124,11 @@ Produces a complete, physically consistent planet from a seed, with interactive
 | Phase | File | Description |
 |-------|------|-------------|
 | 1 — Geodesic Grid | `grid.rs` | Icosahedral subdivision with configurable level (10×4^n+2 cells) |
-| 2 — Tectonics | `tectonics.rs` | Plate simulation: Voronoi seeding, boundary detection, orogenesis, erosion |
+| 2 — Tectonics | `tectonics.rs` | Plate simulation: power-law size distribution, physical velocities (2–10 cm/yr SI), geological time calibration (Quick/Normal/Extended modes), subduction deformation, orogenesis, erosion, time-lapse snapshot capture |
 | 3 — Impacts | `impacts.rs` | Asteroid/comet impacts: craters, ejecta, crust thinning |
 | 4 — Celestial | `celestial.rs` | Star, moons, rings, Keplerian orbits, tidal forces |
 | 5 — Biomes & Geology | `biomes.rs`, `geology.rs` | Climate zones, 14 biome types, rock strata, 7 ore types |
-| 6 — Globe Renderer | `render.rs` | Bevy 3D globe with orbital camera, 8 colour modes, screenshot |
+| 6 — Globe Renderer | `render.rs` | Bevy 3D globe with orbital camera, 8 colour modes, screenshot, tectonic time-lapse playback (play/pause, 0.25×–32× speed, frame stepping) |
 | 7 — Map Projections | `projections.rs` | Equirectangular, Mollweide, orthographic + rotating animation |
 
 **CLI usage:**
@@ -141,6 +144,9 @@ cargo run --bin worldgen -- --seed 42 --level 4 --projection mollweide --colourm
 
 # Rotating animation
 cargo run --bin worldgen -- --seed 42 --level 4 --animate rotation.mp4 --colourmode elevation
+
+# Interactive globe with tectonic time-lapse playback
+cargo run --bin worldgen -- --seed 42 --level 4 --globe --timelapse
 ```
 
 Full design: **[geodesic-terrain-design.md](geodesic-terrain-design.md)**

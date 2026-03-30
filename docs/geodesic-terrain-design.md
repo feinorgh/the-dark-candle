@@ -9,15 +9,15 @@
 ## Implementation Status
 
 The standalone planetary generation pipeline is **complete** in `src/planet/`,
-runnable via `cargo run --bin worldgen`. It implements sections 3.3, 8.1–8.9 of
+runnable via `cargo run --bin worldgen`. It implements sections 3.3, 8.1–8.10 of
 this design document as a 7-phase pipeline:
 
 | Phase | Design Section | Module | Description |
 |-------|---------------|--------|-------------|
 | 1 | §3.3 | `grid.rs` | Icosahedral geodesic grid with configurable subdivision level |
-| 2 | §8.2–8.7 | `tectonics.rs` | Plate tectonic simulation (weighted BFS seeding, power-law size distribution, dynamic-boundary subduction, orogenesis, erosion) |
-| 3 | §8.8 | `impacts.rs` | Astronomical impact events (minor/major/catastrophic/giant impacts) |
-| 4 | §8.9 | `celestial.rs` | Celestial system generation (star, moons, rings, Keplerian orbits, tidal forces) |
+| 2 | §8.2–8.8 | `tectonics.rs` | Plate tectonic simulation (weighted BFS seeding, power-law size distribution, dynamic-boundary subduction, orogenesis, erosion, geological time calibration) |
+| 3 | §8.9 | `impacts.rs` | Astronomical impact events (minor/major/catastrophic/giant impacts) |
+| 4 | §8.10 | `celestial.rs` | Celestial system generation (star, moons, rings, Keplerian orbits, tidal forces) |
 | 5 | — | `biomes.rs`, `geology.rs` | Climate/biome classification + geological layering and ore deposits |
 | 6 | — | `render.rs` | Interactive 3D globe viewer (Bevy app with orbital camera, colour modes) |
 | 7 | — | `projections.rs` | 2D map projection export (equirectangular, Mollweide, orthographic) + animation |
@@ -305,8 +305,9 @@ World Seed
               │
               ▼
 ┌─────────────────────────────┐
-│  2. Tectonic Simulation     │  50–200 steps (each = ~10M years)
-│     (iterative)             │  Movement → boundary detection → accumulation → erosion
+│  2. Tectonic Simulation     │  Configurable resolution (Quick/Normal/Extended)
+│     (iterative)             │  ~3 Gyr of geological history with physical plate velocities
+│                             │  Movement → boundary detection → accumulation → erosion
 └─────────────┬───────────────┘
               │
               ▼
@@ -364,7 +365,90 @@ Each simulation step:
 
 6. **Thermal evolution:** Track geological age per cell. Older crust is cooler, thicker, more stable. Younger crust is thinner, more volcanically active.
 
-### 8.5 Geological Layering
+### 8.5 Geological Time Calibration
+
+The tectonic simulation is calibrated to real-world geological timescales and operates over approximately **3 billion years** of planetary history. All plate velocities and geological rates use strict **SI units** to ensure physically plausible outcomes.
+
+#### 8.5.1 Physical Plate Velocities
+
+Each tectonic plate moves with an **angular velocity** (rad/year) calibrated to Earth-like surface speeds:
+
+- **Surface speed range:** 2–10 cm/year (0.02–0.10 m/year)
+- **Angular velocity:** ω = v / R, where R is planetary radius (6,371,000 m by default)
+- **Constants:** `MIN_PLATE_SPEED_M_YR = 0.02`, `MAX_PLATE_SPEED_M_YR = 0.10`
+
+This matches observed terrestrial plate velocities (e.g., Pacific Plate ~10 cm/yr, Eurasian Plate ~2 cm/yr). Plate speeds are **not** arbitrary game constants — they emerge from the SI unit system and produce realistic continental drift rates over geological time.
+
+#### 8.5.2 Velocity Evolution Model
+
+Plate velocities are **not static**. Each plate has an `angular_acceleration` (rad/yr²) that causes its velocity to drift over time, modeling the natural variation in plate motion driven by mantle convection changes, slab pull variations, and ridge push fluctuations.
+
+Each simulation step:
+
+1. **Update velocity:** ω_new = ω_old + α × dt_yr
+2. **Clamp to physical range:** Ensure ω ∈ [ω_min, ω_max]
+3. **Bounce at bounds:** If velocity hits min/max, the acceleration component along the velocity direction is reversed (elastic reflection), causing the plate to decelerate and eventually reverse direction naturally
+4. **Perturbation:** Every ~50 Myr, the acceleration vector is randomly perturbed (blended 60/40 with a new random direction) to simulate changes in mantle dynamics
+
+This produces realistic plate behavior: periods of steady motion, gradual slowdowns, directional changes, and occasional reversals — all emergent from the acceleration model rather than hardcoded.
+
+#### 8.5.3 Configurable Time Resolution
+
+The simulation offers **three time resolution modes**, trading speed for detail:
+
+| Mode | dt (Myr/step) | Steps (3 Gyr) | Wall Time | Use Case |
+|------|---------------|---------------|-----------|----------|
+| **Quick** | 60 | 50 | ~0.2 s | Rapid iteration, testing, procedural generation |
+| **Normal** | 15 | 200 | ~0.8 s | Default for gameplay (balanced detail/speed) |
+| **Extended** | 5 | 600 | ~2.4 s | High-fidelity worlds, showcase generation |
+
+Players can configure this via `PlanetConfig`:
+- `tectonic_mode: TectonicMode` (Quick / Normal / Extended)
+- `tectonic_age_gyr: f64` (default 3.0 Gyr)
+
+The number of simulation steps is derived: `steps = (age_gyr × 1000 / dt_myr).round()`.
+
+#### 8.5.4 Time-Scaled Geological Rates
+
+All geological processes scale with the time step to ensure **resolution independence** — the final terrain should look similar regardless of which mode is chosen, just with varying levels of fine detail.
+
+**Reference time step:** dt_ref = 10 Myr. All rates are defined "per million years" and scaled by `dt_scale = dt_myr / 10`.
+
+| Process | Base Rate | Scaling | Physical Unit |
+|---------|-----------|---------|---------------|
+| **Orogenesis** (continental collision) | 8 m/Myr | × dt_myr | meters per step |
+| **Trench formation** (subduction) | 10 m/Myr | × dt_myr | meters per step |
+| **Volcanic arc growth** | 6 m/Myr | × dt_myr | meters per step |
+| **Rift valley subsidence** | 5 m/Myr | × dt_myr | meters per step |
+| **Erosion** (diffusion) | 2% neighbor blend | ^dt_scale | exponential decay |
+| **Volcanic heat gain** | gain × dt_scale | — | heat accumulation |
+| **Subduction probability** | base_prob × dt_scale | — | chance per step |
+
+**Example:** In Quick mode (dt = 60 Myr), orogenic uplift = 8 × 60 = 480 m/step. In Extended mode (dt = 5 Myr), it's 8 × 5 = 40 m/step. Over 3 Gyr, both produce similar total uplift (~24 km), but Extended mode captures finer variation.
+
+This approach ensures that changing resolution affects computational cost and detail granularity, but **not** the fundamental geological outcomes. The same seed produces recognizably similar continents across all three modes.
+
+#### 8.5.5 Geological Age and Real-World Context
+
+The default **3 Gyr** simulation span corresponds to:
+
+- **3.0 Ga** (billion years ago): Late Archean Eon on Earth — first stable continents forming
+- **Present day** (0 Ga): End of simulation
+
+This covers the era of modern-style plate tectonics. Earlier planetary history (Hadean bombardment, magma ocean cooling) is handled separately via initial conditions and the astronomical impact system (§8.8).
+
+The simulation does **not** model:
+- Pre-tectonic planetary differentiation (core-mantle separation)
+- Mantle plume initiation (assumed as an initial condition)
+- Detailed seismic/earthquake mechanics (stored as potential, not simulated)
+
+But it **does** produce:
+- Realistic continental assembly/breakup cycles (Wilson cycles)
+- Mountain ranges comparable to Himalayas/Andes in height and age
+- Ocean basins with age-depth relationships matching mid-ocean ridges
+- Cratons (ancient stable continental cores) that resist deformation over billions of years
+
+### 8.6 Geological Layering
 
 After tectonic simulation, each column gets a vertical geological profile:
 
@@ -381,7 +465,7 @@ The exact layer thicknesses and compositions vary based on:
 - **Age:** Older crust has more metamorphic rock at depth
 - **Volcanic activity:** Intrusions of igneous rock, ore veins along fault boundaries
 
-### 8.6 Resource Placement
+### 8.7 Resource Placement
 
 Mineral and ore deposits are placed geologically rather than randomly:
 
@@ -397,27 +481,33 @@ Mineral and ore deposits are placed geologically rather than randomly:
 
 This gives resource distribution a logical, discoverable pattern — players can learn that "gold is found near fault lines" and use geological reasoning to find deposits.
 
-### 8.7 Computational Cost
+### 8.8 Computational Cost
 
-On a level-8 geodesic grid (~2.6M cells), 200 tectonic steps:
+The computational cost scales linearly with grid size and step count. Example for **Normal mode** (200 steps, dt = 15 Myr) on a level-8 geodesic grid (~2.6M cells):
 
 | Operation | Per Step | Total (200 steps) |
 |-----------|----------|-------------------|
 | Plate movement (vector field) | ~2.6M vector ops | ~520M ops |
+| Velocity evolution (acceleration) | ~10–15 plate updates | ~2K–3K ops |
 | Boundary detection (neighbor check) | ~2.6M × 6 neighbors | ~3.1B ops |
 | Height accumulation/erosion | ~2.6M adds | ~520M ops |
 | Global erosion smoothing | ~2.6M × 6 neighbors | ~3.1B ops |
 | **Total** | | **~7.2B ops** |
 
-**Estimated wall time: 3–10 seconds** on a modern CPU. Trivially parallelizable across cells (each cell reads only neighbor data). GPU compute could reduce this to <1 second.
+**Estimated wall time:**
+- **Quick mode** (50 steps): ~0.8–2 seconds
+- **Normal mode** (200 steps): ~3–10 seconds
+- **Extended mode** (600 steps): ~9–30 seconds
+
+All figures on a modern CPU (single-threaded). The simulation is trivially parallelizable across cells (each cell reads only neighbor data). GPU compute could reduce this to <1 second for all modes.
 
 This fits comfortably in a "Generating world..." loading screen.
 
-### 8.8 Astronomical Events During World Generation
+### 8.9 Astronomical Events During World Generation
 
 In addition to plate tectonics, a planet's geological history is shaped by astronomical events. These can be simulated as **random punctuated events** injected at various points during the tectonic generation timeline, producing dramatic surface features that tectonics alone cannot explain.
 
-#### 8.8.1 Event Types
+#### 8.9.1 Event Types
 
 **Meteorite Impacts**
 
@@ -454,7 +544,7 @@ Solar activity doesn't directly alter surface geometry but influences atmospheri
 - **Solar flares / coronal mass ejections:** During generation, periodic intense radiation events can be modelled as surface oxidation layers — ancient "rust bands" visible in cliff faces as distinctive red/orange strata.
 - **Stellar luminosity evolution:** The star's brightness changes over geological time. Early dim periods favor ice deposits at lower latitudes; later bright periods push ice to poles. This governs where fossil ice deposits exist underground.
 
-#### 8.8.2 Integration with Tectonic Timeline
+#### 8.9.2 Integration with Tectonic Timeline
 
 Astronomical events are injected into the tectonic simulation as discrete interrupts:
 
@@ -473,7 +563,7 @@ The frequency and severity are controlled by world seed parameters:
 | `giant_impact_chance` | 0.0–0.3 | Probability of a world-defining giant impact. |
 | `solar_activity` | 0.0–1.0 | Intensity of solar weathering effects on surface chemistry. |
 
-#### 8.8.3 Gameplay Consequences
+#### 8.9.3 Gameplay Consequences
 
 Astronomical events during generation create unique exploration opportunities:
 
@@ -483,7 +573,7 @@ Astronomical events during generation create unique exploration opportunities:
 - **Solar weathering strata** are visible in cliff faces, giving the world a sense of deep history
 - **Impact-weakened crust** near old craters has thinner depth to the core — volcanic activity and hot springs are more likely nearby
 
-#### 8.8.4 Computational Cost
+#### 8.9.4 Computational Cost
 
 Astronomical events add negligible cost to generation:
 
@@ -494,11 +584,11 @@ Astronomical events add negligible cost to generation:
 | Solar weathering pass | ~2.6M cell reads + conditional writes |
 | **Total for ~50 impacts + 1 giant + solar** | **~10M additional ops (<1 second)** |
 
-### 8.9 Celestial System Generation
+### 8.10 Celestial System Generation
 
 The world generator doesn't just produce a planet surface — it generates an entire **celestial neighbourhood** from the world seed. Moons, rings, a star, asteroid belts, and background stars are all procedurally determined at world creation time, then simulated at runtime using Keplerian orbital mechanics. These aren't cosmetic — they drive tides, eclipses, night illumination, and sky appearance.
 
-#### 8.8.1 Star (Sun) Generation
+#### 8.10.1 Star (Sun) Generation
 
 Each world orbits a procedurally generated star:
 
@@ -511,7 +601,7 @@ Each world orbits a procedurally generated star:
 
 The star's spectral characteristics directly feed the existing sky scattering and sun cycle systems — a cooler, redder star produces different sunset colours, different shadow qualities, and a shifted photosynthesis spectrum (affecting biome colours).
 
-#### 8.8.2 Moon Generation
+#### 8.10.2 Moon Generation
 
 The world seed determines 0–4 moons, each with orbital and physical parameters:
 
@@ -533,7 +623,7 @@ The world seed determines 0–4 moons, each with orbital and physical parameters
 
 Each moon is rendered as a textured sphere in the skybox, with correct phase (illuminated fraction based on star-moon-planet angle), apparent size (angular diameter from orbital distance), and position (from orbital mechanics).
 
-#### 8.8.3 Planetary Rings
+#### 8.10.3 Planetary Rings
 
 Rings are generated with probability ~0.15 per world (rare but dramatic):
 
@@ -552,7 +642,7 @@ Rings are generated with probability ~0.15 per world (rare but dramatic):
 - **Night illumination:** Rings reflect starlight, providing diffuse illumination on the night side. Worlds with bright rings have lighter nights.
 - **Sky spectacle:** From the surface, rings appear as a luminous arc across the sky, changing angle with latitude. Near the ring plane (equatorial latitudes), they appear edge-on (thin line). At high latitudes, they spread across the sky.
 
-#### 8.8.4 Emergent Astronomical Phenomena
+#### 8.10.4 Emergent Astronomical Phenomena
 
 These aren't separately generated — they **emerge** from the orbital mechanics of the generated celestial bodies:
 
@@ -618,7 +708,7 @@ A procedural star field generated from the world seed:
 
 The star field is a static skybox texture generated once. Planet/moon positions are updated each frame from orbital mechanics (cheap — just Kepler's equation).
 
-#### 8.8.5 Orbital Mechanics at Runtime
+#### 8.10.5 Orbital Mechanics at Runtime
 
 All celestial body positions are computed analytically from Keplerian orbits — no N-body simulation needed:
 
@@ -634,7 +724,7 @@ For each body:
 
 Tidal force computation per coastal cell is similarly cheap — a few multiplies per moon per affected cell, computed once per game-hour (not per frame).
 
-#### 8.8.6 Generation Parameters
+#### 8.10.6 Generation Parameters
 
 Added to world seed:
 
@@ -646,7 +736,7 @@ Added to world seed:
 | `asteroid_belt` | true/false | Random (0.3 probability) |
 | `meteor_shower_frequency` | 0.0–1.0 | 0.5 |
 
-### 8.10 Runtime Geological and Astronomical Events (Future Possibility)
+### 8.11 Runtime Geological and Astronomical Events (Future Possibility)
 
 While tectonic movement and historical impacts are generation-only, the geological and astronomical metadata enables runtime events:
 
@@ -660,6 +750,61 @@ While tectonic movement and historical impacts are generation-only, the geologic
 - **Tidal flooding:** Coastal terrain periodically submerged during spring tides, especially when multiple moons align.
 
 These are all local events using existing voxel manipulation — the tectonic and astronomical data tells them *where* and *how likely* to happen.
+
+### 8.12 Tectonic Time-Lapse Visualization
+
+**Goal:** Visualize plate motion, mountain building, and erosion across geological time.
+
+The tectonic simulation can now capture **snapshots** at regular intervals and play them back interactively in the globe viewer as a time-lapse animation. This allows visual validation of tectonic processes and provides an intuitive understanding of how the world evolved.
+
+**Usage:**
+
+```bash
+cargo run --bin worldgen -- --globe --timelapse
+```
+
+When the `--timelapse` flag is combined with `--globe`, the simulation records intermediate states during the tectonic phase and enters **playback mode** instead of showing the final result statically.
+
+**How Snapshots Are Captured:**
+
+- `run_tectonics_with_history()` (in `tectonics.rs`) runs the standard simulation loop but periodically calls `capture_snapshot()` to record:
+  - Per-cell elevation, plate ID, boundary type, crust type, volcanic activity
+- Snapshots are stored in a `TectonicHistory` struct with metadata:
+  - `dt_myr`: time step in millions of years
+  - `total_steps`: total simulation steps
+  - `snapshot_interval`: how often snapshots were taken
+- Target: ≤ 100 keyframes regardless of simulation length (longer simulations skip more steps between snapshots)
+- Memory footprint: ~2.5 MB per snapshot at level 7 (163,842 cells × 15 bytes/cell)
+
+**Playback Controls:**
+
+| Key | Action |
+|-----|--------|
+| **Space** | Play / Pause animation |
+| **Right Arrow** | Step forward one frame |
+| **Left Arrow** | Step backward one frame |
+| **> (Period)** | Double playback speed (max 32×) |
+| **< (Comma)** | Halve playback speed (min 0.25×) |
+| **Home** | Jump to first frame (planet formation) |
+| **End** | Jump to last frame (final state) |
+| **1–8** | Switch colour mode (elevation, biome, plates, etc.) |
+| **+/−** | Adjust vertical exaggeration |
+| **F12** | Take screenshot |
+
+**Playback Systems (render.rs):**
+
+- `PlaybackState` resource tracks `current_frame`, `playing` (bool), `speed` (0.25× to 32×), and a `Timer` for frame advance
+- `playback_controls` system handles keyboard input
+- `advance_playback` system uses a `Timer` to automatically step frames when playing (auto-stops at end)
+- `apply_snapshot` system overlays snapshot data onto `PlanetData` and triggers mesh rebuild via `TriggerRebuild` event
+
+**Design Notes:**
+
+- Existing `run_tectonics()` is unchanged — time-lapse is an optional extension via `run_tectonics_with_history()`
+- Snapshots store only visualization-relevant data (elevation, plate ID, boundary type, crust type, volcanic flag) — not full internal simulation state
+- Playback modifies `PlanetData` in-place but does not re-run physics — it's purely a visual overlay
+- All existing globe viewer controls (rotation, zoom, colour modes, screenshots) work during playback
+- Useful for debugging tectonic algorithms, presenting world generation to players, and educational demonstrations
 
 ---
 

@@ -10,6 +10,7 @@ use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::prelude::*;
 
 use super::grid::CellId;
+use super::tectonics::TectonicHistory;
 use super::{BiomeType, PlanetData, RockType};
 
 // ─── Colour modes ─────────────────────────────────────────────────────────────
@@ -390,6 +391,51 @@ struct RingMarker;
 #[derive(Component)]
 struct StarLight;
 
+// ─── Time-lapse playback ──────────────────────────────────────────────────────
+
+/// Playback state for tectonic time-lapse visualization.
+#[derive(Resource)]
+struct PlaybackState {
+    /// The captured tectonic history.
+    history: TectonicHistory,
+    /// Current frame index (0 = initial state).
+    current_frame: usize,
+    /// Whether playback is running.
+    playing: bool,
+    /// Playback speed multiplier (frames per second at 1×).
+    speed: f32,
+    /// Timer controlling frame advance.
+    timer: Timer,
+    /// The frame currently displayed on the mesh (avoids redundant rebuilds).
+    displayed_frame: usize,
+}
+
+impl PlaybackState {
+    fn new(history: TectonicHistory) -> Self {
+        let base_fps = 4.0; // 4 frames/sec at 1× speed
+        Self {
+            history,
+            current_frame: 0,
+            playing: false,
+            speed: 1.0,
+            timer: Timer::from_seconds(1.0 / base_fps, TimerMode::Repeating),
+            displayed_frame: usize::MAX, // force initial render
+        }
+    }
+
+    fn frame_count(&self) -> usize {
+        self.history.frame_count()
+    }
+
+    fn set_speed(&mut self, speed: f32) {
+        self.speed = speed.clamp(0.25, 32.0);
+        let base_fps = 4.0;
+        let interval = 1.0 / (base_fps * self.speed);
+        self.timer
+            .set_duration(std::time::Duration::from_secs_f32(interval));
+    }
+}
+
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 fn setup_globe(
@@ -585,6 +631,119 @@ fn screenshot_system(keyboard: Res<ButtonInput<KeyCode>>, mut commands: Commands
     println!("Screenshot → {path}");
 }
 
+// ─── Time-lapse playback systems ──────────────────────────────────────────────
+
+/// Handle keyboard input for time-lapse playback controls.
+fn playback_controls(keyboard: Res<ButtonInput<KeyCode>>, mut playback: ResMut<PlaybackState>) {
+    let last = playback.frame_count().saturating_sub(1);
+
+    if keyboard.just_pressed(KeyCode::Space) {
+        playback.playing = !playback.playing;
+        let status = if playback.playing {
+            "▶ Playing"
+        } else {
+            "⏸ Paused"
+        };
+        println!("{status}");
+    }
+
+    if keyboard.just_pressed(KeyCode::ArrowRight) {
+        playback.playing = false;
+        if playback.current_frame < last {
+            playback.current_frame += 1;
+        }
+    }
+
+    if keyboard.just_pressed(KeyCode::ArrowLeft) {
+        playback.playing = false;
+        if playback.current_frame > 0 {
+            playback.current_frame -= 1;
+        }
+    }
+
+    if keyboard.just_pressed(KeyCode::Home) {
+        playback.playing = false;
+        playback.current_frame = 0;
+    }
+
+    if keyboard.just_pressed(KeyCode::End) {
+        playback.playing = false;
+        playback.current_frame = last;
+    }
+
+    // Speed controls: > (Period) speeds up, < (Comma) slows down.
+    if keyboard.just_pressed(KeyCode::Period) {
+        let new_speed = (playback.speed * 2.0).min(32.0);
+        playback.set_speed(new_speed);
+        println!("Speed: {new_speed}×");
+    }
+    if keyboard.just_pressed(KeyCode::Comma) {
+        let new_speed = (playback.speed / 2.0).max(0.25);
+        playback.set_speed(new_speed);
+        println!("Speed: {new_speed}×");
+    }
+}
+
+/// Advance the playback frame based on the timer.
+fn advance_playback(time: Res<Time>, mut playback: ResMut<PlaybackState>) {
+    if !playback.playing {
+        return;
+    }
+
+    playback.timer.tick(time.delta());
+
+    if playback.timer.just_finished() {
+        let last = playback.frame_count().saturating_sub(1);
+        if playback.current_frame < last {
+            playback.current_frame += 1;
+        } else {
+            playback.playing = false;
+            println!("⏹ End of time-lapse");
+        }
+    }
+}
+
+/// When the playback frame changes, overlay the snapshot onto PlanetData and
+/// trigger a mesh rebuild.
+fn apply_snapshot(
+    mut state: ResMut<GlobeState>,
+    mut playback: ResMut<PlaybackState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut globe_query: Query<&mut Mesh3d, With<GlobeMesh>>,
+) {
+    let frame = playback.current_frame;
+    if frame == playback.displayed_frame {
+        return;
+    }
+    playback.displayed_frame = frame;
+
+    if let Some(snapshot) = playback.history.snapshots.get(frame) {
+        // Overlay snapshot data onto PlanetData for rendering.
+        state.data.elevation = snapshot.elevation.clone();
+        state.data.plate_id = snapshot.plate_id.clone();
+        state.data.boundary_type = snapshot.boundary_type.clone();
+        state.data.crust_type = snapshot.crust_type.clone();
+        state.data.volcanic_activity = snapshot.volcanic_activity.clone();
+
+        let total_frames = playback.frame_count();
+        println!(
+            "Frame {}/{} — Step {} — {:.0} Myr ({:.2} Gyr)",
+            frame + 1,
+            total_frames,
+            snapshot.step,
+            snapshot.age_myr,
+            snapshot.age_myr / 1000.0,
+        );
+
+        // Rebuild the mesh with updated data.
+        let new_mesh = build_globe_mesh(&state.data, &state.mode, state.exaggeration);
+        let handle = meshes.add(new_mesh);
+        if let Ok(mut mesh3d) = globe_query.single_mut() {
+            mesh3d.0 = handle;
+        }
+    }
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 /// Launch the interactive 3D globe viewer.
@@ -596,33 +755,64 @@ fn screenshot_system(keyboard: Res<ButtonInput<KeyCode>>, mut commands: Commands
 ///   crust depth, tidal amplitude, rock, temperature)
 /// - **+/−**: adjust elevation exaggeration
 /// - **F12**: save screenshot to `screenshots/`
-pub fn run_globe_viewer(data: PlanetData) {
+///
+/// When `history` is provided, time-lapse playback is enabled:
+/// - **Space**: play / pause
+/// - **Left / Right**: step backward / forward
+/// - **< / >**: halve / double playback speed
+/// - **Home / End**: jump to first / last frame
+pub fn run_globe_viewer(data: PlanetData, history: Option<TectonicHistory>) {
+    let timelapse = history.is_some();
+
     println!("Globe viewer controls:");
     println!(
         "  Left-drag: rotate | Scroll: zoom | 1-8: colour mode | +/-: exaggeration | F12: screenshot"
     );
+    if timelapse {
+        println!("  Time-lapse: Space=play/pause | ←/→=step | </>= speed | Home/End=jump");
+    }
 
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Worldgen Globe Viewer".into(),
-                resolution: (1280, 720).into(),
-                ..default()
-            }),
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: if timelapse {
+                "Worldgen Globe Viewer — Time-Lapse".into()
+            } else {
+                "Worldgen Globe Viewer".into()
+            },
+            resolution: (1280, 720).into(),
             ..default()
-        }))
-        .insert_resource(GlobeState {
-            data,
-            mode: ColourMode::Elevation,
-            exaggeration: 50.0,
-            needs_rebuild: false,
-        })
-        .add_systems(Startup, setup_globe)
-        .add_systems(
-            Update,
-            (orbital_camera, switch_colour_mode, screenshot_system),
-        )
-        .run();
+        }),
+        ..default()
+    }))
+    .insert_resource(GlobeState {
+        data,
+        mode: ColourMode::Elevation,
+        exaggeration: 50.0,
+        needs_rebuild: false,
+    })
+    .add_systems(Startup, setup_globe)
+    .add_systems(
+        Update,
+        (orbital_camera, switch_colour_mode, screenshot_system),
+    );
+
+    if let Some(history) = history {
+        let frames = history.frame_count();
+        println!(
+            "  {frames} frames loaded ({:.0} Myr total)",
+            history.snapshots.last().map(|s| s.age_myr).unwrap_or(0.0)
+        );
+        app.insert_resource(PlaybackState::new(history))
+            .add_systems(
+                Update,
+                (playback_controls, advance_playback, apply_snapshot)
+                    .chain()
+                    .after(switch_colour_mode),
+            );
+    }
+
+    app.run();
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

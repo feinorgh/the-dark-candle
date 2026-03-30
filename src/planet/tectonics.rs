@@ -33,8 +33,11 @@ use crate::planet::grid::CellId;
 use crate::planet::{BoundaryType, CrustType, PlanetData};
 
 // ---------------------------------------------------------------------------
-// Constants
+// Constants — all rates are per million years (Myr), scaled by dt each step
 // ---------------------------------------------------------------------------
+
+/// Reference time step (Myr) that the base rates are calibrated against.
+const REF_DT_MYR: f64 = 10.0;
 
 /// Elevation for newly initialised continental cells (m).
 const INIT_CONTINENTAL_ELEV: f64 = 200.0;
@@ -46,28 +49,28 @@ const CONTINENTAL_CRUST_DEPTH: f32 = 35_000.0;
 /// Default oceanic crust thickness (m).
 const OCEANIC_CRUST_DEPTH: f32 = 7_000.0;
 
-/// Height gained per step at a continent-continent convergent boundary (m).
-const OROGENY_RISE: f64 = 80.0;
-/// Height gained on the continental side of ocean-continent convergence (m).
-const ARC_RISE: f64 = 60.0;
-/// Height lost on the oceanic side of ocean-continent convergence (m/step).
-const TRENCH_DROP: f64 = 100.0;
-/// Height gained at an island arc (ocean-ocean convergent, building side, m).
-const ISLAND_ARC_RISE: f64 = 20.0;
-/// Height lost at an ocean-ocean convergent boundary (m).
-const OCEAN_CONVERGENT_DROP: f64 = 80.0;
-/// Height lost per step at a divergent boundary (m).
-const RIFT_DROP: f64 = 50.0;
+/// Orogeny rate at continent-continent convergent boundaries (m/Myr).
+const OROGENY_RATE: f64 = 8.0;
+/// Arc rise rate on the continental side of ocean-continent convergence (m/Myr).
+const ARC_RATE: f64 = 6.0;
+/// Trench descent rate on the oceanic side of ocean-continent convergence (m/Myr).
+const TRENCH_RATE: f64 = 10.0;
+/// Island arc rise rate (ocean-ocean convergent, building side, m/Myr).
+const ISLAND_ARC_RATE: f64 = 2.0;
+/// Descent rate at an ocean-ocean convergent boundary (m/Myr).
+const OCEAN_CONVERGENT_RATE: f64 = 8.0;
+/// Rift descent rate at divergent boundaries (m/Myr).
+const RIFT_RATE: f64 = 5.0;
 
-/// How much volcanic activity is added per step at active boundaries.
-const VOLCANIC_GAIN: f32 = 0.05;
-/// Decay factor applied to volcanic activity each step.
-const VOLCANIC_DECAY: f32 = 0.95;
-/// Fault stress accumulated per step at transform boundaries.
-const FAULT_STRESS_GAIN: f32 = 0.01;
+/// Volcanic activity gain per reference time step at active boundaries.
+const VOLCANIC_GAIN_BASE: f32 = 0.05;
+/// Volcanic activity decay factor per reference time step.
+const VOLCANIC_DECAY_BASE: f32 = 0.95;
+/// Fault stress gain per reference time step at transform boundaries.
+const FAULT_STRESS_GAIN_BASE: f32 = 0.01;
 
-/// Fraction of the elevation difference diffused toward neighbour average.
-const EROSION_RATE: f64 = 0.02;
+/// Fraction of elevation difference diffused per reference time step.
+const EROSION_RATE_BASE: f64 = 0.02;
 
 /// Hard cap on mountain height (m).
 const MAX_ELEVATION: f64 = 9_000.0;
@@ -77,9 +80,9 @@ const MIN_ELEVATION: f64 = -11_000.0;
 /// Fraction of total surface area that should be land (used for sea-level).
 const TARGET_LAND_FRACTION: f64 = 0.30;
 
-/// Velocity threshold (rad/step) below which boundaries are classified as
-/// transform rather than convergent/divergent.
-const VELOCITY_THRESHOLD: f64 = 1e-4;
+/// Base velocity threshold (rad displacement per reference time step) below
+/// which boundaries are classified as transform.
+const VELOCITY_THRESHOLD_BASE: f64 = 1e-4;
 
 /// Pareto shape parameter for plate growth weight distribution.
 /// Lower α → more extreme size variation. α ≈ 1.0–1.5 is Earth-like.
@@ -89,13 +92,23 @@ const PLATE_SIZE_PARETO_ALPHA: f64 = 1.3;
 /// Caps the Pareto tail to prevent one plate dominating the entire surface.
 const MAX_PLATE_WEIGHT_RATIO: f64 = 15.0;
 
-/// Probability per step that an oceanic cell at a convergent boundary is
-/// consumed by the overriding continental plate (subduction advance rate).
-const SUBDUCTION_RATE: f64 = 0.03;
+/// Base probability per reference step that an oceanic convergent-boundary cell
+/// is consumed by the overriding continental plate.
+const SUBDUCTION_RATE_BASE: f64 = 0.03;
 
 /// Minimum plate size as a fraction of total cells. Plates below this
 /// threshold are protected from further subduction consumption.
 const MIN_PLATE_FRACTION: f64 = 0.01;
+
+// ─── Plate velocity constants (SI) ───────────────────────────────────────────
+
+/// Minimum plate surface velocity (m/year). ~2 cm/yr.
+const MIN_PLATE_SPEED_M_YR: f64 = 0.02;
+/// Maximum plate surface velocity (m/year). ~10 cm/yr.
+const MAX_PLATE_SPEED_M_YR: f64 = 0.10;
+
+/// Interval (Myr) between random perturbations to plate acceleration.
+const ACCEL_PERTURB_INTERVAL_MYR: f64 = 50.0;
 
 // ---------------------------------------------------------------------------
 // Plate data
@@ -104,18 +117,95 @@ const MIN_PLATE_FRACTION: f64 = 0.01;
 /// Internal state for a single tectonic plate during simulation.
 #[derive(Debug, Clone)]
 struct Plate {
-    /// Angular velocity vector (axis * angular_speed, radians/step).
+    /// Angular velocity vector (axis × angular_speed, **radians/year**).
     angular_velocity: DVec3,
+    /// Angular acceleration vector (**radians/year²**). Produces gradual
+    /// speedup and slowdown over geological time, mimicking mantle drag
+    /// and slab pull changes.
+    angular_acceleration: DVec3,
     /// Whether this plate is continental or oceanic.
     crust_type: CrustType,
 }
 
 impl Plate {
-    /// Surface velocity of this plate at a given unit-sphere position.
+    /// Surface velocity of this plate at a given unit-sphere position,
+    /// scaled to displacement per time step.
     ///
-    /// `v = omega x r` (cross product of angular velocity and position).
-    fn velocity_at(&self, pos: DVec3) -> DVec3 {
-        self.angular_velocity.cross(pos)
+    /// `v = (omega × dt_yr) × r` — the cross product gives the tangent
+    /// velocity at `pos` for one step of `dt_yr` years.
+    fn velocity_at(&self, pos: DVec3, dt_yr: f64) -> DVec3 {
+        (self.angular_velocity * dt_yr).cross(pos)
+    }
+
+    /// Surface speed in m/year at a given position, given planet radius.
+    #[allow(dead_code)]
+    fn surface_speed_m_yr(&self, pos: DVec3, radius_m: f64) -> f64 {
+        self.angular_velocity.cross(pos).length() * radius_m
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tectonic history (for time-lapse visualization)
+// ---------------------------------------------------------------------------
+
+/// A snapshot of the tectonic state at a single simulation step.
+///
+/// Contains only the per-cell data needed for globe visualization — omits
+/// the grid itself, celestial data, and post-tectonic fields (biome, rock,
+/// temperature) which are not available during the tectonic phase.
+#[derive(Debug, Clone)]
+pub struct TectonicSnapshot {
+    /// Simulation step index this snapshot was captured at.
+    pub step: u32,
+    /// Geological age at this snapshot (Myr from start).
+    pub age_myr: f64,
+    /// Per-cell elevation in meters.
+    pub elevation: Vec<f64>,
+    /// Per-cell plate assignment.
+    pub plate_id: Vec<u8>,
+    /// Per-cell boundary classification.
+    pub boundary_type: Vec<BoundaryType>,
+    /// Per-cell crust type.
+    pub crust_type: Vec<CrustType>,
+    /// Per-cell volcanic activity (0.0–1.0).
+    pub volcanic_activity: Vec<f32>,
+}
+
+/// Complete history of a tectonic simulation, captured for playback.
+///
+/// Stores snapshots at regular intervals (every `snapshot_interval` steps)
+/// plus the final step. Memory usage is approximately
+/// `snapshots.len() × cells × 22 bytes` (e.g. ~2.5 MB per frame at level 7).
+#[derive(Debug, Clone)]
+pub struct TectonicHistory {
+    /// Ordered snapshots from step 0 to the final step.
+    pub snapshots: Vec<TectonicSnapshot>,
+    /// Time step size in Myr used during simulation.
+    pub dt_myr: f64,
+    /// Total number of simulation steps (may be more than snapshot count).
+    pub total_steps: u32,
+    /// How many simulation steps between each captured snapshot.
+    pub snapshot_interval: u32,
+}
+
+impl TectonicHistory {
+    /// Number of captured frames.
+    pub fn frame_count(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Geological age in Myr at the given frame index.
+    pub fn age_at_frame(&self, frame: usize) -> f64 {
+        self.snapshots.get(frame).map(|s| s.age_myr).unwrap_or(0.0)
+    }
+
+    /// Compute a reasonable snapshot interval to target ~max_frames keyframes.
+    pub(crate) fn compute_interval(total_steps: u32, max_frames: u32) -> u32 {
+        if total_steps <= max_frames {
+            1
+        } else {
+            (total_steps / max_frames).max(1)
+        }
     }
 }
 
@@ -125,9 +215,12 @@ impl Plate {
 
 /// Run the full tectonic simulation and write results into `data`.
 ///
-/// Initialises plate assignments, then runs `data.config.tectonic_steps`
-/// iterations. An optional `progress` callback is called after each step
-/// with the step index (0-based).
+/// Initialises plate assignments, then runs `data.config.tectonic_steps()`
+/// iterations with a time step of `dt_myr` million years. Plate velocities
+/// are in physical SI units (rad/year) and evolve via acceleration each step.
+///
+/// An optional `progress` callback is called after each step with the step
+/// index (0-based).
 ///
 /// # Panics
 ///
@@ -139,22 +232,107 @@ where
     assert!(data.grid.cell_count() > 0, "Grid must be non-empty");
 
     let seed = data.config.seed;
-    let steps = data.config.tectonic_steps;
+    let steps = data.config.tectonic_steps();
+    let dt_myr = data.config.tectonic_dt_myr();
+    let dt_yr = dt_myr * 1e6;
+    let dt_scale = dt_myr / REF_DT_MYR;
+    let radius_m = data.config.radius_m;
 
-    let plates = init_plates(data, seed);
+    let mut plates = init_plates(data, seed, radius_m);
 
     for step in 0..steps {
+        evolve_plate_velocities(&mut plates, seed, step, dt_yr, dt_myr, radius_m);
+
         // Recompute each step: plate assignments shift due to subduction.
         let boundary_normals = precompute_boundary_normals(data);
-        detect_boundaries(data, &plates, &boundary_normals);
-        apply_boundary_forces(data);
-        subduction_reassign(data, step);
-        update_volcanic_activity(data);
-        erode(data);
+        detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+        apply_boundary_forces(data, dt_myr);
+        subduction_reassign(data, step, dt_scale);
+        update_volcanic_activity(data, dt_scale);
+        erode(data, dt_scale);
         progress(step);
     }
 
     compute_sea_level(data);
+}
+
+/// Maximum number of keyframes stored by default in a tectonic history.
+const DEFAULT_MAX_FRAMES: u32 = 100;
+
+/// Run the tectonic simulation and capture a time-lapse history for playback.
+///
+/// Identical to [`run_tectonics`] but also returns a [`TectonicHistory`]
+/// containing snapshots at regular intervals (targeting ≤ `max_frames`
+/// keyframes). Pass `None` for `max_frames` to use the default (100).
+///
+/// The final step is always captured, even if it doesn't fall on an interval
+/// boundary.
+pub fn run_tectonics_with_history<F>(
+    data: &mut PlanetData,
+    max_frames: Option<u32>,
+    mut progress: F,
+) -> TectonicHistory
+where
+    F: FnMut(u32),
+{
+    assert!(data.grid.cell_count() > 0, "Grid must be non-empty");
+
+    let seed = data.config.seed;
+    let steps = data.config.tectonic_steps();
+    let dt_myr = data.config.tectonic_dt_myr();
+    let dt_yr = dt_myr * 1e6;
+    let dt_scale = dt_myr / REF_DT_MYR;
+    let radius_m = data.config.radius_m;
+
+    let max_frames = max_frames.unwrap_or(DEFAULT_MAX_FRAMES);
+    let interval = TectonicHistory::compute_interval(steps, max_frames);
+
+    let mut snapshots = Vec::with_capacity((steps / interval + 2) as usize);
+
+    let mut plates = init_plates(data, seed, radius_m);
+
+    // Capture the initial state (step 0, before any simulation).
+    snapshots.push(capture_snapshot(data, 0, 0.0));
+
+    for step in 0..steps {
+        evolve_plate_velocities(&mut plates, seed, step, dt_yr, dt_myr, radius_m);
+
+        let boundary_normals = precompute_boundary_normals(data);
+        detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+        apply_boundary_forces(data, dt_myr);
+        subduction_reassign(data, step, dt_scale);
+        update_volcanic_activity(data, dt_scale);
+        erode(data, dt_scale);
+        progress(step);
+
+        let sim_step = step + 1; // 1-based: step 0 has been run
+        if sim_step.is_multiple_of(interval) || sim_step == steps {
+            let age_myr = sim_step as f64 * dt_myr;
+            snapshots.push(capture_snapshot(data, sim_step, age_myr));
+        }
+    }
+
+    compute_sea_level(data);
+
+    TectonicHistory {
+        snapshots,
+        dt_myr,
+        total_steps: steps,
+        snapshot_interval: interval,
+    }
+}
+
+/// Capture the current tectonic state as a snapshot.
+fn capture_snapshot(data: &PlanetData, step: u32, age_myr: f64) -> TectonicSnapshot {
+    TectonicSnapshot {
+        step,
+        age_myr,
+        elevation: data.elevation.clone(),
+        plate_id: data.plate_id.clone(),
+        boundary_type: data.boundary_type.clone(),
+        crust_type: data.crust_type.clone(),
+        volcanic_activity: data.volcanic_activity.clone(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +340,11 @@ where
 // ---------------------------------------------------------------------------
 
 /// Seed plate centres, assign cells, and initialise elevation and crust data.
-fn init_plates(data: &mut PlanetData, seed: u64) -> Vec<Plate> {
+///
+/// Plate angular velocities are in rad/year, calibrated to produce surface
+/// speeds in the 2–10 cm/year range. Each plate also gets a small initial
+/// angular acceleration for velocity drift over geological time.
+fn init_plates(data: &mut PlanetData, seed: u64, radius_m: f64) -> Vec<Plate> {
     let mut rng = SmallRng::seed_from_u64(seed);
 
     let n_plates = rng.random_range(8_u8..=15_u8) as usize;
@@ -185,6 +367,10 @@ fn init_plates(data: &mut PlanetData, seed: u64) -> Vec<Plate> {
     // Assign each cell via weighted BFS flood-fill.
     let plate_id = weighted_bfs_flood_fill(&data.grid, &seeds, &weights);
 
+    // Convert surface speed range to angular speed range (ω = v / R).
+    let min_angular = MIN_PLATE_SPEED_M_YR / radius_m;
+    let max_angular = MAX_PLATE_SPEED_M_YR / radius_m;
+
     // Build Plate structs with size-biased properties.
     let min_w = weights.iter().copied().fold(f64::INFINITY, f64::min);
     let max_w = weights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -200,12 +386,19 @@ fn init_plates(data: &mut PlanetData, seed: u64) -> Vec<Plate> {
             } else {
                 CrustType::Continental
             };
-            // Random angular velocity: axis is a random unit vector, speed is
-            // small (plates move a fraction of a radian per simulation step).
+            // Random angular velocity: axis is a random unit vector, speed
+            // is in rad/year calibrated to 2–10 cm/year surface speed.
             let axis = random_unit_vec(&mut rng);
-            let speed = rng.random_range(1e-4_f64..5e-3_f64);
+            let speed = rng.random_range(min_angular..max_angular);
+
+            // Small initial acceleration: magnitude produces ~2–3× velocity
+            // change over ~100 Myr, direction is a random unit vector.
+            let accel_axis = random_unit_vec(&mut rng);
+            let accel_mag = rng.random_range(0.5..2.0) * speed / (100.0e6);
+
             Plate {
                 angular_velocity: axis * speed,
+                angular_acceleration: accel_axis * accel_mag,
                 crust_type,
             }
         })
@@ -343,6 +536,80 @@ fn random_unit_vec(rng: &mut SmallRng) -> DVec3 {
 }
 
 // ---------------------------------------------------------------------------
+// Plate velocity evolution
+// ---------------------------------------------------------------------------
+
+/// Update plate velocities from acceleration, clamp to physical range,
+/// and periodically perturb acceleration direction.
+///
+/// Produces natural speedup/slowdown over geological time. Plates that hit
+/// the velocity bounds have their acceleration reversed (bounce) to keep
+/// speeds physical.
+fn evolve_plate_velocities(
+    plates: &mut [Plate],
+    seed: u64,
+    step: u32,
+    dt_yr: f64,
+    dt_myr: f64,
+    radius_m: f64,
+) {
+    let min_angular = MIN_PLATE_SPEED_M_YR / radius_m;
+    let max_angular = MAX_PLATE_SPEED_M_YR / radius_m;
+
+    for (p, plate) in plates.iter_mut().enumerate() {
+        // Apply acceleration: ω += α × dt (years).
+        plate.angular_velocity += plate.angular_acceleration * dt_yr;
+
+        // Clamp angular speed to physical range.
+        let speed = plate.angular_velocity.length();
+        if speed > max_angular {
+            plate.angular_velocity *= max_angular / speed;
+            // Reverse the component of acceleration along velocity.
+            let vel_dir = plate.angular_velocity.normalize();
+            let a_along = plate.angular_acceleration.dot(vel_dir);
+            if a_along > 0.0 {
+                plate.angular_acceleration -= vel_dir * a_along * 2.0;
+            }
+        } else if speed < min_angular && speed > 1e-30 {
+            plate.angular_velocity *= min_angular / speed;
+            let vel_dir = plate.angular_velocity.normalize();
+            let a_along = plate.angular_acceleration.dot(vel_dir);
+            if a_along < 0.0 {
+                plate.angular_acceleration -= vel_dir * a_along * 2.0;
+            }
+        }
+
+        // Periodically perturb acceleration direction (every ~50 Myr).
+        let perturb_step = (ACCEL_PERTURB_INTERVAL_MYR / dt_myr).round().max(1.0) as u32;
+        if step > 0 && step.is_multiple_of(perturb_step) {
+            let mut rng = SmallRng::seed_from_u64(accel_perturb_seed(seed, p, step));
+            let perturb = DVec3::new(
+                rng.random_range(-1.0_f64..1.0_f64),
+                rng.random_range(-1.0_f64..1.0_f64),
+                rng.random_range(-1.0_f64..1.0_f64),
+            );
+            let mag = plate.angular_acceleration.length();
+            if mag > 1e-30 {
+                // Rotate acceleration by blending with random direction.
+                let blended =
+                    plate.angular_acceleration.normalize() * 0.6 + perturb.normalize() * 0.4;
+                if blended.length_squared() > 1e-30 {
+                    plate.angular_acceleration = blended.normalize() * mag;
+                }
+            }
+        }
+    }
+}
+
+/// Deterministic seed for acceleration perturbation events.
+fn accel_perturb_seed(seed: u64, plate: usize, step: u32) -> u64 {
+    seed.wrapping_add(plate as u64 * 0x1234_5678_9abc_def0)
+        .wrapping_mul(0x6c62_272e_07bb_0142)
+        .wrapping_add(step as u64)
+        ^ 0xfeed_face_cafe_babe
+}
+
+// ---------------------------------------------------------------------------
 // Boundary normal precomputation
 // ---------------------------------------------------------------------------
 
@@ -390,7 +657,15 @@ fn great_circle_tangent(a: DVec3, b: DVec3) -> DVec3 {
 // ---------------------------------------------------------------------------
 
 /// Detect and classify boundary cells for this step.
-fn detect_boundaries(data: &mut PlanetData, plates: &[Plate], boundary_normals: &[DVec3]) {
+fn detect_boundaries(
+    data: &mut PlanetData,
+    plates: &[Plate],
+    boundary_normals: &[DVec3],
+    dt_yr: f64,
+) {
+    let dt_scale = (dt_yr / 1e6) / REF_DT_MYR;
+    let threshold = VELOCITY_THRESHOLD_BASE * dt_scale;
+
     let n = data.grid.cell_count();
     for i in 0..n {
         let id = CellId(i as u32);
@@ -409,7 +684,7 @@ fn detect_boundaries(data: &mut PlanetData, plates: &[Plate], boundary_normals: 
         let pos = data.grid.cell_position(id);
         let normal = boundary_normals[i];
 
-        let v_a = plate_a.velocity_at(pos);
+        let v_a = plate_a.velocity_at(pos, dt_yr);
 
         // Average relative velocity projected onto the outward boundary normal.
         let mut rel_proj = 0.0_f64;
@@ -419,7 +694,7 @@ fn detect_boundaries(data: &mut PlanetData, plates: &[Plate], boundary_normals: 
             if nb_pid != data.plate_id[i] {
                 let plate_b = &plates[nb_pid as usize];
                 let pos_nb = data.grid.cell_position(CellId(nb));
-                let v_b = plate_b.velocity_at(pos_nb);
+                let v_b = plate_b.velocity_at(pos_nb, dt_yr);
                 rel_proj += (v_a - v_b).dot(normal);
                 count += 1;
             }
@@ -429,9 +704,9 @@ fn detect_boundaries(data: &mut PlanetData, plates: &[Plate], boundary_normals: 
             rel_proj /= count as f64;
         }
 
-        data.boundary_type[i] = if rel_proj > VELOCITY_THRESHOLD {
+        data.boundary_type[i] = if rel_proj > threshold {
             BoundaryType::Convergent
-        } else if rel_proj < -VELOCITY_THRESHOLD {
+        } else if rel_proj < -threshold {
             BoundaryType::Divergent
         } else {
             BoundaryType::Transform
@@ -440,9 +715,9 @@ fn detect_boundaries(data: &mut PlanetData, plates: &[Plate], boundary_normals: 
 }
 
 /// Apply height changes at boundary cells based on boundary type and the
-/// crust types of interacting plates.
+/// crust types of interacting plates. Height deltas scale with `dt_myr`.
 #[allow(clippy::needless_range_loop)] // multiple parallel arrays indexed by i
-fn apply_boundary_forces(data: &mut PlanetData) {
+fn apply_boundary_forces(data: &mut PlanetData, dt_myr: f64) {
     let n = data.grid.cell_count();
     let mut deltas: Vec<f64> = vec![0.0; n];
 
@@ -454,23 +729,23 @@ fn apply_boundary_forces(data: &mut PlanetData) {
                 let my_crust = data.crust_type[i];
                 deltas[i] += match (my_crust, neighbour_crust) {
                     // Continent-Continent: orogeny on both sides.
-                    (CrustType::Continental, CrustType::Continental) => OROGENY_RISE,
+                    (CrustType::Continental, CrustType::Continental) => OROGENY_RATE * dt_myr,
                     // Ocean-Continent: arc volcano on continental, trench on oceanic.
-                    (CrustType::Continental, CrustType::Oceanic) => ARC_RISE,
-                    (CrustType::Oceanic, CrustType::Continental) => -TRENCH_DROP,
+                    (CrustType::Continental, CrustType::Oceanic) => ARC_RATE * dt_myr,
+                    (CrustType::Oceanic, CrustType::Continental) => -TRENCH_RATE * dt_myr,
                     // Ocean-Ocean: one side builds island arc, other subducts.
                     (CrustType::Oceanic, CrustType::Oceanic) => {
                         // Alternate which side rises based on cell parity.
                         if i % 2 == 0 {
-                            ISLAND_ARC_RISE
+                            ISLAND_ARC_RATE * dt_myr
                         } else {
-                            -OCEAN_CONVERGENT_DROP
+                            -OCEAN_CONVERGENT_RATE * dt_myr
                         }
                     }
                 };
             }
             BoundaryType::Divergent => {
-                deltas[i] -= RIFT_DROP;
+                deltas[i] -= RIFT_RATE * dt_myr;
             }
         }
     }
@@ -501,7 +776,12 @@ fn dominant_neighbour_crust(data: &PlanetData, i: usize) -> CrustType {
 }
 
 /// Update volcanic activity: gain at active boundaries, decay everywhere else.
-fn update_volcanic_activity(data: &mut PlanetData) {
+/// Rates scale with `dt_scale = dt_myr / REF_DT_MYR`.
+fn update_volcanic_activity(data: &mut PlanetData, dt_scale: f64) {
+    let volcanic_gain = VOLCANIC_GAIN_BASE * dt_scale as f32;
+    let volcanic_decay = VOLCANIC_DECAY_BASE.powf(dt_scale as f32);
+    let fault_gain = FAULT_STRESS_GAIN_BASE * dt_scale as f32;
+
     let n = data.grid.cell_count();
     for i in 0..n {
         let is_active = (matches!(
@@ -511,20 +791,22 @@ fn update_volcanic_activity(data: &mut PlanetData) {
             || matches!(data.boundary_type[i], BoundaryType::Divergent);
 
         if is_active {
-            data.volcanic_activity[i] = (data.volcanic_activity[i] + VOLCANIC_GAIN).min(1.0);
+            data.volcanic_activity[i] = (data.volcanic_activity[i] + volcanic_gain).min(1.0);
         } else {
-            data.volcanic_activity[i] *= VOLCANIC_DECAY;
+            data.volcanic_activity[i] *= volcanic_decay;
         }
 
         if matches!(data.boundary_type[i], BoundaryType::Transform) {
-            data.fault_stress[i] = (data.fault_stress[i] + FAULT_STRESS_GAIN).min(1.0);
+            data.fault_stress[i] = (data.fault_stress[i] + fault_gain).min(1.0);
         }
     }
 }
 
-/// One diffusion pass: each cell moves `EROSION_RATE * (mean_neighbour - self)`
-/// toward its neighbour average.
-fn erode(data: &mut PlanetData) {
+/// One diffusion pass: each cell moves toward its neighbour average.
+/// Erosion rate scales with `dt_scale = dt_myr / REF_DT_MYR`.
+fn erode(data: &mut PlanetData, dt_scale: f64) {
+    let erosion_rate = EROSION_RATE_BASE * dt_scale;
+
     let n = data.grid.cell_count();
     let old_elev = data.elevation.clone();
 
@@ -539,7 +821,7 @@ fn erode(data: &mut PlanetData) {
             .map(|&nb| old_elev[nb as usize])
             .sum::<f64>()
             / neighbours.len() as f64;
-        let delta = EROSION_RATE * (mean - old_elev[i]);
+        let delta = erosion_rate * (mean - old_elev[i]);
         data.elevation[i] = (old_elev[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
     }
 }
@@ -553,9 +835,10 @@ fn erode(data: &mut PlanetData) {
 ///
 /// For each convergent boundary cell with oceanic crust that has a
 /// continental neighbour on a different plate, there is a small probability
-/// per step (`SUBDUCTION_RATE`) of reassignment. Plates below
-/// `MIN_PLATE_FRACTION` of total cells are protected from further consumption.
-fn subduction_reassign(data: &mut PlanetData, step: u32) {
+/// per step of reassignment. The base rate scales with `dt_scale`.
+/// Plates below `MIN_PLATE_FRACTION` of total cells are protected.
+fn subduction_reassign(data: &mut PlanetData, step: u32, dt_scale: f64) {
+    let subduction_rate = SUBDUCTION_RATE_BASE * dt_scale;
     let n = data.grid.cell_count();
     let min_plate_size = ((n as f64) * MIN_PLATE_FRACTION).max(1.0) as usize;
 
@@ -597,7 +880,7 @@ fn subduction_reassign(data: &mut PlanetData, step: u32) {
 
         if let Some(new_plate) = target_plate {
             let roll = subduction_noise(data.config.seed, i, step);
-            if roll < SUBDUCTION_RATE {
+            if roll < subduction_rate {
                 reassignments.push((i, new_plate));
             }
         }
@@ -673,14 +956,15 @@ fn compute_sea_level(data: &mut PlanetData) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planet::{PlanetConfig, PlanetData};
+    use crate::planet::{PlanetConfig, PlanetData, TectonicMode};
 
     /// Build a small planet for testing (level 2 = 162 cells, fast).
     fn small_planet(seed: u64) -> PlanetData {
         let config = PlanetConfig {
             seed,
             grid_level: 2,
-            tectonic_steps: 30,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.8,
             ..Default::default()
         };
         PlanetData::new(config)
@@ -780,7 +1064,7 @@ mod tests {
     #[test]
     fn progress_callback_called_correct_number_of_times() {
         let mut planet = small_planet(11);
-        let steps = planet.config.tectonic_steps;
+        let steps = planet.config.tectonic_steps();
         let mut count = 0u32;
         run_tectonics(&mut planet, |_| count += 1);
         assert_eq!(count, steps, "Expected {steps} callback calls, got {count}");
@@ -857,7 +1141,8 @@ mod tests {
         let config = PlanetConfig {
             seed: 42,
             grid_level: 4, // 2562 cells
-            tectonic_steps: 30,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.8,
             ..Default::default()
         };
         let mut planet = PlanetData::new(config);
@@ -952,5 +1237,226 @@ mod tests {
             "Weight ratio {ratio:.2} exceeds cap {MAX_PLATE_WEIGHT_RATIO}"
         );
         assert!(min_w >= 1.0, "Minimum weight {min_w} below 1.0");
+    }
+
+    // ── Geological time calibration tests ────────────────────────────────────
+
+    #[test]
+    fn all_modes_produce_valid_terrain() {
+        for mode in [
+            TectonicMode::Quick,
+            TectonicMode::Normal,
+            TectonicMode::Extended,
+        ] {
+            let config = PlanetConfig {
+                seed: 42,
+                grid_level: 2,
+                tectonic_mode: mode,
+                tectonic_age_gyr: 1.0,
+                ..Default::default()
+            };
+            let mut planet = PlanetData::new(config);
+            run_tectonics(&mut planet, |_| {});
+
+            let has_above = planet.elevation.iter().any(|&e| e > 0.0);
+            let has_below = planet.elevation.iter().any(|&e| e < 0.0);
+            assert!(
+                has_above && has_below,
+                "Mode {mode:?} should produce land and ocean"
+            );
+        }
+    }
+
+    #[test]
+    fn mode_step_counts_match_expected() {
+        let config_q = PlanetConfig {
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 3.0,
+            ..Default::default()
+        };
+        let config_n = PlanetConfig {
+            tectonic_mode: TectonicMode::Normal,
+            tectonic_age_gyr: 3.0,
+            ..Default::default()
+        };
+        let config_e = PlanetConfig {
+            tectonic_mode: TectonicMode::Extended,
+            tectonic_age_gyr: 3.0,
+            ..Default::default()
+        };
+        assert_eq!(config_q.tectonic_steps(), 50);
+        assert_eq!(config_n.tectonic_steps(), 200);
+        assert_eq!(config_e.tectonic_steps(), 600);
+    }
+
+    #[test]
+    fn velocity_evolution_changes_plate_speeds() {
+        let radius_m = 6_371_000.0;
+        let min_angular = MIN_PLATE_SPEED_M_YR / radius_m;
+        let max_angular = MAX_PLATE_SPEED_M_YR / radius_m;
+        let mid_speed = (min_angular + max_angular) / 2.0;
+        let axis = DVec3::Y;
+        let accel_axis = DVec3::X;
+        let accel_mag = mid_speed / 50.0e6;
+
+        let mut plates = vec![Plate {
+            angular_velocity: axis * mid_speed,
+            angular_acceleration: accel_axis * accel_mag,
+            crust_type: CrustType::Continental,
+        }];
+
+        let dt_myr = 15.0;
+        let dt_yr = dt_myr * 1e6;
+        let _initial_speed = plates[0].angular_velocity.length();
+
+        // Run many steps — velocity direction should drift.
+        for step in 0..20 {
+            evolve_plate_velocities(&mut plates, 42, step, dt_yr, dt_myr, radius_m);
+        }
+
+        let final_vel = plates[0].angular_velocity;
+        let final_speed = final_vel.length();
+
+        // Speed should stay in physical range.
+        assert!(
+            final_speed >= min_angular * 0.99 && final_speed <= max_angular * 1.01,
+            "Speed {final_speed:.2e} outside physical range [{min_angular:.2e}, {max_angular:.2e}]"
+        );
+
+        // Velocity should have changed direction (acceleration was perpendicular).
+        let initial_dir = axis;
+        let final_dir = final_vel.normalize();
+        let dot = initial_dir.dot(final_dir);
+        assert!(
+            dot < 0.999,
+            "Velocity direction should have changed (dot={dot:.4})"
+        );
+    }
+
+    #[test]
+    fn dt_scaling_determinism_preserved() {
+        // Same mode and seed → identical results.
+        let config = PlanetConfig {
+            seed: 55,
+            grid_level: 2,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 0.6,
+            ..Default::default()
+        };
+        let mut p1 = PlanetData::new(config.clone());
+        let mut p2 = PlanetData::new(config);
+        run_tectonics(&mut p1, |_| {});
+        run_tectonics(&mut p2, |_| {});
+        assert_eq!(
+            p1.elevation, p2.elevation,
+            "Same seed+mode must produce identical elevations"
+        );
+    }
+
+    // ── Time-lapse history tests ─────────────────────────────────────────────
+
+    #[test]
+    fn history_captures_correct_frame_count() {
+        let mut planet = small_planet(42);
+        let steps = planet.config.tectonic_steps(); // 30 steps (Quick, 1.8 Gyr)
+        let history = run_tectonics_with_history(&mut planet, None, |_| {});
+
+        // With ≤100 max frames, every step captured plus initial = steps + 1.
+        assert_eq!(
+            history.frame_count(),
+            steps as usize + 1,
+            "Should capture initial + every step when steps ≤ max_frames"
+        );
+        assert_eq!(history.total_steps, steps);
+        assert_eq!(history.snapshot_interval, 1);
+    }
+
+    #[test]
+    fn history_respects_max_frames() {
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 2,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 3.0, // 50 steps
+            ..Default::default()
+        };
+        let mut planet = PlanetData::new(config);
+
+        // Request only 10 frames max.
+        let history = run_tectonics_with_history(&mut planet, Some(10), |_| {});
+
+        // Interval = 50/10 = 5. Frames: initial(0), 5, 10, 15, 20, 25, 30, 35, 40, 45, 50.
+        assert!(
+            history.frame_count() <= 15,
+            "Should limit to ~10 frames plus initial and final: got {}",
+            history.frame_count()
+        );
+        assert_eq!(history.snapshot_interval, 5);
+    }
+
+    #[test]
+    fn history_first_and_last_frames_correct() {
+        let mut planet = small_planet(7);
+        let history = run_tectonics_with_history(&mut planet, None, |_| {});
+
+        let first = &history.snapshots[0];
+        assert_eq!(first.step, 0, "First frame should be step 0");
+        assert_eq!(first.age_myr, 0.0, "First frame should be age 0");
+
+        let last = history.snapshots.last().unwrap();
+        assert_eq!(
+            last.step, history.total_steps,
+            "Last frame should be the final step"
+        );
+        assert!(last.age_myr > 0.0, "Last frame age should be positive");
+    }
+
+    #[test]
+    fn history_final_matches_normal_run() {
+        let config = PlanetConfig {
+            seed: 88,
+            grid_level: 2,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 0.6,
+            ..Default::default()
+        };
+
+        // Run with history.
+        let mut p1 = PlanetData::new(config.clone());
+        let _history = run_tectonics_with_history(&mut p1, None, |_| {});
+
+        // Run without history.
+        let mut p2 = PlanetData::new(config);
+        run_tectonics(&mut p2, |_| {});
+
+        // Final elevations must match (both go through compute_sea_level).
+        assert_eq!(
+            p1.elevation, p2.elevation,
+            "History run must produce identical final state as normal run"
+        );
+    }
+
+    #[test]
+    fn history_ages_monotonically_increase() {
+        let mut planet = small_planet(42);
+        let history = run_tectonics_with_history(&mut planet, None, |_| {});
+
+        for window in history.snapshots.windows(2) {
+            assert!(
+                window[1].age_myr > window[0].age_myr,
+                "Ages must increase: {} → {}",
+                window[0].age_myr,
+                window[1].age_myr
+            );
+        }
+    }
+
+    #[test]
+    fn compute_interval_logic() {
+        assert_eq!(TectonicHistory::compute_interval(50, 100), 1);
+        assert_eq!(TectonicHistory::compute_interval(100, 100), 1);
+        assert_eq!(TectonicHistory::compute_interval(200, 100), 2);
+        assert_eq!(TectonicHistory::compute_interval(600, 100), 6);
+        assert_eq!(TectonicHistory::compute_interval(50, 10), 5);
     }
 }

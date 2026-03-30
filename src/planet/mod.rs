@@ -112,6 +112,7 @@ pub enum BoundaryType {
 /// Configuration for planetary generation.
 ///
 /// All physical quantities use SI units (meters, seconds, kilograms).
+/// Geological time is in millions of years (Myr) and billions of years (Gyr).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanetConfig {
     /// World generation seed.
@@ -123,12 +124,28 @@ pub struct PlanetConfig {
     pub radius_m: f64,
     /// Planet mass in kilograms.
     pub mass_kg: f64,
-    /// Number of tectonic simulation steps.
-    pub tectonic_steps: u32,
+    /// Tectonic simulation mode: controls time-step resolution and total steps.
+    pub tectonic_mode: TectonicMode,
+    /// Total simulated tectonic age in billions of years (Gyr).
+    /// Earth's plate tectonics started ~3 Gyr ago.
+    pub tectonic_age_gyr: f64,
     /// Meteorite bombardment intensity (0.0–1.0).
     pub bombardment_intensity: f64,
     /// Probability of a hemisphere-scale giant impact (0.0–1.0).
     pub giant_impact_probability: f64,
+}
+
+impl PlanetConfig {
+    /// Time step in million years for this mode.
+    pub fn tectonic_dt_myr(&self) -> f64 {
+        self.tectonic_mode.dt_myr()
+    }
+
+    /// Number of tectonic simulation steps, derived from age and mode.
+    pub fn tectonic_steps(&self) -> u32 {
+        let total_myr = self.tectonic_age_gyr * 1000.0;
+        (total_myr / self.tectonic_dt_myr()).round() as u32
+    }
 }
 
 impl Default for PlanetConfig {
@@ -138,9 +155,42 @@ impl Default for PlanetConfig {
             grid_level: 7,
             radius_m: 6_371_000.0, // Earth-like
             mass_kg: 5.972e24,     // Earth mass
-            tectonic_steps: 150,
+            tectonic_mode: TectonicMode::Normal,
+            tectonic_age_gyr: 3.0,
             bombardment_intensity: 0.3,
             giant_impact_probability: 0.1,
+        }
+    }
+}
+
+// ─── Tectonic mode ────────────────────────────────────────────────────────────
+
+/// Simulation fidelity for the tectonic plate model.
+///
+/// All modes simulate the same total geological age; they differ in time-step
+/// resolution: fewer large steps (Quick) vs many small steps (Extended).
+/// Smaller steps give more realistic boundary evolution at the cost of
+/// generation time.
+///
+/// At level 7 (164K cells): Quick ≈ 0.2s, Normal ≈ 0.8s, Extended ≈ 2.4s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TectonicMode {
+    /// 50 steps × 60 Myr. Fast worldgen, broad-stroke terrain.
+    Quick,
+    /// 200 steps × 15 Myr. Balanced detail and speed.
+    #[default]
+    Normal,
+    /// 600 steps × 5 Myr. High-resolution boundary evolution.
+    Extended,
+}
+
+impl TectonicMode {
+    /// Time step size in million years for this mode.
+    pub fn dt_myr(self) -> f64 {
+        match self {
+            Self::Quick => 60.0,
+            Self::Normal => 15.0,
+            Self::Extended => 5.0,
         }
     }
 }
