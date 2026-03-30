@@ -3,6 +3,7 @@
 //! Usage: `cargo run --bin worldgen -- --seed 42 --level 6 --stats`
 
 use clap::Parser;
+use the_dark_candle::planet::tectonics::run_tectonics;
 use the_dark_candle::planet::{PlanetConfig, PlanetData};
 
 /// Planetary world generator and visualizer.
@@ -42,10 +43,17 @@ fn main() {
     );
 
     let start = std::time::Instant::now();
-    let planet = PlanetData::new(config);
-    let elapsed = start.elapsed();
+    let mut planet = PlanetData::new(config);
+    let grid_elapsed = start.elapsed();
+    println!("  Grid built in {grid_elapsed:.2?}");
 
-    println!("Generated in {elapsed:.2?}");
+    let tec_start = std::time::Instant::now();
+    run_tectonics(&mut planet, |_| {});
+    let tec_elapsed = tec_start.elapsed();
+    println!("  Tectonics done in {tec_elapsed:.2?}");
+
+    let elapsed = start.elapsed();
+    println!("Total: {elapsed:.2?}");
     println!("  Cells: {}", planet.grid.cell_count());
     println!(
         "  Pentagons: {}",
@@ -72,12 +80,56 @@ fn main() {
 
         // Convert to real-world scale.
         let r = planet.config.radius_m;
-        let scale = r * r; // area on sphere of radius r = unit_area × r²
+        let scale = r * r; // area on sphere of radius r = unit_area * r^2
         let avg_km2 = mean * scale / 1e6;
         let side_km = avg_km2.sqrt();
         println!(
-            "  Avg cell area at radius {:.0} km: {avg_km2:.2} km² (~{side_km:.1} km side)",
+            "  Avg cell area at radius {:.0} km: {avg_km2:.2} km^2 (~{side_km:.1} km side)",
             r / 1000.0
         );
+
+        // Tectonic stats.
+        let elevs = &planet.elevation;
+        let land_cells = elevs.iter().filter(|&&e| e >= 0.0).count();
+        let ocean_cells = elevs.iter().filter(|&&e| e < 0.0).count();
+        let elev_min = elevs.iter().copied().fold(f64::INFINITY, f64::min);
+        let elev_max = elevs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let n = elevs.len() as f64;
+        let elev_mean = elevs.iter().sum::<f64>() / n;
+        println!("\n  Tectonic results:");
+        println!("    Elevation range: {elev_min:.0} m to {elev_max:.0} m (mean {elev_mean:.0} m)");
+        println!(
+            "    Land cells: {land_cells} ({:.1}%)",
+            100.0 * land_cells as f64 / n
+        );
+        println!(
+            "    Ocean cells: {ocean_cells} ({:.1}%)",
+            100.0 * ocean_cells as f64 / n
+        );
+
+        use the_dark_candle::planet::BoundaryType;
+        let conv = planet
+            .boundary_type
+            .iter()
+            .filter(|&&b| b == BoundaryType::Convergent)
+            .count();
+        let divg = planet
+            .boundary_type
+            .iter()
+            .filter(|&&b| b == BoundaryType::Divergent)
+            .count();
+        let xfrm = planet
+            .boundary_type
+            .iter()
+            .filter(|&&b| b == BoundaryType::Transform)
+            .count();
+        println!("    Boundary cells — convergent: {conv}, divergent: {divg}, transform: {xfrm}");
+
+        let volcanic: usize = planet
+            .volcanic_activity
+            .iter()
+            .filter(|&&v| v > 0.01)
+            .count();
+        println!("    Active volcanic cells: {volcanic}");
     }
 }

@@ -8,9 +8,34 @@
 //! the game and from the standalone `worldgen` binary.
 
 pub mod grid;
+pub mod tectonics;
 
 use grid::IcosahedralGrid;
 use serde::{Deserialize, Serialize};
+
+/// Type of tectonic plate crust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CrustType {
+    /// Thick, buoyant, silica-rich continental crust.
+    #[default]
+    Continental,
+    /// Thin, dense, basaltic oceanic crust.
+    Oceanic,
+}
+
+/// Classification of the tectonic boundary at a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BoundaryType {
+    /// Cell is not adjacent to a plate boundary.
+    #[default]
+    Interior,
+    /// Adjacent plates are moving toward each other.
+    Convergent,
+    /// Adjacent plates are moving apart.
+    Divergent,
+    /// Adjacent plates are sliding laterally past each other.
+    Transform,
+}
 
 /// Configuration for planetary generation.
 ///
@@ -57,10 +82,22 @@ pub struct PlanetData {
     pub grid: IcosahedralGrid,
     /// Per-cell elevation in meters (above/below sea level).
     pub elevation: Vec<f64>,
+    /// Which tectonic plate each cell belongs to (0-based index).
+    pub plate_id: Vec<u8>,
+    /// Crust type per cell: Continental or Oceanic.
+    pub crust_type: Vec<CrustType>,
+    /// Crust thickness per cell in meters. 0 = exposed core/mantle.
+    pub crust_depth: Vec<f32>,
+    /// Tectonic boundary classification per cell.
+    pub boundary_type: Vec<BoundaryType>,
+    /// Volcanic activity intensity per cell (0.0–1.0).
+    pub volcanic_activity: Vec<f32>,
+    /// Accumulated fault stress per cell (0.0–1.0).
+    pub fault_stress: Vec<f32>,
 }
 
 impl PlanetData {
-    /// Create a new planet with a flat surface (all elevations at zero).
+    /// Create a new planet with a flat surface and zeroed tectonic data.
     pub fn new(config: PlanetConfig) -> Self {
         let grid = IcosahedralGrid::new(config.grid_level);
         let n = grid.cell_count();
@@ -68,6 +105,12 @@ impl PlanetData {
             config,
             grid,
             elevation: vec![0.0; n],
+            plate_id: vec![0; n],
+            crust_type: vec![CrustType::default(); n],
+            crust_depth: vec![0.0; n],
+            boundary_type: vec![BoundaryType::default(); n],
+            volcanic_activity: vec![0.0; n],
+            fault_stress: vec![0.0; n],
         }
     }
 }
