@@ -30,6 +30,10 @@ struct Args {
     /// Print generation statistics.
     #[arg(long)]
     stats: bool,
+
+    /// Open interactive 3D globe viewer.
+    #[arg(long)]
+    globe: bool,
 }
 
 fn main() {
@@ -299,5 +303,10 @@ fn main() {
             ore_cells(ORE_GEMS),
             ore_cells(ORE_OIL)
         );
+    }
+
+    if args.globe {
+        use the_dark_candle::planet::render::run_globe_viewer;
+        run_globe_viewer(planet);
     }
 }

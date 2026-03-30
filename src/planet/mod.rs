@@ -12,6 +12,7 @@ pub mod celestial;
 pub mod geology;
 pub mod grid;
 pub mod impacts;
+pub mod render;
 pub mod tectonics;
 
 use celestial::CelestialSystem;
