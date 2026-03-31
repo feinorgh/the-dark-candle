@@ -16,6 +16,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use std::collections::HashMap;
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
+use super::chunk_manager::ChunkMap;
 use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hysteresis};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
@@ -148,8 +149,8 @@ fn material_color(mat: MaterialId, color_map: Option<&MaterialColorMap>) -> [f32
 }
 
 /// Sample the scalar field: 1.0 for solid, 0.0 for air.
-/// Uses an extended grid (CHUNK_SIZE + 1) so we can form cells at the boundary.
-/// Out-of-bounds samples return 0.0 (air) to create surfaces at chunk edges.
+/// Out-of-bounds samples return 0.0 (air) to create surfaces at chunk edges
+/// when no neighbor data is available.
 /// Returns (solidity, material, temperature_K).
 #[inline]
 fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
@@ -171,20 +172,92 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
     }
 }
 
+/// Voxel snapshots for the 6 face-neighbors of a chunk (±X, ±Y, ±Z).
+///
+/// When present each slice is a flat `CHUNK_SIZE³` voxel array (same layout as
+/// `Chunk::flat_snapshot()`). `None` means the neighbor is not loaded; the
+/// mesher will fall back to treating that boundary as air, which is correct for
+/// chunks at the edge of the loaded region.
+#[derive(Default, Clone)]
+pub struct NeighborVoxels {
+    pub px: Option<Vec<Voxel>>, // +X neighbor
+    pub nx: Option<Vec<Voxel>>, // −X neighbor
+    pub py: Option<Vec<Voxel>>, // +Y neighbor
+    pub ny: Option<Vec<Voxel>>, // −Y neighbor
+    pub pz: Option<Vec<Voxel>>, // +Z neighbor
+    pub nz: Option<Vec<Voxel>>, // −Z neighbor
+}
+
+impl NeighborVoxels {
+    /// Sample a voxel from a flat neighbor slice.
+    #[inline]
+    fn sample_slice(slice: &[Voxel], x: usize, y: usize, z: usize) -> (f32, MaterialId, f32) {
+        let idx = x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z;
+        let v = &slice[idx];
+        if v.is_air() {
+            (0.0, MaterialId::AIR, v.temperature)
+        } else {
+            (1.0, v.material, v.temperature)
+        }
+    }
+
+    /// Sample the scalar field, crossing into neighbor chunks when needed.
+    ///
+    /// Coordinates may range from −1 to CHUNK_SIZE (inclusive on both ends),
+    /// allowing the Surface Nets cell loop to read the full boundary layer.
+    #[inline]
+    pub fn sample(&self, chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
+        let cs = CHUNK_SIZE as i32;
+
+        // All three coordinates in-bounds → read directly from chunk.
+        if x >= 0 && y >= 0 && z >= 0 && x < cs && y < cs && z < cs {
+            return sample(chunk, x, y, z);
+        }
+
+        // Clamp the in-chunk coordinates for the neighbor we're crossing into.
+        let nx = x.rem_euclid(cs) as usize;
+        let ny = y.rem_euclid(cs) as usize;
+        let nz = z.rem_euclid(cs) as usize;
+
+        let neighbor = if x < 0 {
+            self.nx.as_deref()
+        } else if x >= cs {
+            self.px.as_deref()
+        } else if y < 0 {
+            self.ny.as_deref()
+        } else if y >= cs {
+            self.py.as_deref()
+        } else if z < 0 {
+            self.nz.as_deref()
+        } else {
+            self.pz.as_deref()
+        };
+
+        match neighbor {
+            Some(slice) => Self::sample_slice(slice, nx, ny, nz),
+            None => (0.0, MaterialId::AIR, 288.15),
+        }
+    }
+}
+
 /// Generate a mesh from a chunk's voxel data using the Surface Nets algorithm.
 pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
-    generate_mesh_with_colors(chunk, None, false)
+    generate_mesh_with_colors(chunk, &NeighborVoxels::default(), None, false)
 }
 
 /// Generate a mesh from a chunk, using the color map for material colors.
+///
+/// `neighbors` provides the 6 face-adjacent chunk snapshots so the mesher can
+/// read across chunk boundaries and eliminate seam gaps.
 pub fn generate_mesh_with_colors(
     chunk: &Chunk,
+    neighbors: &NeighborVoxels,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
 ) -> ChunkMesh {
     generate_mesh_generic(
-        CHUNK_SIZE as i32,
-        |x, y, z| sample(chunk, x, y, z),
+        CHUNK_SIZE as i32 + 1,
+        |x, y, z| neighbors.sample(chunk, x, y, z),
         |mat, temp| {
             if thermal_vision {
                 thermal_heatmap_color(temp)
@@ -232,19 +305,52 @@ fn sample_octree(
 ///
 /// `size` is the grid dimension (e.g. CHUNK_SIZE = 32).
 pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> ChunkMesh {
-    generate_mesh_from_octree_with_colors(tree, size, None, false)
+    generate_mesh_from_octree_with_colors(tree, size, &NeighborVoxels::default(), None, false)
 }
 
 /// Generate a mesh from an octree volume, using the color map for materials.
+///
+/// `neighbors` provides the 6 face-adjacent chunk snapshots so boundary seams
+/// are eliminated. The octree covers the same `size`³ space; boundary samples
+/// that fall outside fall through to the neighbor slices.
 pub fn generate_mesh_from_octree_with_colors(
     tree: &OctreeNode<Voxel>,
     size: usize,
+    neighbors: &NeighborVoxels,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
 ) -> ChunkMesh {
     generate_mesh_generic(
-        size as i32,
-        |x, y, z| sample_octree(tree, size, x, y, z),
+        size as i32 + 1,
+        |x, y, z| {
+            let cs = size as i32;
+            if x >= 0 && y >= 0 && z >= 0 && x < cs && y < cs && z < cs {
+                sample_octree(tree, size, x, y, z)
+            } else {
+                // Delegate out-of-bounds to neighbor chunks.
+                // Neighbor slices are always at base CHUNK_SIZE resolution.
+                let nx = x.rem_euclid(cs) as usize;
+                let ny = y.rem_euclid(cs) as usize;
+                let nz = z.rem_euclid(cs) as usize;
+                let neighbor = if x < 0 {
+                    neighbors.nx.as_deref()
+                } else if x >= cs {
+                    neighbors.px.as_deref()
+                } else if y < 0 {
+                    neighbors.ny.as_deref()
+                } else if y >= cs {
+                    neighbors.py.as_deref()
+                } else if z < 0 {
+                    neighbors.nz.as_deref()
+                } else {
+                    neighbors.pz.as_deref()
+                };
+                match neighbor {
+                    Some(slice) => NeighborVoxels::sample_slice(slice, nx, ny, nz),
+                    None => (0.0, MaterialId::AIR, 288.15),
+                }
+            }
+        },
         |mat, temp| {
             if thermal_vision {
                 thermal_heatmap_color(temp)
@@ -638,18 +744,26 @@ fn lod_step(level: LodLevel) -> usize {
 /// When a `ChunkOctree` is present, meshes from the sparse representation.
 /// Falls back to flat-array meshing otherwise (e.g. for chunks modified
 /// after octree construction whose octree hasn't been rebuilt yet).
+///
+/// `neighbors` carries the 6 face-adjacent chunk snapshots needed to eliminate
+/// seam gaps at chunk boundaries.
 fn generate_chunk_mesh(
     chunk: &Chunk,
     octree: Option<&ChunkOctree>,
     lod_step_size: usize,
+    neighbors: &NeighborVoxels,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
     light_map: Option<&ChunkLightMap>,
 ) -> ChunkMesh {
     let mut mesh = match octree {
-        Some(oct) if lod_step_size <= 1 => {
-            generate_mesh_from_octree_with_colors(&oct.0, CHUNK_SIZE, color_map, thermal_vision)
-        }
+        Some(oct) if lod_step_size <= 1 => generate_mesh_from_octree_with_colors(
+            &oct.0,
+            CHUNK_SIZE,
+            neighbors,
+            color_map,
+            thermal_vision,
+        ),
         Some(oct) => generate_mesh_from_octree_lod_with_colors(
             &oct.0,
             CHUNK_SIZE,
@@ -657,7 +771,9 @@ fn generate_chunk_mesh(
             color_map,
             thermal_vision,
         ),
-        None if lod_step_size <= 1 => generate_mesh_with_colors(chunk, color_map, thermal_vision),
+        None if lod_step_size <= 1 => {
+            generate_mesh_with_colors(chunk, neighbors, color_map, thermal_vision)
+        }
         None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map, thermal_vision),
     };
 
@@ -671,28 +787,40 @@ fn generate_chunk_mesh(
 /// System: dispatches async mesh generation tasks for dirty or LOD-changed chunks.
 ///
 /// Computes per-chunk LOD from camera distance (fast, stays on main thread),
-/// snapshots voxel data, and spawns `AsyncComputeTaskPool` tasks. At most
+/// snapshots voxel data and the 6 face-adjacent neighbor chunks (to eliminate
+/// boundary seams), and spawns `AsyncComputeTaskPool` tasks. At most
 /// `MAX_MESH_DISPATCHES_PER_FRAME` tasks are dispatched per frame to limit the
 /// cost of snapshotting voxel data.
+///
+/// A `ParamSet` is used because both the mutable chunk query and the read-only
+/// neighbor query access the `Chunk` component — Bevy requires them to be
+/// disjoint in the type system, and `ParamSet` enforces that only one is
+/// accessed at a time.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn dispatch_mesh_tasks(
     mut commands: Commands,
     lod_config: Option<Res<LodConfig>>,
     color_map: Option<Res<MaterialColorMap>>,
     thermal_mode: Option<Res<ThermalVisionMode>>,
+    chunk_map: Res<ChunkMap>,
     camera_q: Query<&Transform, With<Camera3d>>,
-    mut chunk_q: Query<
-        (
-            Entity,
-            &mut Chunk,
-            &super::chunk::ChunkCoord,
-            Option<&ChunkOctree>,
-            Option<&ChunkLod>,
-            Option<&ChunkLightMap>,
-            Has<ChunkMeshMarker>,
-        ),
-        Without<MeshTask>,
-    >,
+    mut chunk_queries: ParamSet<(
+        // p0: mutable query for the chunks we are dispatching mesh tasks for.
+        Query<
+            (
+                Entity,
+                &mut Chunk,
+                &super::chunk::ChunkCoord,
+                Option<&ChunkOctree>,
+                Option<&ChunkLod>,
+                Option<&ChunkLightMap>,
+                Has<ChunkMeshMarker>,
+            ),
+            Without<MeshTask>,
+        >,
+        // p1: read-only query to snapshot neighbor voxel data.
+        Query<(&super::chunk::ChunkCoord, &Chunk)>,
+    )>,
 ) {
     let default_config = LodConfig::default();
     let config = lod_config.as_deref().unwrap_or(&default_config);
@@ -703,10 +831,21 @@ pub(super) fn dispatch_mesh_tasks(
         .map(|t| t.translation)
         .unwrap_or(Vec3::ZERO);
 
+    // Phase 1: snapshot all loaded chunk voxels for neighbor lookups.
+    // Must be done before borrowing p0 mutably.
+    let neighbor_snapshots: HashMap<super::chunk::ChunkCoord, Vec<Voxel>> = chunk_queries
+        .p1()
+        .iter()
+        .map(|(coord, chunk)| (*coord, chunk.flat_snapshot()))
+        .collect();
+
     let pool = AsyncComputeTaskPool::get();
     let mut dispatched = 0usize;
 
-    for (entity, mut chunk, coord, octree, current_lod, light_map, had_mesh) in chunk_q.iter_mut() {
+    // Phase 2: iterate dirty chunks, build neighbor slices, dispatch tasks.
+    for (entity, mut chunk, coord, octree, current_lod, light_map, had_mesh) in
+        chunk_queries.p0().iter_mut()
+    {
         if dispatched >= MAX_MESH_DISPATCHES_PER_FRAME {
             break;
         }
@@ -733,6 +872,28 @@ pub(super) fn dispatch_mesh_tasks(
         let light_map_clone = light_map.cloned();
         let lod_level = new_level.0;
 
+        // Collect the 6 face-neighbor snapshots to eliminate boundary seams.
+        let neighbors = {
+            let snap = |dx: i32, dy: i32, dz: i32| -> Option<Vec<Voxel>> {
+                let nc = super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
+                neighbor_snapshots.get(&nc).cloned().or_else(|| {
+                    // Neighbor exists in the map but isn't in the snapshot
+                    // (e.g. it has a MeshTask). Treat boundary as air this frame;
+                    // the neighbor's mesh task will mark this chunk dirty when done.
+                    let _ = chunk_map.get(&nc)?;
+                    None
+                })
+            };
+            NeighborVoxels {
+                px: snap(1, 0, 0),
+                nx: snap(-1, 0, 0),
+                py: snap(0, 1, 0),
+                ny: snap(0, -1, 0),
+                pz: snap(0, 0, 1),
+                nz: snap(0, 0, -1),
+            }
+        };
+
         chunk.clear_dirty();
 
         let task = pool.spawn(async move {
@@ -741,6 +902,7 @@ pub(super) fn dispatch_mesh_tasks(
                 &snap_chunk,
                 octree_snapshot.as_ref(),
                 step,
+                &neighbors,
                 color_map_clone.as_ref(),
                 thermal_vision,
                 light_map_clone.as_ref(),
@@ -1337,6 +1499,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<ThermalVisionMode>();
+        app.init_resource::<ChunkMap>();
         app.insert_resource(LodConfig::default());
         app.insert_resource(MaterialColorMap::from_defaults());
         app.add_systems(Update, dispatch_mesh_tasks);
@@ -1367,6 +1530,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<ThermalVisionMode>();
+        app.init_resource::<ChunkMap>();
         app.insert_resource(LodConfig::default());
         app.insert_resource(MaterialColorMap::from_defaults());
         app.add_systems(Update, dispatch_mesh_tasks);
@@ -1405,7 +1569,15 @@ mod tests {
         for level_val in [0u8, 1, 2] {
             let level = LodLevel(level_val);
             let step = lod_step(level);
-            let mesh = generate_chunk_mesh(&chunk, None, step, None, false, None);
+            let mesh = generate_chunk_mesh(
+                &chunk,
+                None,
+                step,
+                &NeighborVoxels::default(),
+                None,
+                false,
+                None,
+            );
             let direct = if step <= 1 {
                 generate_mesh(&chunk)
             } else {
