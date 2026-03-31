@@ -106,6 +106,7 @@ struct TerrainGenResult {
     coord: ChunkCoord,
     chunk: Chunk,
     octree: ChunkOctree,
+    biome_data: Option<crate::world::planetary_sampler::ChunkBiomeData>,
 }
 
 /// Component holding an in-flight async terrain generation task.
@@ -333,13 +334,14 @@ pub fn update_chunks(
 
         let task = pool.spawn(async move {
             let mut chunk = Chunk::new_empty(coord);
-            terrain_gen.generate_chunk(&mut chunk);
+            let biome_data = terrain_gen.generate_chunk(&mut chunk);
             let analysis = analyze_chunk(&chunk, &subdiv);
             let octree = build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis);
             TerrainGenResult {
                 coord,
                 chunk,
                 octree: ChunkOctree(octree),
+                biome_data,
             }
         });
 
@@ -371,22 +373,24 @@ pub fn collect_terrain_results(
         }
 
         let origin = result.coord.world_origin();
-        let entity = commands
-            .spawn((
-                result.chunk,
-                result.coord,
-                result.octree,
-                ChunkActivity::default(),
-                crate::procgen::props::NeedsDecoration,
-                crate::procgen::props::ChunkProps::default(),
-                crate::procgen::creatures::NeedsCreatureSpawning,
-                crate::procgen::creatures::ChunkCreatures::default(),
-                crate::procgen::items::NeedsItemSpawning,
-                crate::procgen::items::ChunkItems::default(),
-                crate::physics::amr_fluid::injection::NeedsFluidSeeding,
-                Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
-            ))
-            .id();
+        let mut entity_cmds = commands.spawn((
+            result.chunk,
+            result.coord,
+            result.octree,
+            ChunkActivity::default(),
+            crate::procgen::props::NeedsDecoration,
+            crate::procgen::props::ChunkProps::default(),
+            crate::procgen::creatures::NeedsCreatureSpawning,
+            crate::procgen::creatures::ChunkCreatures::default(),
+            crate::procgen::items::NeedsItemSpawning,
+            crate::procgen::items::ChunkItems::default(),
+            crate::physics::amr_fluid::injection::NeedsFluidSeeding,
+            Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
+        ));
+        if let Some(biome) = result.biome_data {
+            entity_cmds.insert(biome);
+        }
+        let entity = entity_cmds.id();
         chunk_map.insert(result.coord, entity);
     }
 }

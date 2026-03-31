@@ -85,6 +85,11 @@ impl Plugin for ProcgenPlugin {
 /// plans creature spawns via `plan_chunk_spawns()`, generates unique
 /// instances via `generate_creature()`, and spawns full entities with
 /// biology, behavior, and social components attached.
+///
+/// When `ChunkBiomeData` is present (planetary terrain mode) it uses the
+/// generated climate data (temperature_k, precipitation_mm) to match a
+/// procgen `BiomeData`; otherwise falls back to the height-based heuristic.
+#[allow(clippy::type_complexity)]
 fn spawn_creatures(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -92,7 +97,13 @@ fn spawn_creatures(
     creature_registry: Res<creatures::CreatureRegistry>,
     biome_assets: Res<Assets<biomes::BiomeData>>,
     mut to_spawn: Query<
-        (Entity, &Chunk, &ChunkCoord, &mut creatures::ChunkCreatures),
+        (
+            Entity,
+            &Chunk,
+            &ChunkCoord,
+            &mut creatures::ChunkCreatures,
+            Option<&crate::world::planetary_sampler::ChunkBiomeData>,
+        ),
         With<creatures::NeedsCreatureSpawning>,
     >,
 ) {
@@ -101,8 +112,7 @@ fn spawn_creatures(
     use spawning::plan_chunk_spawns;
 
     if creature_registry.is_empty() {
-        // Still remove markers so we don't re-query every frame.
-        for (entity, _, _, _) in &to_spawn {
+        for (entity, _, _, _, _) in &to_spawn {
             commands
                 .entity(entity)
                 .remove::<creatures::NeedsCreatureSpawning>();
@@ -115,18 +125,29 @@ fn spawn_creatures(
         return;
     }
 
-    for (chunk_entity, chunk, coord, mut chunk_creatures) in &mut to_spawn {
+    for (chunk_entity, chunk, coord, mut chunk_creatures, planet_biome) in &mut to_spawn {
         commands
             .entity(chunk_entity)
             .remove::<creatures::NeedsCreatureSpawning>();
 
-        // Determine biome from chunk center height (same heuristic as tree/prop systems).
-        let center_height = surface_height(chunk, CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap_or(0);
-        let world_y = coord.y as f32 * CHUNK_SIZE as f32 + center_height as f32;
-        let biome = biomes
-            .iter()
-            .find(|b| world_y >= b.height_range.0 && world_y <= b.height_range.1)
-            .or(biomes.first());
+        let biome = if let Some(pb) = planet_biome {
+            // Planetary mode: use temperature + precipitation as moisture proxy.
+            let moisture = (pb.precipitation_mm / 3500.0).clamp(0.0, 1.0) * 100.0;
+            biomes
+                .iter()
+                .copied()
+                .find(|b| biomes::biome_matches(b, 0.0, pb.temperature_k, moisture))
+                .or_else(|| biomes.first().copied())
+        } else {
+            // Legacy: determine biome from chunk center height.
+            let center_height = surface_height(chunk, CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap_or(0);
+            let world_y = coord.y as f32 * CHUNK_SIZE as f32 + center_height as f32;
+            biomes
+                .iter()
+                .copied()
+                .find(|b| world_y >= b.height_range.0 && world_y <= b.height_range.1)
+                .or_else(|| biomes.first().copied())
+        };
         let Some(biome) = biome else { continue };
 
         if biome.creature_spawns.is_empty() {
@@ -195,6 +216,8 @@ fn spawn_creatures(
 ///
 /// Mirrors `spawn_creatures` but for items (food, tools, etc.).
 /// Uses biome `item_spawns` tables and `generate_item()` for creation.
+/// Respects `ChunkBiomeData` for planetary terrain biome selection.
+#[allow(clippy::type_complexity)]
 fn spawn_items(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -203,7 +226,13 @@ fn spawn_items(
     material_registry: Res<crate::data::MaterialRegistry>,
     biome_assets: Res<Assets<biomes::BiomeData>>,
     mut to_spawn: Query<
-        (Entity, &Chunk, &ChunkCoord, &mut items::ChunkItems),
+        (
+            Entity,
+            &Chunk,
+            &ChunkCoord,
+            &mut items::ChunkItems,
+            Option<&crate::world::planetary_sampler::ChunkBiomeData>,
+        ),
         With<items::NeedsItemSpawning>,
     >,
 ) {
@@ -212,7 +241,7 @@ fn spawn_items(
     use spawning::plan_chunk_item_spawns;
 
     if item_registry.is_empty() {
-        for (entity, _, _, _) in &to_spawn {
+        for (entity, _, _, _, _) in &to_spawn {
             commands.entity(entity).remove::<items::NeedsItemSpawning>();
         }
         return;
@@ -223,17 +252,27 @@ fn spawn_items(
         return;
     }
 
-    for (chunk_entity, chunk, coord, mut chunk_items) in &mut to_spawn {
+    for (chunk_entity, chunk, coord, mut chunk_items, planet_biome) in &mut to_spawn {
         commands
             .entity(chunk_entity)
             .remove::<items::NeedsItemSpawning>();
 
-        let center_height = surface_height(chunk, CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap_or(0);
-        let world_y = coord.y as f32 * CHUNK_SIZE as f32 + center_height as f32;
-        let biome = biomes
-            .iter()
-            .find(|b| world_y >= b.height_range.0 && world_y <= b.height_range.1)
-            .or(biomes.first());
+        let biome = if let Some(pb) = planet_biome {
+            let moisture = (pb.precipitation_mm / 3500.0).clamp(0.0, 1.0) * 100.0;
+            biomes
+                .iter()
+                .copied()
+                .find(|b| biomes::biome_matches(b, 0.0, pb.temperature_k, moisture))
+                .or_else(|| biomes.first().copied())
+        } else {
+            let center_height = surface_height(chunk, CHUNK_SIZE / 2, CHUNK_SIZE / 2).unwrap_or(0);
+            let world_y = coord.y as f32 * CHUNK_SIZE as f32 + center_height as f32;
+            biomes
+                .iter()
+                .copied()
+                .find(|b| world_y >= b.height_range.0 && world_y <= b.height_range.1)
+                .or_else(|| biomes.first().copied())
+        };
         let Some(biome) = biome else { continue };
 
         if biome.item_spawns.is_empty() {

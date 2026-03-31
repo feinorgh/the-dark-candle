@@ -19,6 +19,7 @@
 use bevy::math::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// Unique identifier for a cell in the geodesic grid.
 ///
@@ -193,6 +194,103 @@ impl IcosahedralGrid {
     /// Access the raw area data for all cells.
     pub fn all_areas(&self) -> &[f64] {
         &self.areas
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CellIndex — fast nearest-cell spatial lookup
+// ---------------------------------------------------------------------------
+
+/// Grid-based spatial index for fast nearest-cell lookups.
+///
+/// Partitions the sphere into 1° × 1° latitude/longitude bins. For each
+/// query only cells in nearby bins are checked (with a wider longitude window
+/// near the poles), giving sub-millisecond performance at all subdivision
+/// levels including level 9 (~2.6 M cells).
+///
+/// Build once with [`CellIndex::build`] and then call [`CellIndex::nearest_cell`]
+/// per voxel (or per column) during chunk generation.
+pub struct CellIndex {
+    lat_bins: usize,
+    lon_bins: usize,
+    bins: Vec<Vec<u32>>,
+    /// Latitude bin search radius, derived from grid cell spacing.
+    lat_search: i32,
+}
+
+impl CellIndex {
+    /// Build a spatial index from the given grid.  O(n) construction.
+    pub fn build(grid: &IcosahedralGrid) -> Self {
+        const LAT_BINS: usize = 180;
+        const LON_BINS: usize = 360;
+        let mut bins = vec![Vec::new(); LAT_BINS * LON_BINS];
+
+        for id in grid.cell_ids() {
+            let (lat, lon) = grid.cell_lat_lon(id);
+            let lb = ((lat + FRAC_PI_2) / PI * LAT_BINS as f64).clamp(0.0, (LAT_BINS - 1) as f64)
+                as usize;
+            let lob =
+                ((lon + PI) / TAU * LON_BINS as f64).clamp(0.0, (LON_BINS - 1) as f64) as usize;
+            bins[lb * LON_BINS + lob].push(id.0);
+        }
+
+        let n = grid.cell_count();
+        // Approximate inter-cell angular spacing in degrees; add margin for
+        // safety so the nearest cell is never outside the searched window.
+        let spacing_deg = (4.0 * PI / n as f64).sqrt().to_degrees();
+        let lat_search = (spacing_deg.ceil() as i32 + 2).max(2);
+
+        Self {
+            lat_bins: LAT_BINS,
+            lon_bins: LON_BINS,
+            bins,
+            lat_search,
+        }
+    }
+
+    /// Find the nearest grid cell to a unit-sphere position vector.
+    ///
+    /// The vector need not be exactly unit length — it is normalised
+    /// internally.  Returns the nearest `CellId` using a dot-product
+    /// comparison over the relevant bins.
+    pub fn nearest_cell(&self, grid: &IcosahedralGrid, pos: DVec3) -> CellId {
+        let target = pos.normalize_or(DVec3::Y);
+
+        // Derive (lat, lon) from the target direction (Y-up convention).
+        let lat = target.y.asin().clamp(-FRAC_PI_2, FRAC_PI_2);
+        let lon = target.x.atan2(target.z); // atan2(X, Z) — Y-up grid
+
+        let lb = ((lat + FRAC_PI_2) / PI * self.lat_bins as f64)
+            .clamp(0.0, (self.lat_bins - 1) as f64) as usize;
+        let lob = ((lon + PI) / TAU * self.lon_bins as f64).clamp(0.0, (self.lon_bins - 1) as f64)
+            as usize;
+
+        // Widen longitude search near the poles where 1° of lon subtends
+        // a very small arc, so cells may fall in far-away lon bins.
+        let cos_lat = lat.cos().abs().max(0.01);
+        let extra_lon = ((2.0 / cos_lat) as i32)
+            .max(2)
+            .min(self.lon_bins as i32 / 2);
+
+        let mut best_id = CellId(0);
+        let mut best_dot = f64::NEG_INFINITY;
+
+        for dlat in -self.lat_search..=self.lat_search {
+            let lat_idx = (lb as i32 + dlat).clamp(0, self.lat_bins as i32 - 1) as usize;
+            for dlon in -extra_lon..=extra_lon {
+                let lon_idx = (lob as i32 + dlon).rem_euclid(self.lon_bins as i32) as usize;
+                for &cell_id in &self.bins[lat_idx * self.lon_bins + lon_idx] {
+                    let cpos = grid.cell_position(CellId(cell_id));
+                    let dot = target.dot(cpos);
+                    if dot > best_dot {
+                        best_dot = dot;
+                        best_id = CellId(cell_id);
+                    }
+                }
+            }
+        }
+
+        best_id
     }
 }
 
@@ -615,5 +713,39 @@ mod tests {
             lat > 0.5,
             "North pole cell latitude = {lat}, expected > 0.5"
         );
+    }
+
+    #[test]
+    fn cell_index_nearest_matches_brute_force() {
+        let grid = IcosahedralGrid::new(3);
+        let index = CellIndex::build(&grid);
+        // Test a handful of positions around the sphere.
+        let test_positions = [
+            DVec3::Y,
+            DVec3::NEG_Y,
+            DVec3::X,
+            DVec3::NEG_X,
+            DVec3::Z,
+            DVec3::new(0.6, 0.6, 0.5).normalize(),
+        ];
+        for pos in test_positions {
+            let fast = index.nearest_cell(&grid, pos);
+            let brute = grid.nearest_cell_from_pos(pos);
+            assert_eq!(
+                fast, brute,
+                "CellIndex mismatch at {pos}: fast={fast}, brute={brute}"
+            );
+        }
+    }
+
+    #[test]
+    fn cell_index_round_trips_all_cells() {
+        let grid = IcosahedralGrid::new(2);
+        let index = CellIndex::build(&grid);
+        for id in grid.cell_ids() {
+            let pos = grid.cell_position(id);
+            let found = index.nearest_cell(&grid, pos);
+            assert_eq!(found, id, "CellIndex round-trip failed: {id} → {found}");
+        }
     }
 }

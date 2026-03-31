@@ -380,6 +380,9 @@ fn material_from_layer_name(name: &str) -> MaterialId {
 pub enum UnifiedTerrainGenerator {
     Flat(TerrainGenerator),
     Spherical(SphericalTerrainGenerator),
+    /// Planet-data-driven spherical generator.  Uses IDW elevation from the
+    /// tectonic/biome simulation rather than pure Perlin noise.
+    Planetary(super::planetary_sampler::PlanetaryTerrainSampler),
 }
 
 impl UnifiedTerrainGenerator {
@@ -407,10 +410,26 @@ impl UnifiedTerrainGenerator {
     }
 
     /// Fill a chunk with terrain.
-    pub fn generate_chunk(&self, chunk: &mut Chunk) {
+    ///
+    /// Returns `Some(ChunkBiomeData)` when using the planetary generator;
+    /// `None` for flat/spherical noise-based generators.
+    pub fn generate_chunk(
+        &self,
+        chunk: &mut Chunk,
+    ) -> Option<super::planetary_sampler::ChunkBiomeData> {
         match self {
-            Self::Flat(g) => g.generate_chunk(chunk),
-            Self::Spherical(g) => g.generate_chunk(chunk),
+            Self::Flat(g) => {
+                g.generate_chunk(chunk);
+                None
+            }
+            Self::Spherical(g) => {
+                g.generate_chunk(chunk);
+                None
+            }
+            Self::Planetary(g) => {
+                let biome = g.generate_chunk(chunk);
+                Some(biome)
+            }
         }
     }
 
@@ -418,7 +437,7 @@ impl UnifiedTerrainGenerator {
     pub fn config(&self) -> Option<&TerrainConfig> {
         match self {
             Self::Flat(g) => Some(g.config()),
-            Self::Spherical(_) => None,
+            Self::Spherical(_) | Self::Planetary(_) => None,
         }
     }
 
@@ -449,11 +468,19 @@ impl UnifiedTerrainGenerator {
                 let (lat, lon) = g.planet().lat_lon(pos);
                 g.sample_surface_radius(lat, lon)
             }
+            Self::Planetary(g) => {
+                // Use column mid-Y for the unit-sphere projection.
+                let pos = bevy::math::DVec3::new(world_x, g.planet_config.mean_radius, world_z);
+                let unit = pos.normalize_or(bevy::math::DVec3::Y);
+                let (surface_r, _) = g.surface_radius_at(unit);
+                surface_r
+            }
         }
     }
+
     /// Whether the terrain is in spherical mode.
     pub fn is_spherical(&self) -> bool {
-        matches!(self, Self::Spherical(_))
+        matches!(self, Self::Spherical(_) | Self::Planetary(_))
     }
 }
 
