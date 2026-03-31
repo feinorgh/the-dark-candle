@@ -62,7 +62,22 @@ impl FrameEncoder {
     /// found. The `width` and `height` are the pixel dimensions of each frame
     /// (i.e. `grid_size * scale`).
     pub fn new(output_path: &str, width: u32, height: u32, fps: u32) -> Result<Self, String> {
-        // Try to launch ffmpeg
+        // Try to launch ffmpeg.
+        //
+        // We use fragmented MP4 (`frag_keyframe+empty_moov`) instead of the
+        // more common `-movflags +faststart` for a critical reason: with a
+        // piped input stream the encoder may be killed before `finish()` is
+        // called (e.g. the user presses Ctrl-C, a test times out, or the
+        // process is OOM-killed).  With `+faststart` the moov atom is only
+        // written at the very end, so any premature termination leaves a file
+        // containing only the raw ftyp box (typically 48 bytes) which every
+        // player rejects with "moov atom not found".
+        //
+        // With `+frag_keyframe+empty_moov+default_base_moof` ffmpeg writes a
+        // valid empty moov atom at the start and then appends self-contained
+        // "moof+mdat" fragment pairs for every key-frame.  Each fragment is
+        // independently decodable, so even a partially-written file is
+        // playable up to however many frames were successfully flushed.
         let ffmpeg_result = Command::new("ffmpeg")
             .args([
                 "-y", // overwrite output
@@ -82,11 +97,12 @@ impl FrameEncoder {
                 "fast",
                 "-pix_fmt",
                 "yuv420p",
-                // Ensure dimensions are even (x264 requirement)
+                // Ensure dimensions are even (x264 requirement).
                 "-vf",
                 "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                // Fragmented MP4: valid even if the encoder is killed early.
                 "-movflags",
-                "+faststart",
+                "+frag_keyframe+empty_moov+default_base_moof",
                 output_path,
             ])
             .stdin(Stdio::piped())

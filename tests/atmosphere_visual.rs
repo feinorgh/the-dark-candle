@@ -240,6 +240,36 @@ fn cloud_field_at_origin(data: Vec<f32>) -> CloudField {
 }
 
 // ---------------------------------------------------------------------------
+// Smoke test: verify FrameEncoder writes a valid file (fast, not ignored)
+// ---------------------------------------------------------------------------
+
+/// Fast smoke test: create a 2-frame MP4 and verify the file exists.
+/// This confirms that the FrameEncoder → ffmpeg pipeline works correctly
+/// from the test working directory.
+#[test]
+fn frame_encoder_writes_file() {
+    let _ = std::fs::create_dir_all("test_output");
+    let path = "test_output/encoder_smoke_test.mp4";
+    let _ = std::fs::remove_file(path);
+
+    let w = 64_u32;
+    let h = 64_u32;
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb([100_u8, 150, 200]));
+
+    let mut enc = FrameEncoder::new(path, w, h, 30).expect("encoder");
+    enc.push_frame(&img).expect("frame 0");
+    enc.push_frame(&img).expect("frame 1");
+    enc.finish().expect("finish");
+
+    assert!(
+        std::path::Path::new(path).exists(),
+        "FrameEncoder did not create {path}; CWD is {:?}",
+        std::env::current_dir().unwrap()
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
 // Test 1: Sky Scattering Panorama — 24-hour cycle
 // ---------------------------------------------------------------------------
 
@@ -811,10 +841,14 @@ fn atmosphere_showcase_video() {
     let path = "test_output/atmosphere_showcase.mp4";
 
     let size = 32_usize;
-    let img_w = 800_u32;
-    let img_h = 600_u32;
+    // Keep resolution and duration modest: the per-pixel work (ray marching,
+    // fog integration, sky scattering) is very expensive in a debug build.
+    // 512×384 @ 8 s (240 frames) matches the other visual tests and completes
+    // in a few minutes.  Raise these for a higher-quality offline render.
+    let img_w = 512_u32;
+    let img_h = 384_u32;
     let fps = 30_u32;
-    let duration_s = 30.0_f32; // Full day cycle
+    let duration_s = 8.0_f32; // Covers pre-dawn → noon → dusk portion of the day cycle
     let total_frames = (duration_s * fps as f32) as u32;
 
     let registry = atmosphere_registry();
