@@ -60,8 +60,9 @@ terrain detail.
 - **Octree chunks** — 32³ base resolution with adaptive multi-resolution subdivision
 - **20 material types** — loaded from RON data files (stone, water, iron, lava, wood, glass…)
 - **Procedural terrain** — noise-based heightmaps, valley/river carving, hydraulic erosion
+- **Planetary terrain mode** — `--planet` runs the full geodesic pipeline (tectonics → biomes → geology) and drives voxel surface height, materials, and ore veins from `PlanetData`; `ChunkBiomeData` propagates temperature and precipitation to all procgen systems
 - **Tree generation** — L-system-inspired procedural trees with bark, wood, twig, and leaf materials
-- **Scene presets** — valley river, volcanic island, ocean, flat terrain, and more
+- **Scene presets** — valley river, volcanic island, ocean, flat terrain, spherical planet, and more
 
 ### ⚗️ Physics & Chemistry
 - **SI units throughout** — 1 voxel = 1 metre, real densities, conductivities, specific heats
@@ -129,6 +130,9 @@ cargo run --features bevy/dynamic_linking
 
 # Run with release optimisations
 cargo run --release
+
+# Run with planet-driven terrain (generates a geodesic planet first)
+cargo run --release -- --planet --planet-seed 42 --planet-level 5
 ```
 
 ### Generate a Planet
@@ -172,7 +176,7 @@ cargo run --release --bin worldgen -- \
 ### Run Tests
 
 ```bash
-cargo test --lib                 # 1296 unit tests
+cargo test --lib                 # 1305 unit tests
 cargo test --test simulations    # Physics simulation scenarios
 cargo test --test validate_assets  # Asset loading validation
 ```
@@ -203,7 +207,7 @@ The codebase is organised into focused ECS modules:
 | `simulation/` | Headless tick-based simulation runner for tests |
 | `camera/` | First-person camera controller |
 
-**146 source files · ~60K lines of Rust · 1296+ tests**
+**146 source files · ~60K lines of Rust · 1305+ tests**
 
 ### Data-Driven Design
 

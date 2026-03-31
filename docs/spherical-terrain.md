@@ -115,3 +115,56 @@ Once spherical terrain is in place, subsequent phases can layer on:
   crust thickness and plate stress. Lava flows use existing fluid simulation.
 - **Ocean currents & climate** — large-scale fluid simulation determines temperature
   and moisture distribution. Drives biome placement and weather patterns.
+
+---
+
+## Planetary Terrain Connection ✅
+
+The full geodesic world generation pipeline is now connected to the voxel game
+via `--planet`. This replaces the future-work items above with a working system.
+
+### How it works
+
+1. **CLI pipeline** — `--planet [--planet-seed N] [--planet-level L]` runs
+   `run_tectonics → run_biomes → run_geology` before Bevy starts, producing a
+   `PlanetData` struct with per-cell elevation, biome, temperature, precipitation,
+   rock type, and ore deposits on a geodesic icosahedral grid.
+
+2. **`PlanetaryData` resource** — wraps `Arc<PlanetData>` + `Arc<CellIndex>` and
+   is inserted into the ECS before plugins run.
+
+3. **`rebuild_terrain_gen_if_planetary`** — a `PostStartup` system that swaps
+   the `SharedTerrainGen` to `UnifiedTerrainGenerator::Planetary` if
+   `PlanetaryData` is present.
+
+4. **`PlanetaryTerrainSampler`** — samples one geodesic cell per column (lx, lz)
+   via `CellIndex::nearest_cell`, then calls `sample_detailed_elevation` (IDW +
+   fractal noise) for the surface radius. Sweeps ly to assign materials:
+   - Surface layer: biome-mapped material (GRASS, SAND, ICE, etc.)
+   - Sub-surface: rock-type-mapped material (STONE, LAVA, etc.)
+   - Ore veins: from `ore_bitmask` at depth, ~3% sparsity
+   - Water: ocean fill below sea level
+   - Cave carving: reuses `SphericalTerrainGenerator` Perlin noise
+
+5. **`ChunkBiomeData` component** — attached to every chunk entity in planetary
+   mode. Carries `planet_biome`, `temperature_k`, `precipitation_mm`,
+   `surface_rock`, `ore_bitmask`. Procgen systems (`spawn_creatures`,
+   `spawn_items`) use temperature + precipitation to select `BiomeData` handles
+   instead of the height heuristic.
+
+6. **`CellIndex`** — 1°×1° lat/lon bin index with adaptive `lat_search` radius
+   (scales with `sqrt(4π/n)` so it works correctly for all subdivision levels,
+   including coarse grids used in tests).
+
+### Usage
+
+```bash
+# Default (level 5, seed 42)
+cargo run --release -- --planet
+
+# Custom seed and resolution
+cargo run --release -- --planet --planet-seed 1337 --planet-level 6
+
+# Equivalent using --scene alias
+cargo run --release -- --scene planet
+```

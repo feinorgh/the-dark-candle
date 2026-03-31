@@ -228,6 +228,20 @@ in spherical coordinates, shell-based chunk loading, radial apparent gravity
 (gravitational + centrifugal). Default 32 km radius. Cartesian chunk/LOD
 pipeline preserved.
 
+**Planetary terrain connection (completed):** The `--planet` CLI flag runs the
+full geodesic pipeline (tectonics → biomes → geology) before the game starts,
+then drives per-voxel terrain via `PlanetaryTerrainSampler` — IDW interpolation
+from icosahedral cells combined with fractal noise from `TerrainNoise`. Each
+chunk entity receives a `ChunkBiomeData` component (planet biome type,
+temperature K, precipitation mm, surface rock, ore bitmask), which procgen
+systems (`spawn_creatures`, `spawn_items`, `plant_trees`) use for biome
+selection in place of the height heuristic.
+
+New in this connection: `CellIndex` (adaptive spatial index in `grid.rs`),
+`PlanetaryTerrainSampler`, `ChunkBiomeData`, `PlanetaryData` resource,
+`UnifiedTerrainGenerator::Planetary` variant, `--planet-level` and
+`--planet-seed` CLI flags, `SphericalPlanet` scene preset.
+
 Full design: **[spherical-terrain.md](spherical-terrain.md)**
 
 ---
@@ -272,10 +286,11 @@ Full design: **[structural-construction.md](structural-construction.md)**
 
 ## What's Next
 
-With the core simulation stack complete, spherical terrain planned (Phase 8),
-atmosphere simulation designed (Phase 9), and structural construction designed
-(Phase 11), the project also needs integration, polish, and gameplay. These are
-not yet planned in detail — each will get a session plan when started.
+With the core simulation stack complete, spherical terrain done (Phase 8,
+including planetary terrain connection), atmosphere simulation implemented
+(Phase 9), and structural construction designed (Phase 11), the project also
+needs integration, polish, and gameplay. These are not yet planned in detail —
+each will get a session plan when started.
 
 **Near-term visual integration (Phase 9b–9d):** The chemistry/heat physics are
 fully implemented and tested but not yet running in-game or visible to the
@@ -608,10 +623,11 @@ Full design: **[valley-river-milestone.md](valley-river-milestone.md)**
   worldgen pipeline supports arbitrary radius via `--radius-km`.
 - **Tectonic simulation fidelity?** Implemented as boundary-only stress model
   with configurable step count (default 100). Full mantle convection deferred.
-- **Geodesic grid integration?** The standalone pipeline (`src/planet/`) proves
-  the generation algorithms. Full integration with the Cartesian voxel game
-  (CellGrid trait, hex chunks, physics migration) remains Phase 0–5 of the
-  geodesic design document.
+- **Geodesic grid integration?** The standalone pipeline (`src/planet/`) now drives
+  the voxel game directly. The `--planet` flag runs the full tectonic→biome→geology
+  pipeline and connects `PlanetData` to chunk generation via `PlanetaryTerrainSampler`
+  and `ChunkBiomeData`. Hex chunk layouts and the full geodesic design document
+  (Phases 0–5) remain future work for very-large-scale worlds.
 - **Geoid precision?** Exact equipotential surface vs. oblate spheroid approximation
   for sea level. Spherical harmonics are overkill for a game — ellipsoid is likely
   sufficient.
