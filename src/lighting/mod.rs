@@ -11,6 +11,7 @@ pub mod scattering;
 pub mod shadows;
 pub mod sky;
 
+use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 
 use crate::world::planet::PlanetConfig;
@@ -52,8 +53,10 @@ impl Default for DayNightConfig {
         Self {
             time_scale: 72.0,
             noon_illuminance: 10_000.0,
-            noon_ambient: 200.0,
-            night_ambient: 10.0,
+            // Reduced from 200/10: the Atmosphere component now provides
+            // sky-based IBL, so flat ambient is fill-only for shadowed areas.
+            noon_ambient: 80.0,
+            night_ambient: 5.0,
         }
     }
 }
@@ -228,6 +231,36 @@ fn update_ambient(
     }
 }
 
+/// System: update distance fog color to match time of day.
+fn update_fog(
+    orbital_state: Res<orbital::OrbitalState>,
+    planet: Res<PlanetConfig>,
+    mut fog_q: Query<&mut DistanceFog>,
+) {
+    let (_dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
+
+    let fog_color = if elevation <= 0.0 {
+        // Night: dark blue-gray
+        Color::srgb(0.05, 0.06, 0.1)
+    } else if elevation < 0.3 {
+        // Dawn/dusk: warm haze
+        let t = elevation / 0.3;
+        Color::srgb(0.4 + 0.3 * t, 0.35 + 0.43 * t, 0.3 + 0.6 * t)
+    } else {
+        // Day: light atmospheric haze
+        Color::srgb(0.7, 0.78, 0.9)
+    };
+
+    for mut fog in &mut fog_q {
+        fog.color = fog_color;
+    }
+}
+
 /// Spawn the sun and ambient light entities using orbital state.
 fn spawn_lights(
     mut commands: Commands,
@@ -356,6 +389,9 @@ pub struct LightingPlugin;
 
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
+        // Black clear color — the Atmosphere shader renders the sky over it.
+        app.insert_resource(ClearColor(Color::BLACK));
+
         // Initialize OrbitalState so rotation corresponds to TimeOfDay default (10:00).
         let initial_rotation = 10.0 / 24.0 * std::f64::consts::TAU;
         app.insert_resource(orbital::OrbitalState {
@@ -378,6 +414,7 @@ impl Plugin for LightingPlugin {
                     orbital::time_acceleration_input,
                     update_sun,
                     update_ambient,
+                    update_fog,
                     update_chunk_light_maps,
                     update_terrain_shadows,
                 )

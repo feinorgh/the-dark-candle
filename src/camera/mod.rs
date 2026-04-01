@@ -1,4 +1,5 @@
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
@@ -77,7 +78,11 @@ impl Default for FpsCamera {
     }
 }
 
-fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGeneratorRes>>) {
+fn spawn_camera(
+    mut commands: Commands,
+    terrain_gen: Option<Res<TerrainGeneratorRes>>,
+    mut media: ResMut<Assets<ScatteringMedium>>,
+) {
     // Pick a spawn position on the terrain surface.
     //
     // Flat mode:  spawn at world origin (0, surface_height, 0).
@@ -127,10 +132,19 @@ fn spawn_camera(mut commands: Commands, terrain_gen: Option<Res<TerrainGenerator
         (pos, look)
     };
 
+    let medium = media.add(ScatteringMedium::default());
+
     commands.spawn((
         Camera3d::default(),
         Transform::from_translation(spawn_pos).looking_at(look_target, Vec3::Y),
         Bloom::NATURAL,
+        Atmosphere::earthlike(medium),
+        DistanceFog {
+            color: Color::srgba(0.7, 0.78, 0.9, 1.0),
+            directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+            directional_light_exponent: 30.0,
+            falloff: FogFalloff::from_visibility(500.0),
+        },
         FpsCamera::default(),
         Player,
         Health::new(100.0),

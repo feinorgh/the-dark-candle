@@ -47,7 +47,7 @@
       {
         "name": "lighting",
         "path": "src/lighting/",
-        "responsibility": "Orbital sun mechanics, Rayleigh+Mie atmospheric scattering, sunlight propagation/light maps, volumetric cloud ray-marching, terrain shadows, cloud shadows, fog, sky color, day/night cycle"
+        "responsibility": "Orbital sun mechanics, Rayleigh+Mie atmospheric scattering (CPU for export, Bevy Atmosphere component for in-game GPU sky), sunlight propagation/light maps, volumetric cloud ray-marching, terrain shadows, cloud shadows, distance fog with time-of-day color, day/night cycle"
       },
       {
         "name": "weather",
@@ -1206,6 +1206,23 @@
       ],
       "notes": "Full UI with 8 preset buttons. CLI --scene bypasses UI. Generate button transitions to Loading state.",
       "uncertain": false
+    },
+    {
+      "name": "In-game atmospheric sky rendering",
+      "status": "complete",
+      "paths": [
+        "src/camera/mod.rs",
+        "src/lighting/mod.rs"
+      ],
+      "implements": [
+        "Bevy 0.18 Atmosphere::earthlike() component on camera — GPU Rayleigh+Mie+Ozone scattering",
+        "ClearColor::BLACK — Atmosphere shader draws sky over it",
+        "DistanceFog with time-of-day color adaptation (dawn warm → noon haze → night dark)",
+        "update_fog() system — syncs fog color to orbital sun elevation",
+        "Reduced AmbientLight (noon=80, night=5) since Atmosphere provides sky IBL"
+      ],
+      "notes": "Uses Bevy's built-in AtmospherePlugin (registered by PbrPlugin). Custom sky.rs/scattering.rs remain for headless export. Camera requires HDR (satisfied by Bloom::NATURAL).",
+      "uncertain": false
     }
   ],
   "tech_debt": [
@@ -1268,7 +1285,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "1fa1e94",
+    "generated_from_commit": "32c258d",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1280,7 +1297,7 @@
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled — basic latitude/altitude/proximity model only"
     ],
-    "last_updated": "2026-03-30",
+    "last_updated": "2026-04-01",
     "notes": [
       "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
@@ -1292,7 +1309,8 @@
       "28 MaterialId constants (0-27): 20 original + 8 geological (sandstone, limestone, granite, basalt, coal, copper_ore, gold_ore, quartz_crystal).",
       "8 scene presets: valley_river, spherical_planet, alpine, archipelago, desert_canyon, rolling_plains, volcanic, tundra_fjords.",
       "Extended CLI: --seed, --terrain-detail, --height-scale, --caves, --erosion, --hydraulic-erosion flags.",
-      "World creation UI screen with preset selector, auto-bypassed by CLI --scene flag."
+      "World creation UI screen with preset selector, auto-bypassed by CLI --scene flag.",
+      "Atmospheric sky rendering connected to in-game camera via Bevy 0.18 Atmosphere component. Distance fog with time-of-day color. AmbientLight reduced since atmosphere provides IBL."
     ]
   }
 }
