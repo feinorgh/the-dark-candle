@@ -79,6 +79,14 @@ impl Default for FpsCamera {
     }
 }
 
+/// Compute the local "up" direction (surface normal) for a position on a
+/// spherical planet.  Returns the normalized radial direction from the planet
+/// center, falling back to `Vec3::Y` near the origin.
+fn local_up_from_position(pos: Vec3) -> Vec3 {
+    let len = pos.length();
+    if len > 1e-6 { pos / len } else { Vec3::Y }
+}
+
 fn spawn_camera(
     mut commands: Commands,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
@@ -92,7 +100,7 @@ fn spawn_camera(
     //   chunk density is highest during initial load). The actual position is
     //   a point at distance `surface_radius` from the planet center along the
     //   (lat, lon) direction vector.
-    let (spawn_pos, look_target) = if let Some(ref tg) = terrain_gen {
+    let (spawn_pos, look_target, up_hint) = if let Some(ref tg) = terrain_gen {
         if tg.0.is_spherical() {
             // Latitude 45°, longitude 0° — a mid-latitude spawn.
             let lat: f64 = std::f64::consts::FRAC_PI_4; // 45°
@@ -116,7 +124,9 @@ fn spawn_camera(
             let spawn = dir * (surface_r + EYE_HEIGHT);
             // Look tangent to the surface (slightly ahead along the equator direction).
             let look = spawn + Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
-            (spawn, look)
+            // Use local surface normal as the up hint so the initial frame is
+            // consistent with the spherical camera_look rotation.
+            (spawn, look, dir)
         } else {
             let spawn_x = 0.0_f32;
             let spawn_z = 0.0_f32;
@@ -124,20 +134,20 @@ fn spawn_camera(
             let spawn_y = surface_y + EYE_HEIGHT;
             let pos = Vec3::new(spawn_x, spawn_y, spawn_z);
             let look = Vec3::new(10.0, spawn_y - 1.0, 10.0);
-            (pos, look)
+            (pos, look, Vec3::Y)
         }
     } else {
         // No terrain generator yet — safe fallback.
         let pos = Vec3::new(0.0, 100.0 + EYE_HEIGHT, 0.0);
         let look = Vec3::new(10.0, 99.0, 10.0);
-        (pos, look)
+        (pos, look, Vec3::Y)
     };
 
     let medium = media.add(ScatteringMedium::default());
 
     commands.spawn((
         Camera3d::default(),
-        Transform::from_translation(spawn_pos).looking_at(look_target, Vec3::Y),
+        Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
         Bloom::NATURAL,
         Atmosphere::earthlike(medium),
         DistanceFog {
@@ -186,9 +196,15 @@ fn release_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) 
 }
 
 /// Rotate camera based on accumulated mouse movement (only when cursor is grabbed).
+///
+/// In spherical mode the camera's "up" must match the local surface normal
+/// (radial direction from planet center), not the global Y axis.  We compute a
+/// base orientation via `Quat::from_rotation_arc(Y, local_up)` and apply
+/// yaw/pitch on top.
 fn camera_look(
     cursor_q: Query<&CursorOptions, With<PrimaryWindow>>,
     accumulated: Res<AccumulatedMouseMotion>,
+    planet: Res<PlanetConfig>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
 ) {
     let Ok(cursor) = cursor_q.single() else {
@@ -211,8 +227,16 @@ fn camera_look(
     cam.pitch -= delta.y * cam.sensitivity;
     cam.pitch = cam.pitch.clamp(-1.5, 1.5);
 
-    transform.rotation =
+    let yaw_pitch =
         Quat::from_axis_angle(Vec3::Y, cam.yaw) * Quat::from_axis_angle(Vec3::X, cam.pitch);
+
+    if planet.is_spherical() {
+        let local_up = local_up_from_position(transform.translation);
+        let base = Quat::from_rotation_arc(Vec3::Y, local_up);
+        transform.rotation = base * yaw_pitch;
+    } else {
+        transform.rotation = yaw_pitch;
+    }
 }
 
 /// WASD + Space/Shift movement (only when cursor is grabbed).
@@ -255,9 +279,7 @@ fn camera_move(
     if cam.gravity_enabled {
         // Project movement onto the local tangent plane (perpendicular to gravity).
         let local_up = if planet.is_spherical() {
-            let pos = transform.translation;
-            let len = pos.length();
-            if len > 1e-6 { pos / len } else { Vec3::Y }
+            local_up_from_position(transform.translation)
         } else {
             Vec3::Y
         };
@@ -297,11 +319,16 @@ fn camera_move(
         if key.pressed(KeyCode::KeyA) {
             direction -= right;
         }
+        let up = if planet.is_spherical() {
+            local_up_from_position(transform.translation)
+        } else {
+            Vec3::Y
+        };
         if key.pressed(KeyCode::Space) {
-            direction += Vec3::Y;
+            direction += up;
         }
         if key.pressed(KeyCode::ShiftLeft) {
-            direction -= Vec3::Y;
+            direction -= up;
         }
     }
 
@@ -346,8 +373,7 @@ fn camera_gravity(
 
     if planet.is_spherical() {
         // Radial gravity: pull toward planet center.
-        let r = pos.length();
-        let local_up = if r > 1e-6 { pos / r } else { Vec3::Y };
+        let local_up = local_up_from_position(pos);
 
         // Apply gravity along the radial direction.
         cam.vertical_velocity -= constants::GRAVITY * dt;
@@ -445,5 +471,67 @@ mod tests {
     #[test]
     fn sprint_faster_than_walk() {
         const { assert!(SPRINT_SPEED > WALK_SPEED) };
+    }
+
+    #[test]
+    fn local_up_at_north_pole_is_y() {
+        // At the north pole, position is along +Y → local up = +Y (same as flat mode).
+        let up = local_up_from_position(Vec3::new(0.0, 6_371_000.0, 0.0));
+        assert!((up - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn local_up_at_equator_is_radial() {
+        // At the equator (lon=0), position is along +X → local up = +X.
+        let up = local_up_from_position(Vec3::new(6_371_000.0, 0.0, 0.0));
+        assert!((up - Vec3::X).length() < 1e-5);
+    }
+
+    #[test]
+    fn local_up_at_45_lat() {
+        // At 45° latitude (lon=0), local up should be (cos45, sin45, 0).
+        let r = 6_371_000.0_f32;
+        let lat = std::f32::consts::FRAC_PI_4;
+        let pos = Vec3::new(r * lat.cos(), r * lat.sin(), 0.0);
+        let up = local_up_from_position(pos);
+        let expected = Vec3::new(lat.cos(), lat.sin(), 0.0);
+        assert!(
+            (up - expected).length() < 1e-5,
+            "local_up at 45° lat should be ({}, {}, 0), got {up}",
+            lat.cos(),
+            lat.sin(),
+        );
+    }
+
+    #[test]
+    fn spherical_camera_rotation_aligns_up_with_surface_normal() {
+        // At 45° latitude, the base rotation should align the camera's Y axis
+        // with the local surface normal, not with global Y.
+        let lat = std::f32::consts::FRAC_PI_4;
+        let pos = Vec3::new(6_371_000.0 * lat.cos(), 6_371_000.0 * lat.sin(), 0.0);
+        let local_up = local_up_from_position(pos);
+        let base = Quat::from_rotation_arc(Vec3::Y, local_up);
+        let yaw_pitch = Quat::from_axis_angle(Vec3::Y, 0.0) * Quat::from_axis_angle(Vec3::X, 0.0);
+        let rotation = base * yaw_pitch;
+
+        // Camera's local Y axis in world space should equal local_up.
+        let cam_up = rotation * Vec3::Y;
+        assert!(
+            (cam_up - local_up).length() < 1e-5,
+            "camera up {cam_up} should match surface normal {local_up}",
+        );
+
+        // Camera's forward (-Z) should be perpendicular to local_up (tangent to sphere).
+        let cam_forward = rotation * Vec3::NEG_Z;
+        assert!(
+            cam_forward.dot(local_up).abs() < 1e-5,
+            "camera forward {cam_forward} should be tangent to sphere",
+        );
+    }
+
+    #[test]
+    fn local_up_near_origin_falls_back_to_y() {
+        let up = local_up_from_position(Vec3::new(1e-8, 1e-8, 1e-8));
+        assert_eq!(up, Vec3::Y);
     }
 }

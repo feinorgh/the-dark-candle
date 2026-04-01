@@ -197,5 +197,26 @@
       "But there's a startup race: first meshes may use wrong fallback colors before registry loads.",
       "RGB values sourced from assets/data/materials/*.material.ron for consistency."
     ]
+  },
+  {
+    "id": "CAMERA-001",
+    "title": "Camera horizon tilted at 45° on spherical planet at 45° latitude",
+    "category": "camera",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-01",
+    "description": "In spherical terrain mode, the player spawns at 45° latitude but the camera always treats global Y as 'up'. The local surface normal at 45° latitude is (cos45°, sin45°, 0), creating a 45° mismatch between the camera's horizon and the actual ground plane. The ground appears tilted by the same angle as the player's latitude.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking` with spherical terrain mode (default). Observe the ground is tilted ~45° from the camera's horizon.",
+    "suspected_files": [
+      "src/camera/mod.rs"
+    ],
+    "suspected_cause": "camera_look() applied yaw/pitch around global Y/X axes instead of the local surface-normal frame. spawn_camera() used Vec3::Y as the looking_at up hint. Fly-mode vertical movement also used global Y.",
+    "related_commits": [],
+    "resolution": "Three fixes in src/camera/mod.rs: (1) camera_look() now prepends Quat::from_rotation_arc(Vec3::Y, local_up) as a base orientation in spherical mode, aligning camera Y with the radial surface normal. (2) spawn_camera() passes the local surface normal as the looking_at up hint. (3) Fly-mode Space/Shift use local_up instead of Vec3::Y. Added local_up_from_position() helper reused by all three systems. 6 new unit tests.",
+    "notes": [
+      "Gravity and movement tangent-plane projection were already correct — only the camera orientation was wrong.",
+      "Quat::from_rotation_arc has a singularity at the south pole (local_up ≈ -Y) but this is an acceptable edge case.",
+      "The fix applies only in spherical mode; flat mode behavior is unchanged."
+    ]
   }
 ]

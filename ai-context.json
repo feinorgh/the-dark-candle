@@ -102,7 +102,7 @@
       {
         "name": "camera",
         "path": "src/camera/",
-        "responsibility": "First-person camera with gravity toggle (G key). Walk 5 m/s, sprint 8 m/s, fly 20 m/s. Tangent-plane movement for spherical terrain. 1.7m eye height, realistic jump physics"
+        "responsibility": "First-person camera with gravity toggle (G key). Walk 5 m/s, sprint 8 m/s, fly 20 m/s. Tangent-plane movement for spherical terrain. Spherical mode: camera orientation aligned to local surface normal via Quat::from_rotation_arc base rotation. 1.7m eye height, realistic jump physics"
       },
       {
         "name": "hud",
@@ -651,9 +651,10 @@
         "src/camera/mod.rs"
       ],
       "implements": [
-        "camera_move() \u2014 mod.rs:208 (70+ lines, WASD + tangent-plane projection for spherical + jump + fly mode)",
-        "camera_look() \u2014 mod.rs:174 (27 lines, mouse accumulation \u2192 yaw/pitch \u2192 quaternion rotation)",
-        "camera_gravity() \u2014 mod.rs:314 (64 lines, radial/Y-axis gravity + ground collision)",
+        "camera_move() \u2014 mod.rs:247 (WASD + tangent-plane projection for spherical + jump + fly mode with local-up)",
+        "camera_look() \u2014 mod.rs:204 (mouse accumulation \u2192 yaw/pitch, with Quat::from_rotation_arc base rotation in spherical mode)",
+        "camera_gravity() \u2014 mod.rs:355 (radial/Y-axis gravity + ground collision)",
+        "local_up_from_position() \u2014 mod.rs:89 (normalized radial direction from planet center, shared helper)",
         "CameraPlugin \u2014 mod.rs:15 (registers Startup spawn_camera + Update chain: look \u2192 move \u2192 gravity + cursor grab/release)"
       ],
       "notes": "Walk 5 m/s, sprint 8 m/s, fly 20 m/s. 1.7m eye height. G key toggles gravity",
