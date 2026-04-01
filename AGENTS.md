@@ -21,10 +21,13 @@ At the start of every task:
 - Check `meta.generated_from_commit` against current HEAD. If they differ by more than 10 commits, flag which sections are likely stale before proceeding.
 - Cross-reference the feature list against the files you're about to touch
 - If your task overlaps a `complete` feature, comment on the PR explaining why
+- **Check `issues.json` for open bugs** — if your task touches affected files, investigate and fix related issues. Update issue `status` and `resolution` as you work.
 
 At the end of every task:
 - Update `ai-context.json` with any new features, changed paths, or new env vars
 - Include the updated file in your PR
+- **If you discover new bugs, add them to `issues.json`** with a unique ID, category, severity, and suspected cause.
+- **If you fix a bug, update its status to `resolved`** in `issues.json` with the resolution details and commit SHA.
 
 ## Coding Standard
 Read `docs/RUST_INSTRUCTIONS.md` and follow the guidelines there.
