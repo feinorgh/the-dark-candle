@@ -873,26 +873,39 @@ pub(super) fn dispatch_mesh_tasks(
         let lod_level = new_level.0;
 
         // Collect the 6 face-neighbor snapshots to eliminate boundary seams.
+        // If a neighbor is registered in ChunkMap but has no snapshot (still
+        // generating), defer this chunk — it will be re-dirtied when the
+        // neighbor arrives via collect_terrain_results().
+        let mut has_incomplete_neighbor = false;
         let neighbors = {
-            let snap = |dx: i32, dy: i32, dz: i32| -> Option<Vec<Voxel>> {
+            let snap = |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Vec<Voxel>> {
                 let nc = super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
-                neighbor_snapshots.get(&nc).cloned().or_else(|| {
-                    // Neighbor exists in the map but isn't in the snapshot
-                    // (e.g. it has a MeshTask). Treat boundary as air this frame;
-                    // the neighbor's mesh task will mark this chunk dirty when done.
-                    let _ = chunk_map.get(&nc)?;
-                    None
-                })
+                if let Some(data) = neighbor_snapshots.get(&nc) {
+                    return Some(data.clone());
+                }
+                // Neighbor in ChunkMap but no snapshot yet → still generating.
+                if chunk_map.contains(&nc) {
+                    *incomplete = true;
+                }
+                // Not in ChunkMap at all → world edge, AIR is correct.
+                None
             };
             NeighborVoxels {
-                px: snap(1, 0, 0),
-                nx: snap(-1, 0, 0),
-                py: snap(0, 1, 0),
-                ny: snap(0, -1, 0),
-                pz: snap(0, 0, 1),
-                nz: snap(0, 0, -1),
+                px: snap(1, 0, 0, &mut has_incomplete_neighbor),
+                nx: snap(-1, 0, 0, &mut has_incomplete_neighbor),
+                py: snap(0, 1, 0, &mut has_incomplete_neighbor),
+                ny: snap(0, -1, 0, &mut has_incomplete_neighbor),
+                pz: snap(0, 0, 1, &mut has_incomplete_neighbor),
+                nz: snap(0, 0, -1, &mut has_incomplete_neighbor),
             }
         };
+
+        // Defer meshing if any loaded neighbor lacks voxel data — we'd produce
+        // seams that need immediate re-meshing anyway. The chunk stays dirty so
+        // it will be picked up next frame.
+        if has_incomplete_neighbor {
+            continue;
+        }
 
         chunk.clear_dirty();
 
@@ -1597,5 +1610,56 @@ mod tests {
             };
             assert_eq!(result.lod_level, level_val);
         }
+    }
+
+    #[test]
+    fn neighbor_voxels_eliminates_boundary_seam() {
+        // A fully solid chunk meshed WITHOUT neighbors produces boundary faces
+        // (false surfaces where solid meets out-of-bounds air). With a solid
+        // neighbor on the +X face, the boundary there should merge seamlessly.
+        let coord = ChunkCoord::new(0, 0, 0);
+        let chunk = Chunk::new_filled(coord, MaterialId::STONE);
+
+        // Mesh with no neighbors → boundary surfaces on all 6 faces.
+        let mesh_no_neighbors =
+            generate_mesh_with_colors(&chunk, &NeighborVoxels::default(), None, false);
+
+        // Provide a solid +X neighbor snapshot.
+        let neighbor_chunk = Chunk::new_filled(ChunkCoord::new(1, 0, 0), MaterialId::STONE);
+        let neighbors = NeighborVoxels {
+            px: Some(neighbor_chunk.flat_snapshot()),
+            ..Default::default()
+        };
+        let mesh_with_px = generate_mesh_with_colors(&chunk, &neighbors, None, false);
+
+        // With a solid +X neighbor, the +X boundary surface is eliminated (solid
+        // meets solid → no surface). So fewer vertices/triangles overall.
+        assert!(
+            mesh_with_px.vertex_count() < mesh_no_neighbors.vertex_count(),
+            "Solid neighbor on +X should eliminate boundary vertices: {} < {}",
+            mesh_with_px.vertex_count(),
+            mesh_no_neighbors.vertex_count(),
+        );
+    }
+
+    #[test]
+    fn neighbor_voxels_sample_crosses_boundary() {
+        let chunk = Chunk::new_filled(ChunkCoord::new(0, 0, 0), MaterialId::STONE);
+
+        // Without neighbor, out-of-bounds returns AIR (solidity 0).
+        let empty_neighbors = NeighborVoxels::default();
+        let (solidity, mat, _temp) = empty_neighbors.sample(&chunk, CHUNK_SIZE as i32, 0, 0);
+        assert_eq!(solidity, 0.0, "No +X neighbor → AIR");
+        assert_eq!(mat, MaterialId::AIR);
+
+        // With a stone +X neighbor, out-of-bounds returns STONE (solidity 1).
+        let neighbor = Chunk::new_filled(ChunkCoord::new(1, 0, 0), MaterialId::STONE);
+        let full_neighbors = NeighborVoxels {
+            px: Some(neighbor.flat_snapshot()),
+            ..Default::default()
+        };
+        let (solidity, mat, _temp) = full_neighbors.sample(&chunk, CHUNK_SIZE as i32, 0, 0);
+        assert_eq!(solidity, 1.0, "+X neighbor stone → solid");
+        assert_eq!(mat, MaterialId::STONE);
     }
 }

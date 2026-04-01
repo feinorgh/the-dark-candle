@@ -30,7 +30,7 @@
     "title": "Deformed terrain geometry \u2014 visible surface distortion",
     "category": "terrain",
     "severity": "high",
-    "status": "open",
+    "status": "fix-attempted",
     "reported": "2026-04-01",
     "description": "Terrain surfaces appear visually deformed or warped. The Surface Nets mesh output may have incorrect vertex positions, normals, or quad connectivity causing visible distortion.",
     "reproduction": "Run the game and observe terrain at various distances. Look for warped/stretched surfaces, especially at chunk boundaries and LOD transitions.",
@@ -41,12 +41,13 @@
     ],
     "suspected_cause": "Possible causes: (1) LOD stride mismatch \u2014 when LOD level > 0, Surface Nets uses stride = 2^level which coarsens geometry; transitions between LOD levels may create visible seams, (2) Chunk boundary stitching may have edge cases where neighbor snapshots are missing (treats boundary as air), (3) Noise values at terrain surface may produce ambiguous isosurface crossings, (4) Vertex normal computation may be wrong for steep terrain.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Root cause: chunks meshed with incomplete neighbor data (defaulting to AIR) were never re-meshed when neighbors arrived. Fix: (1) collect_terrain_results() now marks 6 face-neighbors dirty when a new chunk spawns, (2) dispatch_mesh_tasks() defers chunks whose loaded neighbors lack voxel snapshots.",
     "notes": [
       "Surface Nets implementation has proper boundary handling via 6 face-neighbor snapshots.",
       "LOD hysteresis (12% dead-band) should prevent thrashing but may not eliminate all visual artifacts.",
       "Integration tests validate chunk stitching (meshing.rs:1114, 1401) \u2014 issue may be data-dependent.",
-      "Check if deformation correlates with LOD transitions by temporarily disabling LOD (force level 0)."
+      "Check if deformation correlates with LOD transitions by temporarily disabling LOD (force level 0).",
+      "Two changes: neighbor invalidation in chunk_manager.rs + mesh deferral in meshing.rs. 2 new unit tests added."
     ]
   },
   {
@@ -54,7 +55,7 @@
     "title": "Degenerate geometry visible inside terrain",
     "category": "terrain",
     "severity": "medium",
-    "status": "open",
+    "status": "fix-attempted",
     "reported": "2026-04-01",
     "description": "When looking at terrain from certain angles or through gaps, degenerate/invisible geometry is visible inside the terrain volume. This suggests the meshing algorithm is generating internal faces that should be culled, or there are holes in the surface mesh revealing interior artifacts.",
     "reproduction": "Run the game. Fly through terrain (G for fly mode) or look at terrain edges/overhangs. Internal geometry may be visible as flickering faces or z-fighting artifacts.",
@@ -64,12 +65,13 @@
     ],
     "suspected_cause": "Possible causes: (1) Surface Nets generating quads for internal isosurface crossings (e.g., cave surfaces inside solid rock), (2) Backface culling not enabled \u2014 internal faces visible from outside, (3) Octree subdivision creating surface artifacts at resolution boundaries, (4) Chunk overlap regions producing duplicate geometry.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Same root cause as TERRAIN-001 \u2014 degenerate geometry was Surface Nets producing false surfaces at chunk boundaries due to missing neighbor data defaulting to AIR. Fixed by the same neighbor invalidation + mesh deferral changes.",
     "notes": [
       "Surface Nets should only generate surface mesh at the air/solid boundary. If internal geometry exists, the algorithm may be finding false surface crossings.",
       "Check if StandardMaterial has cull_mode set to Back (Bevy default is Back).",
       "Cave carving may create internal air pockets that generate visible but unreachable surfaces.",
-      "Octree leaf-level differences could create T-junctions or cracks."
+      "Octree leaf-level differences could create T-junctions or cracks.",
+      "Linked to TERRAIN-001 fix."
     ]
   },
   {

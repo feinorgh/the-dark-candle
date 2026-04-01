@@ -357,7 +357,18 @@ pub fn collect_terrain_results(
     mut chunk_map: ResMut<ChunkMap>,
     mut pending: ResMut<PendingChunks>,
     mut task_q: Query<(Entity, &mut TerrainGenTask)>,
+    mut chunk_q: Query<&mut Chunk>,
 ) {
+    /// The 6 face-neighbor offsets.
+    const FACE_NEIGHBORS: [[i32; 3]; 6] = [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ];
+
     for (task_entity, mut gen_task) in task_q.iter_mut() {
         let Some(result) = block_on(poll_once(&mut gen_task.0)) else {
             continue;
@@ -370,6 +381,21 @@ pub fn collect_terrain_results(
         // Skip if chunk was already loaded (e.g. race between despawn/respawn).
         if chunk_map.contains(&result.coord) {
             continue;
+        }
+
+        // Mark all 6 face-neighbor chunks dirty so they remesh with our
+        // newly-available boundary data (fixes seams from incomplete neighbors).
+        for [dx, dy, dz] in FACE_NEIGHBORS {
+            let nc = ChunkCoord::new(
+                result.coord.x + dx,
+                result.coord.y + dy,
+                result.coord.z + dz,
+            );
+            if let Some(neighbor_entity) = chunk_map.get(&nc)
+                && let Ok(mut neighbor_chunk) = chunk_q.get_mut(neighbor_entity)
+            {
+                neighbor_chunk.mark_dirty();
+            }
         }
 
         let origin = result.coord.world_origin();
