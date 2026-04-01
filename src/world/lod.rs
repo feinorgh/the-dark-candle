@@ -17,19 +17,35 @@ use std::collections::HashMap;
 /// Used when no `MaterialRegistry` is loaded.
 fn material_color_fallback(mat: MaterialId) -> [f32; 4] {
     match mat.0 {
-        0 => [0.0, 0.0, 0.0, 0.0],    // Air (invisible)
-        1 => [0.5, 0.5, 0.5, 1.0],    // Stone (gray)
-        2 => [0.45, 0.30, 0.15, 1.0], // Dirt (brown)
-        3 => [0.2, 0.4, 0.8, 0.8],    // Water (blue, semi-transparent)
-        4 => [0.2, 0.6, 0.1, 1.0],    // Grass (green)
-        5 => [0.7, 0.55, 0.1, 1.0],   // Iron (yellowish)
-        6 => [0.4, 0.25, 0.1, 1.0],   // Wood (dark brown)
-        7 => [0.85, 0.8, 0.55, 1.0],  // Sand (tan)
-        8 => [0.7, 0.85, 1.0, 0.9],   // Ice (pale blue)
-        9 => [0.9, 0.9, 0.95, 0.3],   // Steam (faint white)
-        10 => [1.0, 0.3, 0.0, 1.0],   // Lava (orange-red)
-        11 => [0.3, 0.3, 0.3, 1.0],   // Ash (dark gray)
-        _ => [0.8, 0.0, 0.8, 1.0],    // Unknown (magenta)
+        0 => [0.0, 0.0, 0.0, 0.0],     // Air (invisible gas)
+        1 => [0.5, 0.5, 0.5, 1.0],     // Stone (gray)
+        2 => [0.45, 0.32, 0.18, 1.0],  // Dirt (brown)
+        3 => [0.2, 0.4, 0.8, 0.8],     // Water (blue, semi-transparent)
+        4 => [0.6, 0.6, 0.65, 1.0],    // Iron (silver/gray metallic)
+        5 => [0.6, 0.4, 0.2, 1.0],     // Wood (brown)
+        6 => [0.85, 0.78, 0.55, 1.0],  // Sand (tan)
+        7 => [0.3, 0.6, 0.2, 1.0],     // Grass (green)
+        8 => [0.7, 0.85, 0.95, 0.9],   // Ice (pale blue)
+        9 => [0.9, 0.9, 0.95, 0.3],    // Steam (faint white)
+        10 => [0.9, 0.3, 0.1, 1.0],    // Lava (orange-red)
+        11 => [0.65, 0.65, 0.6, 1.0],  // Ash (gray)
+        12 => [0.85, 0.9, 0.92, 0.4],  // Glass (transparent)
+        13 => [0.0, 0.0, 0.0, 0.0],    // Oxygen (invisible gas)
+        14 => [0.0, 0.0, 0.0, 0.0],    // Hydrogen (invisible gas)
+        15 => [0.4, 0.35, 0.2, 1.0],   // Organic matter (dark brown-green)
+        16 => [0.45, 0.30, 0.15, 1.0], // Twig (light brown)
+        17 => [0.55, 0.42, 0.18, 1.0], // Dry leaves (orange-brown)
+        18 => [0.35, 0.22, 0.12, 1.0], // Bark (dark brown)
+        19 => [0.15, 0.12, 0.10, 1.0], // Charcoal (very dark)
+        20 => [0.76, 0.65, 0.42, 1.0], // Sandstone (warm beige)
+        21 => [0.82, 0.80, 0.72, 1.0], // Limestone (pale gray)
+        22 => [0.66, 0.60, 0.58, 1.0], // Granite (pinkish gray)
+        23 => [0.30, 0.30, 0.32, 1.0], // Basalt (very dark gray)
+        24 => [0.12, 0.12, 0.12, 1.0], // Coal (near-black)
+        25 => [0.45, 0.58, 0.40, 1.0], // Copper ore (greenish-brown)
+        26 => [0.70, 0.60, 0.30, 1.0], // Gold ore (yellowish)
+        27 => [0.90, 0.88, 0.95, 1.0], // Quartz crystal (pale violet)
+        _ => [0.8, 0.0, 0.8, 1.0],     // Unknown (magenta)
     }
 }
 
@@ -52,7 +68,7 @@ impl MaterialColorMap {
     /// Build a color map from hardcoded fallback colors.
     pub fn from_defaults() -> Self {
         let mut colors = HashMap::new();
-        for id in 0..=11u16 {
+        for id in 0..=27u16 {
             colors.insert(id, material_color_fallback(MaterialId(id)));
         }
         Self { colors }

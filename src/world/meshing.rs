@@ -125,19 +125,35 @@ fn thermal_heatmap_color(temperature: f32) -> [f32; 4] {
 /// Hardcoded fallback used when no `MaterialColorMap` is available.
 fn material_color_fallback(mat: MaterialId) -> [f32; 4] {
     match mat.0 {
-        0 => [0.0, 0.0, 0.0, 0.0],    // air (shouldn't appear)
-        1 => [0.5, 0.5, 0.5, 1.0],    // stone: grey
-        2 => [0.45, 0.30, 0.15, 1.0], // dirt: brown
-        3 => [0.2, 0.4, 0.8, 0.8],    // water: blue, semi-transparent
-        4 => [0.2, 0.6, 0.1, 1.0],    // grass: green
-        5 => [0.7, 0.55, 0.1, 1.0],   // iron: yellowish
-        6 => [0.4, 0.25, 0.1, 1.0],   // wood: dark brown
-        7 => [0.85, 0.8, 0.55, 1.0],  // sand: tan
-        8 => [0.7, 0.85, 1.0, 0.9],   // ice: pale blue
-        9 => [0.9, 0.9, 0.95, 0.3],   // steam: faint white
-        10 => [1.0, 0.3, 0.0, 1.0],   // lava: orange-red
-        11 => [0.3, 0.3, 0.3, 1.0],   // ash: dark grey
-        _ => [0.8, 0.0, 0.8, 1.0],    // unknown: magenta
+        0 => [0.0, 0.0, 0.0, 0.0],     // Air (invisible gas)
+        1 => [0.5, 0.5, 0.5, 1.0],     // Stone (gray)
+        2 => [0.45, 0.32, 0.18, 1.0],  // Dirt (brown)
+        3 => [0.2, 0.4, 0.8, 0.8],     // Water (blue, semi-transparent)
+        4 => [0.6, 0.6, 0.65, 1.0],    // Iron (silver/gray metallic)
+        5 => [0.6, 0.4, 0.2, 1.0],     // Wood (brown)
+        6 => [0.85, 0.78, 0.55, 1.0],  // Sand (tan)
+        7 => [0.3, 0.6, 0.2, 1.0],     // Grass (green)
+        8 => [0.7, 0.85, 0.95, 0.9],   // Ice (pale blue)
+        9 => [0.9, 0.9, 0.95, 0.3],    // Steam (faint white)
+        10 => [0.9, 0.3, 0.1, 1.0],    // Lava (orange-red)
+        11 => [0.65, 0.65, 0.6, 1.0],  // Ash (gray)
+        12 => [0.85, 0.9, 0.92, 0.4],  // Glass (transparent)
+        13 => [0.0, 0.0, 0.0, 0.0],    // Oxygen (invisible gas)
+        14 => [0.0, 0.0, 0.0, 0.0],    // Hydrogen (invisible gas)
+        15 => [0.4, 0.35, 0.2, 1.0],   // Organic matter (dark brown-green)
+        16 => [0.45, 0.30, 0.15, 1.0], // Twig (light brown)
+        17 => [0.55, 0.42, 0.18, 1.0], // Dry leaves (orange-brown)
+        18 => [0.35, 0.22, 0.12, 1.0], // Bark (dark brown)
+        19 => [0.15, 0.12, 0.10, 1.0], // Charcoal (very dark)
+        20 => [0.76, 0.65, 0.42, 1.0], // Sandstone (warm beige)
+        21 => [0.82, 0.80, 0.72, 1.0], // Limestone (pale gray)
+        22 => [0.66, 0.60, 0.58, 1.0], // Granite (pinkish gray)
+        23 => [0.30, 0.30, 0.32, 1.0], // Basalt (very dark gray)
+        24 => [0.12, 0.12, 0.12, 1.0], // Coal (near-black)
+        25 => [0.45, 0.58, 0.40, 1.0], // Copper ore (greenish-brown)
+        26 => [0.70, 0.60, 0.30, 1.0], // Gold ore (yellowish)
+        27 => [0.90, 0.88, 0.95, 1.0], // Quartz crystal (pale violet)
+        _ => [0.8, 0.0, 0.8, 1.0],     // Unknown (magenta)
     }
 }
 
@@ -310,6 +326,7 @@ pub fn generate_mesh_from_octree_with_colors(
 ) -> ChunkMesh {
     generate_mesh_generic(
         size as i32 + 1,
+        1.0,
         |x, y, z| {
             let cs = size as i32;
             if x >= 0 && y >= 0 && z >= 0 && x < cs && y < cs && z < cs {
@@ -371,6 +388,7 @@ pub fn generate_mesh_lod_with_colors(
 
     generate_mesh_generic(
         effective_size as i32,
+        lod_step as f32,
         |x, y, z| {
             let fx = x * step;
             let fy = y * step;
@@ -524,9 +542,9 @@ where
 
                 vertex_pos /= crossing_count as f32;
                 let world_pos = [
-                    cx as f32 + vertex_pos.x,
-                    cy as f32 + vertex_pos.y,
-                    cz as f32 + vertex_pos.z,
+                    (cx as f32 + vertex_pos.x) * scale,
+                    (cy as f32 + vertex_pos.y) * scale,
+                    (cz as f32 + vertex_pos.z) * scale,
                 ];
 
                 // Pick the dominant non-air material and its temperature.
