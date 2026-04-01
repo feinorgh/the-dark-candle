@@ -14,7 +14,7 @@ use crate::{
     procgen::{creatures::Creature, items::Item},
 };
 
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 4;
 pub const SAVE_DIR: &str = "saves";
 /// Legacy single-file path kept for backward compatibility on load.
 pub const LEGACY_SAVE_PATH: &str = "saves/save.ron";
@@ -83,6 +83,9 @@ pub struct SaveGame {
     /// Player state (None for saves from v2 or earlier).
     #[serde(default)]
     pub player: Option<PlayerSave>,
+    /// Discovered map columns (None for saves from v3 or earlier).
+    #[serde(default)]
+    pub discovered_columns: Option<crate::map::DiscoveredColumns>,
 }
 
 // ---------------------------------------------------------------------------

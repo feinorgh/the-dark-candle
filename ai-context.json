@@ -133,6 +133,17 @@
         "name": "planet",
         "path": "src/planet/",
         "responsibility": "Standalone planetary generation pipeline: icosahedral geodesic grid, tectonic simulation, astronomical impact events, celestial mechanics (star/moons/rings/Keplerian orbits), static climate model, biome classification, geological rock/ore assignment. Used by the worldgen binary and planned for future game integration."
+      },
+      {
+        "name": "map",
+        "responsibility": "In-game map overlay: local discovery map (biome-colored chunk columns, fog-of-war, zoom) and global planet map (equirectangular projection with player lat/lon marker, zoom/pan). Discovery tracking persisted in save files.",
+        "key_files": [
+          "src/map/mod.rs",
+          "src/map/discovery.rs",
+          "src/map/local_map.rs",
+          "src/map/global_map.rs",
+          "src/map/ui.rs"
+        ]
       }
     ],
     "patterns": [
@@ -1223,6 +1234,23 @@
       ],
       "notes": "Uses Bevy's built-in AtmospherePlugin (registered by PbrPlugin). Custom sky.rs/scattering.rs remain for headless export. Camera requires HDR (satisfied by Bloom::NATURAL).",
       "uncertain": false
+    },
+    {
+      "name": "In-game map system",
+      "status": "complete",
+      "paths": [
+        "src/map/"
+      ],
+      "implements": [
+        "MapPlugin with GameState::Map variant (M key toggle, cursor unlock, time pause)",
+        "DiscoveredColumns resource tracking visited XZ chunk columns with biome data",
+        "Local discovery map: biome-colored pixels, fog-of-war, 4 zoom levels (1/2/4/8× px/chunk)",
+        "Global planet map: equirectangular elevation projection via render_projection(), player lat/lon marker",
+        "Global map zoom (scroll, 1-8×) and pan (mouse drag)",
+        "Save/load persistence: discovered_columns in SaveGame v4"
+      ],
+      "notes": "Global map only available for planetary worlds (requires PlanetaryData resource). Local map works for all world types.",
+      "uncertain": false
     }
   ],
   "tech_debt": [
@@ -1310,7 +1338,8 @@
       "8 scene presets: valley_river, spherical_planet, alpine, archipelago, desert_canyon, rolling_plains, volcanic, tundra_fjords.",
       "Extended CLI: --seed, --terrain-detail, --height-scale, --caves, --erosion, --hydraulic-erosion flags.",
       "World creation UI screen with preset selector, auto-bypassed by CLI --scene flag.",
-      "Atmospheric sky rendering connected to in-game camera via Bevy 0.18 Atmosphere component. Distance fog with time-of-day color. AmbientLight reduced since atmosphere provides IBL."
+      "Atmospheric sky rendering connected to in-game camera via Bevy 0.18 Atmosphere component. Distance fog with time-of-day color. AmbientLight reduced since atmosphere provides IBL.",
+      "In-game map system: local discovery map + global planet map. M key toggle. Discovery persisted in saves (SAVE_VERSION bumped to 4)."
     ]
   }
 }

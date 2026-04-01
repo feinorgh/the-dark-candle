@@ -14,6 +14,7 @@ pub mod gpu;
 pub mod hud;
 pub mod interaction;
 pub mod lighting;
+pub mod map;
 pub mod persistence;
 pub mod physics;
 pub mod planet;

@@ -91,6 +91,7 @@ pub fn save_game(
     enemy_query: Query<(Entity, &SaveId, &Transform, &Enemy)>,
     player_query: Query<(&Transform, &FpsCamera, &Health), With<Player>>,
     hotbar: Option<Res<Hotbar>>,
+    discovered: Res<crate::map::DiscoveredColumns>,
 ) {
     // Determine target slot: from SaveRequest resource, or F5 quick-save.
     let slot = if let Some(req) = save_request.as_ref() {
@@ -312,6 +313,7 @@ pub fn save_game(
             creature_factions,
         },
         player,
+        discovered_columns: Some(discovered.clone()),
     };
 
     std::fs::create_dir_all(SAVE_DIR).ok();

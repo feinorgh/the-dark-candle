@@ -29,6 +29,8 @@ pub enum GameState {
     Playing,
     /// Overlay pause menu: world frozen, cursor unlocked.
     Paused,
+    /// In-game map overlay: world frozen, cursor unlocked.
+    Map,
 }
 
 pub struct GameStatePlugin;

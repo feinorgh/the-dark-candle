@@ -58,6 +58,13 @@ fn migrate_save(save: &mut super::types::SaveGame) -> bool {
         save.version = 3;
     }
 
+    // v3 → v4: discovered_columns field added
+    if save.version == 3 {
+        info!("Migrating save v3 → v4: discovered map columns field added");
+        // `discovered_columns` defaults to None via `#[serde(default)]`
+        save.version = 4;
+    }
+
     true
 }
 
@@ -113,6 +120,7 @@ pub fn load_game(
     enemy_query: Query<Entity, With<Enemy>>,
     mut player_query: Query<(&mut Transform, &mut FpsCamera, &mut Health), With<Player>>,
     mut hotbar: Option<ResMut<Hotbar>>,
+    mut discovered: ResMut<crate::map::DiscoveredColumns>,
 ) {
     // Determine target slot: from LoadRequest resource, or F9 quick-load.
     let slot = if let Some(req) = load_request.as_ref() {
@@ -386,6 +394,11 @@ pub fn load_game(
             }
             hb.selected = ps.hotbar_selected.min(hb.slots.len().saturating_sub(1));
         }
+    }
+
+    // --- Restore discovered map columns ------------------------------------
+    if let Some(disc) = save.discovered_columns {
+        *discovered = disc;
     }
 
     info!("Load complete ({}).", slot.label());

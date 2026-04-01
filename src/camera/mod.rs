@@ -27,7 +27,8 @@ impl Plugin for CameraPlugin {
                     .run_if(in_state(GameState::Playing)),
             )
             .add_systems(OnEnter(GameState::Playing), grab_cursor)
-            .add_systems(OnEnter(GameState::Paused), release_cursor);
+            .add_systems(OnEnter(GameState::Paused), release_cursor)
+            .add_systems(OnEnter(GameState::Map), release_cursor);
     }
 }
 
