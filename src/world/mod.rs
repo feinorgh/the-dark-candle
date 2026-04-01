@@ -27,6 +27,10 @@ use planet::PlanetConfig;
 use planetary_sampler::PlanetaryTerrainSampler;
 use refinement::RefinementPlugin;
 
+/// Handle to the `planet_config.ron` asset so we can poll for load completion.
+#[derive(Resource)]
+struct PlanetConfigHandle(Handle<PlanetConfig>);
+
 /// System set ordering for the world pipeline.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WorldSet {
@@ -72,17 +76,63 @@ impl Plugin for WorldPlugin {
             app.insert_resource(PlanetConfig::default());
         }
 
+        // Kick off async load of planet_config.ron so the RON values can
+        // replace the default PlanetConfig resource once the asset is ready.
+        let handle = app
+            .world_mut()
+            .resource::<AssetServer>()
+            .load::<PlanetConfig>("data/planet_config.ron");
+        app.insert_resource(PlanetConfigHandle(handle));
+
         app.insert_resource(lod::LodConfig::default())
             .insert_resource(lod::MaterialColorMap::from_defaults())
             .add_plugins(ChunkManagerPlugin)
             .add_plugins(MeshingPlugin)
             .add_plugins(RefinementPlugin)
             .add_systems(Update, sync_color_map_from_registry)
+            .add_systems(Update, apply_planet_config_from_asset)
             .add_systems(
                 PostStartup,
                 rebuild_terrain_gen_if_planetary.in_set(WorldSet::ChunkManagement),
             );
     }
+}
+
+/// Once the `planet_config.ron` asset finishes loading, replace the default
+/// `PlanetConfig` resource with the loaded values and rebuild terrain generators.
+///
+/// Uses a `Local<bool>` guard so the work is done exactly once.
+fn apply_planet_config_from_asset(
+    handle: Option<Res<PlanetConfigHandle>>,
+    assets: Res<Assets<PlanetConfig>>,
+    mut planet_config: ResMut<PlanetConfig>,
+    mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
+    mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(handle) = handle else { return };
+    let Some(loaded) = assets.get(&handle.0) else {
+        return;
+    };
+
+    info!(
+        "Loaded planet config from RON: mode={:?}, radius={}, seed={}",
+        loaded.mode, loaded.mean_radius, loaded.seed,
+    );
+    *planet_config = loaded.clone();
+
+    // Rebuild both terrain generator resources so chunk generation and
+    // camera/physics queries all use the new config.
+    let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    terrain_res.0 = generator;
+
+    let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(shared_generator));
+
+    *done = true;
 }
 
 /// If `PlanetaryData` is present at startup, rebuild `SharedTerrainGen` with a

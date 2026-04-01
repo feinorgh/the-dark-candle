@@ -1115,9 +1115,10 @@
         "SphericalPlanet scene preset \u2014 32 km radius planet config",
         "--planet CLI flag \u2014 runs full tectonic\u2192biome\u2192geology pipeline and activates planetary terrain",
         "--planet-level (default 5) and --planet-seed (default 42) CLI args",
-        "procgen biome selection uses ChunkBiomeData (temperature_k + precipitation_mm) when present, falls back to height heuristic"
+        "procgen biome selection uses ChunkBiomeData (temperature_k + precipitation_mm) when present, falls back to height heuristic",
+        "apply_planet_config_from_asset() \u2014 mod.rs: loads planet_config.ron asset at runtime and updates PlanetConfig resource + terrain generators"
       ],
-      "notes": "BiomeType\u2192MaterialId and RockType\u2192MaterialId mappings in planetary_sampler.rs. Ore vein placement from ore_bitmask at 3% sparsity. Cave carving reuses SphericalTerrainGenerator noise. Thread-safe via Arc<> cloning into AsyncComputeTaskPool.",
+      "notes": "BiomeType\u2192MaterialId and RockType\u2192MaterialId mappings in planetary_sampler.rs. Ore vein placement from ore_bitmask at 3% sparsity. Cave carving reuses SphericalTerrainGenerator noise. Thread-safe via Arc<> cloning into AsyncComputeTaskPool. RON asset loading now active: planet_config.ron is loaded via AssetServer and applied to overwrite default PlanetConfig.",
       "uncertain": false
     },
     {
