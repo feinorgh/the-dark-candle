@@ -159,6 +159,9 @@
       "RLE compression for chunk persistence; SaveId system for stable cross-session entity references",
       "Surface Nets meshing algorithm (smooth meshes without lookup tables)",
       "Force-based physics: F_net = gravity + buoyancy + drag + friction; acceleration = F_net / mass"
+    ],
+    "notes": [
+      "LOD mesh generation: generate_mesh_generic() takes scale:f32 parameter. Non-LOD passes 1.0, LOD passes lod_step as f32. Vertex positions multiplied by scale to span full chunk extent."
     ]
   },
   "features": [
@@ -1252,6 +1255,25 @@
       ],
       "notes": "Global map only available for planetary worlds (requires PlanetaryData resource). Local map works for all world types.",
       "uncertain": false
+    },
+    {
+      "name": "Continuous voxel density field",
+      "status": "complete",
+      "files": [
+        "src/world/voxel.rs",
+        "src/world/terrain.rs",
+        "src/world/meshing.rs"
+      ],
+      "notes": "Voxel.density: f32 (0.0=air, 0.5=isosurface, 1.0=solid). terrain_density() computes 2m gradient. Enables sub-voxel Surface Nets interpolation."
+    },
+    {
+      "name": "RON-based planet config loading",
+      "status": "complete",
+      "files": [
+        "src/world/mod.rs",
+        "assets/data/planet_config.ron"
+      ],
+      "notes": "PlanetConfigHandle loads planet_config.ron via AssetServer. apply_planet_config_from_asset() replaces the resource and rebuilds SharedTerrainGen when loaded. Default RON specifies Spherical mode."
     }
   ],
   "tech_debt": [
@@ -1314,7 +1336,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "HEAD (pending commit \u2014 smooth density field)",
+    "generated_from_commit": "1717c43",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1326,7 +1348,7 @@
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled \u2014 basic latitude/altitude/proximity model only"
     ],
-    "last_updated": "2026-04-01",
+    "last_updated": "After LOD scaling fix, color fallback fix, RON config loading",
     "notes": [
       "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",

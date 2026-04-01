@@ -150,5 +150,52 @@
       "No other unsafe unwrap() patterns found in hot paths (Update/FixedUpdate systems).",
       "Once backtrace is available, update this issue with the specific panic location."
     ]
+  },
+  {
+    "id": "TERRAIN-003",
+    "title": "LOD mesh positions not scaled to chunk space",
+    "category": "terrain",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-02",
+    "description": "LOD meshes (stride > 1) output vertex positions in cell-space [0..effective_size] instead of chunk-space [0..CHUNK_SIZE]. A stride-2 LOD mesh covers [0..16] instead of [0..32], physically shrinking the mesh to half size.",
+    "reproduction": "Run the game and move away from terrain (>128m). LOD chunks appear compressed toward chunk origin with gaps between them.",
+    "suspected_files": [
+      "src/world/meshing.rs"
+    ],
+    "suspected_cause": "generate_mesh_generic() computes world_pos = cx + vertex_pos without accounting for LOD stride. Missing multiplication by lod_step.",
+    "related_commits": [
+      "1717c43"
+    ],
+    "resolution": "Added scale: f32 parameter to generate_mesh_generic(). LOD callers pass lod_step as f32, non-LOD callers pass 1.0. Position calculation: (cx + vertex_pos.x) * scale. Added bounding-box test.",
+    "notes": [
+      "Pre-existing bug \u2014 less visible with binary density (all vertices at cell centers).",
+      "Became obvious after continuous density field (4754dbc) shifted vertices within cells.",
+      "Test: lod_mesh_spans_full_chunk_size verifies meshes at stride 1, 2, 4 span [0..CHUNK_SIZE]."
+    ]
+  },
+  {
+    "id": "TERRAIN-004",
+    "title": "Material color fallback table has wrong IDs for materials 4-7",
+    "category": "rendering",
+    "severity": "medium",
+    "status": "resolved",
+    "reported": "2026-04-02",
+    "description": "Both material_color_fallback() functions in lod.rs and meshing.rs had wrong color assignments for MaterialIds 4-7. IRON(4) showed green, WOOD(5) showed yellowish, SAND(6) showed dark brown, GRASS(7) showed tan/beige.",
+    "reproduction": "Start game before MaterialRegistry loads from RON. Initial terrain meshes show wrong colors (grass is tan instead of green).",
+    "suspected_files": [
+      "src/world/lod.rs",
+      "src/world/meshing.rs"
+    ],
+    "suspected_cause": "MaterialId constants were reordered at some point but fallback color tables were not updated to match.",
+    "related_commits": [
+      "eb2b607"
+    ],
+    "resolution": "Corrected IDs 4-7 colors to match actual MaterialId constants. Added fallback colors for IDs 12-27 (glass through copper_ore). Extended from_defaults() range from 0..=11 to 0..=27.",
+    "notes": [
+      "MaterialRegistry RON files have correct colors \u2014 sync_color_map_from_registry() eventually overrides fallbacks.",
+      "But there's a startup race: first meshes may use wrong fallback colors before registry loads.",
+      "RGB values sourced from assets/data/materials/*.material.ron for consistency."
+    ]
   }
 ]
