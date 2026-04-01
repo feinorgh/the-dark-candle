@@ -4,7 +4,7 @@
     "title": "No atmospheric sky effects visible \u2014 world appears gray/colorless",
     "category": "rendering",
     "severity": "high",
-    "status": "fix-attempted",
+    "status": "resolved",
     "reported": "2026-04-01",
     "description": "When running the game, the sky appears gray or black instead of showing a blue sky with Rayleigh scattering from the Bevy Atmosphere component. The world looks colorless despite Atmosphere::earthlike(), ClearColor::BLACK, and DistanceFog all being configured.",
     "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up \u2014 sky should be blue with sun-driven scattering but appears flat gray.",
