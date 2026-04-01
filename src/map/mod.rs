@@ -53,13 +53,97 @@ fn toggle_map(
 ) {
     if key.just_pressed(KeyCode::KeyM) {
         match state.get() {
-            GameState::Playing => next_state.set(GameState::Map),
-            GameState::Map => next_state.set(GameState::Playing),
+            GameState::Playing => {
+                debug!("Map toggle: Playing → Map");
+                next_state.set(GameState::Map);
+            }
+            GameState::Map => {
+                debug!("Map toggle: Map → Playing");
+                next_state.set(GameState::Playing);
+            }
             _ => {}
         }
     }
     // Also allow ESC to close the map.
     if *state.get() == GameState::Map && key.just_pressed(KeyCode::Escape) {
+        debug!("Map toggle: ESC → Playing");
         next_state.set(GameState::Playing);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_map_from_playing() {
+        let mut key = ButtonInput::<KeyCode>::default();
+        key.press(KeyCode::KeyM);
+
+        let state = State::new(GameState::Playing);
+        let mut next_state = NextState::<GameState>::default();
+
+        if key.just_pressed(KeyCode::KeyM) {
+            match state.get() {
+                GameState::Playing => next_state.set(GameState::Map),
+                GameState::Map => next_state.set(GameState::Playing),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(next_state, NextState::Pending(GameState::Map)));
+    }
+
+    #[test]
+    fn toggle_map_from_map() {
+        let mut key = ButtonInput::<KeyCode>::default();
+        key.press(KeyCode::KeyM);
+
+        let state = State::new(GameState::Map);
+        let mut next_state = NextState::<GameState>::default();
+
+        if key.just_pressed(KeyCode::KeyM) {
+            match state.get() {
+                GameState::Playing => next_state.set(GameState::Map),
+                GameState::Map => next_state.set(GameState::Playing),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(next_state, NextState::Pending(GameState::Playing)));
+    }
+
+    #[test]
+    fn esc_closes_map() {
+        let mut key = ButtonInput::<KeyCode>::default();
+        key.press(KeyCode::Escape);
+
+        let state = State::new(GameState::Map);
+        let mut next_state = NextState::<GameState>::default();
+
+        if *state.get() == GameState::Map && key.just_pressed(KeyCode::Escape) {
+            next_state.set(GameState::Playing);
+        }
+
+        assert!(matches!(next_state, NextState::Pending(GameState::Playing)));
+    }
+
+    #[test]
+    fn m_key_ignored_in_other_states() {
+        let mut key = ButtonInput::<KeyCode>::default();
+        key.press(KeyCode::KeyM);
+
+        let state = State::new(GameState::Paused);
+        let mut next_state = NextState::<GameState>::default();
+
+        if key.just_pressed(KeyCode::KeyM) {
+            match state.get() {
+                GameState::Playing => next_state.set(GameState::Map),
+                GameState::Map => next_state.set(GameState::Playing),
+                _ => {}
+            }
+        }
+
+        assert!(matches!(next_state, NextState::Unchanged));
     }
 }

@@ -1,30 +1,32 @@
 [
   {
     "id": "SKY-001",
-    "title": "No atmospheric sky effects visible — world appears gray/colorless",
+    "title": "No atmospheric sky effects visible \u2014 world appears gray/colorless",
     "category": "rendering",
     "severity": "high",
     "status": "open",
     "reported": "2026-04-01",
     "description": "When running the game, the sky appears gray or black instead of showing a blue sky with Rayleigh scattering from the Bevy Atmosphere component. The world looks colorless despite Atmosphere::earthlike(), ClearColor::BLACK, and DistanceFog all being configured.",
-    "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up — sky should be blue with sun-driven scattering but appears flat gray.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up \u2014 sky should be blue with sun-driven scattering but appears flat gray.",
     "suspected_files": [
       "src/camera/mod.rs",
       "src/lighting/mod.rs"
     ],
     "suspected_cause": "Possible causes: (1) Atmosphere component requires specific plugin ordering or camera HDR mode not being satisfied at runtime, (2) ClearColor::BLACK may not be interacting correctly with the atmosphere shader, (3) DirectionalLight (Sun) may not be positioned/rotated correctly for the atmosphere to compute sky color, (4) ScatteringMedium asset may not be loaded before camera spawn.",
-    "related_commits": ["74e5f7e"],
+    "related_commits": [
+      "74e5f7e"
+    ],
     "resolution": null,
     "notes": [
       "Code investigation shows all components are present: Atmosphere::earthlike(medium), ScatteringMedium::default(), ClearColor::BLACK, DistanceFog, Bloom::NATURAL (for HDR).",
-      "AtmospherePlugin is auto-registered by PbrPlugin — no extra plugin needed.",
-      "Atmosphere requires HDR on the camera — Bloom::NATURAL should satisfy this but verify at runtime.",
+      "AtmospherePlugin is auto-registered by PbrPlugin \u2014 no extra plugin needed.",
+      "Atmosphere requires HDR on the camera \u2014 Bloom::NATURAL should satisfy this but verify at runtime.",
       "Try running with RUST_LOG=bevy_pbr=debug to check for atmosphere shader warnings."
     ]
   },
   {
     "id": "TERRAIN-001",
-    "title": "Deformed terrain geometry — visible surface distortion",
+    "title": "Deformed terrain geometry \u2014 visible surface distortion",
     "category": "terrain",
     "severity": "high",
     "status": "open",
@@ -36,13 +38,13 @@
       "src/world/terrain.rs",
       "src/world/lod.rs"
     ],
-    "suspected_cause": "Possible causes: (1) LOD stride mismatch — when LOD level > 0, Surface Nets uses stride = 2^level which coarsens geometry; transitions between LOD levels may create visible seams, (2) Chunk boundary stitching may have edge cases where neighbor snapshots are missing (treats boundary as air), (3) Noise values at terrain surface may produce ambiguous isosurface crossings, (4) Vertex normal computation may be wrong for steep terrain.",
+    "suspected_cause": "Possible causes: (1) LOD stride mismatch \u2014 when LOD level > 0, Surface Nets uses stride = 2^level which coarsens geometry; transitions between LOD levels may create visible seams, (2) Chunk boundary stitching may have edge cases where neighbor snapshots are missing (treats boundary as air), (3) Noise values at terrain surface may produce ambiguous isosurface crossings, (4) Vertex normal computation may be wrong for steep terrain.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "Surface Nets implementation has proper boundary handling via 6 face-neighbor snapshots.",
       "LOD hysteresis (12% dead-band) should prevent thrashing but may not eliminate all visual artifacts.",
-      "Integration tests validate chunk stitching (meshing.rs:1114, 1401) — issue may be data-dependent.",
+      "Integration tests validate chunk stitching (meshing.rs:1114, 1401) \u2014 issue may be data-dependent.",
       "Check if deformation correlates with LOD transitions by temporarily disabling LOD (force level 0)."
     ]
   },
@@ -59,7 +61,7 @@
       "src/world/meshing.rs",
       "src/world/chunk.rs"
     ],
-    "suspected_cause": "Possible causes: (1) Surface Nets generating quads for internal isosurface crossings (e.g., cave surfaces inside solid rock), (2) Backface culling not enabled — internal faces visible from outside, (3) Octree subdivision creating surface artifacts at resolution boundaries, (4) Chunk overlap regions producing duplicate geometry.",
+    "suspected_cause": "Possible causes: (1) Surface Nets generating quads for internal isosurface crossings (e.g., cave surfaces inside solid rock), (2) Backface culling not enabled \u2014 internal faces visible from outside, (3) Octree subdivision creating surface artifacts at resolution boundaries, (4) Chunk overlap regions producing duplicate geometry.",
     "related_commits": [],
     "resolution": null,
     "notes": [
@@ -74,7 +76,7 @@
     "title": "In-game map (M key) does not open",
     "category": "input",
     "severity": "high",
-    "status": "open",
+    "status": "fix-attempted",
     "reported": "2026-04-01",
     "description": "Pressing M during gameplay does not open the in-game map overlay. The map system (src/map/) was implemented with M key toggle, Tab for local/global switch, and ESC to close, but none of these appear to function at runtime.",
     "reproduction": "Run `cargo run --features bevy/dynamic_linking`. During gameplay (Playing state), press M. Map overlay should appear but does not.",
@@ -83,14 +85,20 @@
       "src/map/ui.rs",
       "src/game_state.rs"
     ],
-    "suspected_cause": "Possible causes: (1) toggle_map system may have a .run_if() condition that prevents it from running in the Playing state, (2) GameState transition from Playing → Map may not trigger OnEnter(GameState::Map), (3) KeyCode::KeyM may not match the physical key on all keyboard layouts, (4) MapPlugin may not be registered or may conflict with another input handler consuming the M key.",
-    "related_commits": ["b002808"],
+    "suspected_cause": "Possible causes: (1) toggle_map system may have a .run_if() condition that prevents it from running in the Playing state, (2) GameState transition from Playing \u2192 Map may not trigger OnEnter(GameState::Map), (3) KeyCode::KeyM may not match the physical key on all keyboard layouts, (4) MapPlugin may not be registered or may conflict with another input handler consuming the M key.",
+    "related_commits": [
+      "b002808"
+    ],
     "resolution": null,
     "notes": [
       "Code investigation shows MapPlugin IS registered in main.rs.",
       "toggle_map system listens for KeyCode::KeyM with just_pressed().",
-      "System has .run_if(in_state(GameState::Playing).or(in_state(GameState::Map))) — verify this compiles and runs.",
-      "Add temporary debug logging to toggle_map to confirm the system is executing."
+      "System has .run_if(in_state(GameState::Playing).or(in_state(GameState::Map))) \u2014 verify this compiles and runs.",
+      "Add temporary debug logging to toggle_map to confirm the system is executing.",
+      "Fixed: track_discoveries now does a full scan on first run (Local<bool> guard), no longer relying solely on is_changed() which may miss chunks loaded during Loading state.",
+      "Added: debug!() logging to toggle_map for runtime diagnostics (enable with RUST_LOG=the_dark_candle::map=debug).",
+      "Added: 4 unit tests for toggle_map logic (Playing\u2192Map, Map\u2192Playing, ESC close, M ignored in other states).",
+      "If still not working: run with RUST_LOG=the_dark_candle::map=debug to see if toggle_map fires, check if game reaches Playing state."
     ]
   },
   {
@@ -100,20 +108,20 @@
     "severity": "medium",
     "status": "open",
     "reported": "2026-04-01",
-    "description": "Function keys (F1–F12) either do not respond or produce unexpected behavior compared to what documentation describes. Known bindings: F3 (debug overlay), F5 (ECS state dump), F9 (toggle chunk borders), F11 (fullscreen), F12 (screenshot).",
+    "description": "Function keys (F1\u2013F12) either do not respond or produce unexpected behavior compared to what documentation describes. Known bindings: F3 (debug overlay), F5 (ECS state dump), F9 (toggle chunk borders), F11 (fullscreen), F12 (screenshot).",
     "reproduction": "Run the game. Press F3, F5, F9, F11, F12 individually. Compare behavior to README.md and diagnostics docs.",
     "suspected_files": [
       "src/diagnostics/mod.rs",
       "src/planet/render.rs",
       "src/main.rs"
     ],
-    "suspected_cause": "Possible causes: (1) F12 has DUPLICATE screenshot_system functions — one in diagnostics/mod.rs:260 and one in planet/render.rs:615, which may cause conflicts, (2) Some F-key systems may only run in specific GameStates (e.g., only Playing, not WorldCreation), (3) Desktop environment (Wayland) may intercept certain F-keys before they reach the application, (4) DiagnosticsPlugin may not be registered or may have incorrect run conditions.",
+    "suspected_cause": "Possible causes: (1) F12 has DUPLICATE screenshot_system functions \u2014 one in diagnostics/mod.rs:260 and one in planet/render.rs:615, which may cause conflicts, (2) Some F-key systems may only run in specific GameStates (e.g., only Playing, not WorldCreation), (3) Desktop environment (Wayland) may intercept certain F-keys before they reach the application, (4) DiagnosticsPlugin may not be registered or may have incorrect run conditions.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "Code investigation confirmed: F3, F5, F9, F11 are all properly bound in diagnostics/mod.rs.",
-      "F12 screenshot has CONFIRMED duplicate function definitions — this is a real bug that needs fixing.",
-      "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings — check compositor config.",
+      "F12 screenshot has CONFIRMED duplicate function definitions \u2014 this is a real bug that needs fixing.",
+      "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings \u2014 check compositor config.",
       "Test with WINIT_UNIX_BACKEND=x11 to rule out Wayland-specific key capture."
     ]
   },
@@ -129,12 +137,12 @@
     "suspected_files": [
       "src/world/terrain.rs"
     ],
-    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() — logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
+    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() \u2014 logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "CRITICAL: Need user to provide backtrace from `RUST_BACKTRACE=1 cargo run --features bevy/dynamic_linking`.",
-      "terrain.rs:385 unwrap() is the most likely candidate — should be hardened regardless.",
+      "terrain.rs:385 unwrap() is the most likely candidate \u2014 should be hardened regardless.",
       "No other unsafe unwrap() patterns found in hot paths (Update/FixedUpdate systems).",
       "Once backtrace is available, update this issue with the specific panic location."
     ]

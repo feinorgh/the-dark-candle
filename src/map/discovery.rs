@@ -25,15 +25,20 @@ pub struct DiscoveredColumns {
     pub columns: HashMap<[i32; 2], DiscoveredColumn>,
 }
 
-/// System: whenever new chunks appear in ChunkMap, record their XZ columns.
+/// System: record all chunk columns currently in the world.
+///
+/// Runs a full scan on the first invocation (catching chunks generated during
+/// the Loading state), then only rescans when `ChunkMap` changes.
 pub fn track_discoveries(
     chunk_map: Res<ChunkMap>,
     biome_q: Query<(&ChunkCoord, Option<&ChunkBiomeData>)>,
     mut discovered: ResMut<DiscoveredColumns>,
+    mut initial_scan_done: Local<bool>,
 ) {
-    if !chunk_map.is_changed() {
+    if *initial_scan_done && !chunk_map.is_changed() {
         return;
     }
+    *initial_scan_done = true;
 
     for (coord, biome_data) in &biome_q {
         let key = [coord.x, coord.z];
