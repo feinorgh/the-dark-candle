@@ -265,6 +265,7 @@ pub fn generate_mesh_with_colors(
 ) -> ChunkMesh {
     generate_mesh_generic(
         CHUNK_SIZE as i32 + 1,
+        1.0,
         |x, y, z| neighbors.sample(chunk, x, y, z),
         |mat, temp| {
             if thermal_vision {
@@ -428,6 +429,7 @@ pub fn generate_mesh_from_octree_lod_with_colors(
 
     generate_mesh_generic(
         effective_size as i32,
+        lod_step as f32,
         |x, y, z| {
             let fx = x * step;
             let fy = y * step;
@@ -447,9 +449,11 @@ pub fn generate_mesh_from_octree_lod_with_colors(
 /// Core Surface Nets implementation parameterized over sampling and color functions.
 ///
 /// `grid_size` is the number of cells along each axis.
+/// `scale` multiplies each vertex position so that LOD meshes (with reduced
+/// grid_size) still span the full chunk extent.
 /// `sample_fn(x, y, z)` returns (scalar, material, temperature) for the given cell corner.
 /// `color_fn(mat, temperature)` returns the RGBA color for a material and temperature.
-fn generate_mesh_generic<F, C>(grid_size: i32, sample_fn: F, color_fn: C) -> ChunkMesh
+fn generate_mesh_generic<F, C>(grid_size: i32, scale: f32, sample_fn: F, color_fn: C) -> ChunkMesh
 where
     F: Fn(i32, i32, i32) -> (f32, MaterialId, f32),
     C: Fn(MaterialId, f32) -> [f32; 4],
@@ -1727,5 +1731,63 @@ mod tests {
             "Smooth density avg Y ({smooth_avg_y}) should be closer to surface \
              ({target_y}) than binary avg Y ({binary_avg_y})"
         );
+    }
+
+    #[test]
+    fn lod_mesh_spans_full_chunk_size() {
+        // A chunk with a horizontal stone surface at y=16 so the mesh has
+        // geometry spanning a large portion of the X and Z axes.
+        let coord = ChunkCoord::new(0, 0, 0);
+        let mut chunk = Chunk::new_empty(coord);
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..=16 {
+                    chunk.set_material(x, y, z, MaterialId::STONE);
+                }
+            }
+        }
+
+        for &stride in &[1, 2, 4] {
+            let mesh = generate_mesh_lod(&chunk, stride);
+            assert!(
+                mesh.vertex_count() > 0,
+                "stride {stride}: mesh should have vertices"
+            );
+
+            let max_x = mesh
+                .positions
+                .iter()
+                .map(|p| p[0])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let max_z = mesh
+                .positions
+                .iter()
+                .map(|p| p[2])
+                .fold(f32::NEG_INFINITY, f32::max);
+
+            let chunk_f = CHUNK_SIZE as f32;
+            let tolerance = stride as f32;
+            assert!(
+                max_x >= chunk_f - tolerance,
+                "stride {stride}: max X ({max_x}) should be near {chunk_f} (tolerance {tolerance})"
+            );
+            assert!(
+                max_z >= chunk_f - tolerance,
+                "stride {stride}: max Z ({max_z}) should be near {chunk_f} (tolerance {tolerance})"
+            );
+
+            // Must NOT be stuck in the reduced cell-space range.
+            let effective = (CHUNK_SIZE / stride) as f32;
+            if stride > 1 {
+                assert!(
+                    max_x > effective + 1.0,
+                    "stride {stride}: max X ({max_x}) should exceed effective_size ({effective})"
+                );
+                assert!(
+                    max_z > effective + 1.0,
+                    "stride {stride}: max Z ({max_z}) should exceed effective_size ({effective})"
+                );
+            }
+        }
     }
 }

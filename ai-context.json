@@ -1341,7 +1341,8 @@
       "World creation UI screen with preset selector, auto-bypassed by CLI --scene flag.",
       "Atmospheric sky rendering connected to in-game camera via Bevy 0.18 Atmosphere component. Distance fog with time-of-day color. AmbientLight reduced since atmosphere provides IBL.",
       "In-game map system: local discovery map + global planet map. M key toggle. Discovery persisted in saves (SAVE_VERSION bumped to 4).",
-      "issues.json added: structured issue tracker for AI agents. Check at session start, update status as you work, add new issues you discover."
+      "issues.json added: structured issue tracker for AI agents. Check at session start, update status as you work, add new issues you discover.",
+      "LOD mesh vertex scaling fix: generate_mesh_generic now takes a scale parameter so LOD meshes span full CHUNK_SIZE instead of effective_size."
     ],
     "known_issues_file": "issues.json"
   }
