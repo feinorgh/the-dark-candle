@@ -56,43 +56,56 @@ pub fn advance_orbital_state(time: Res<Time>, mut state: ResMut<OrbitalState>) {
     state.orbital_angle = (state.orbital_angle + orbital_rate * game_dt) % std::f64::consts::TAU;
 }
 
-/// Compute the direction toward the star in the planet's body frame.
+/// Compute the direction toward the star as seen by a surface observer.
 ///
-/// The star direction in the inertial (orbital) frame is determined by
-/// the orbital angle.  The planet's spin axis is tilted by `axial_tilt`
-/// (obliquity) via rotation around the X axis, and the planet rotates by
-/// `rotation_angle` around its spin axis (Y).  Libration adds a periodic
-/// wobble.
+/// Uses the standard astronomical solar position formula:
+///   altitude = arcsin(sin(φ)sin(δ) + cos(φ)cos(δ)cos(H))
+///   azimuth  = atan2(-sin(H)cos(δ), sin(δ)cos(φ) - cos(δ)sin(φ)cos(H))
 ///
-/// Returns `(direction, elevation)` where `direction` is a unit-ish
-/// `[f32; 3]` and `elevation` is the angle above the horizon at the
-/// sub-stellar point (used for lighting intensity).
+/// where φ = observer latitude, δ = solar declination (from axial tilt +
+/// orbital position), H = hour angle (from rotation + libration).
+///
+/// Returns `(direction, elevation)` where `direction` is a unit `[f32; 3]`
+/// in the observer's local frame (Y = up, X = east, Z = south) and
+/// `elevation` is the angle above the horizon in radians.
 pub fn compute_sun_direction(
     state: &OrbitalState,
     axial_tilt: f64,
     libration_amplitude: f64,
     libration_period: f64,
 ) -> ([f32; 3], f32) {
+    compute_sun_direction_at_latitude(
+        state,
+        axial_tilt,
+        libration_amplitude,
+        libration_period,
+        DEFAULT_OBSERVER_LATITUDE,
+    )
+}
+
+/// Default observer latitude: 45° N — gives a pleasant day/night cycle
+/// with noon sun elevation of ~45° (or up to ~68° at summer solstice with
+/// Earth-like axial tilt).
+pub const DEFAULT_OBSERVER_LATITUDE: f64 = std::f64::consts::FRAC_PI_4;
+
+/// Compute sun direction at a specific observer latitude.
+///
+/// See [`compute_sun_direction`] for the formula and return values.
+pub fn compute_sun_direction_at_latitude(
+    state: &OrbitalState,
+    axial_tilt: f64,
+    libration_amplitude: f64,
+    libration_period: f64,
+    observer_latitude: f64,
+) -> ([f32; 3], f32) {
     use std::f64::consts::TAU;
 
-    // Star direction in inertial frame: always at +X (we orbit around it).
-    // At orbital_angle=0, star is at +X.  As orbital_angle increases the
-    // star appears to move around us.
-    let star_inertial = [state.orbital_angle.cos(), 0.0, state.orbital_angle.sin()];
+    // Solar declination: sin(δ) = sin(axial_tilt) × sin(orbital_angle).
+    // At orbital_angle = π/2 (summer solstice): δ = axial_tilt.
+    // At orbital_angle = 0 or π (equinoxes): δ = 0.
+    let declination = (axial_tilt.sin() * state.orbital_angle.sin()).asin();
 
-    // Apply axial tilt: rotate the reference frame around X by -axial_tilt.
-    // This tilts the planet's spin axis (Y) away from the ecliptic normal,
-    // producing a non-zero solar declination that varies with orbital angle.
-    let cos_tilt = axial_tilt.cos();
-    let sin_tilt = axial_tilt.sin();
-
-    let star_tilted = [
-        star_inertial[0],
-        star_inertial[1] * cos_tilt + star_inertial[2] * sin_tilt,
-        -star_inertial[1] * sin_tilt + star_inertial[2] * cos_tilt,
-    ];
-
-    // Libration: sinusoidal wobble in the spin axis.
+    // Libration: sinusoidal wobble added to the hour angle.
     let libration_offset = if libration_period > 0.0 {
         let days_elapsed = state.rotation_angle / TAU;
         libration_amplitude * (TAU * days_elapsed / libration_period).sin()
@@ -100,23 +113,36 @@ pub fn compute_sun_direction(
         0.0
     };
 
-    // Apply planet rotation around Y axis (spin).
-    let total_rotation = state.rotation_angle + libration_offset;
-    let cos_rot = total_rotation.cos();
-    let sin_rot = total_rotation.sin();
+    // Hour angle: rotation_angle=0 → midnight (H=π), rotation_angle=π → noon (H=0).
+    // Convention: H=0 at local noon, positive westward.
+    let hour_angle = std::f64::consts::PI - state.rotation_angle - libration_offset;
 
-    // Rotate star direction by -rotation_angle around Y (planet spins under
-    // the star).
-    let sun_dir = [
-        (star_tilted[0] * cos_rot + star_tilted[2] * sin_rot) as f32,
-        star_tilted[1] as f32,
-        (-star_tilted[0] * sin_rot + star_tilted[2] * cos_rot) as f32,
+    let sin_lat = observer_latitude.sin();
+    let cos_lat = observer_latitude.cos();
+    let sin_dec = declination.sin();
+    let cos_dec = declination.cos();
+    let cos_h = hour_angle.cos();
+    let sin_h = hour_angle.sin();
+
+    // Solar altitude (elevation above horizon).
+    let sin_alt = sin_lat * sin_dec + cos_lat * cos_dec * cos_h;
+    let altitude = sin_alt.asin();
+
+    // Solar azimuth (measured from south, positive westward).
+    let az_y = -sin_h * cos_dec;
+    let az_x = sin_dec * cos_lat - cos_dec * sin_lat * cos_h;
+    let azimuth = az_y.atan2(az_x);
+
+    // Convert to a direction vector in the observer's local frame:
+    //   Y = up (zenith), X = east, Z = south.
+    let cos_alt = altitude.cos();
+    let dir = [
+        (azimuth.sin() * cos_alt) as f32, // east component
+        sin_alt as f32,                   // up component
+        (azimuth.cos() * cos_alt) as f32, // south component
     ];
 
-    // Elevation: angle above the horizon (Y component = sin(elevation)).
-    let elevation = (sun_dir[1] as f64).asin() as f32;
-
-    (sun_dir, elevation)
+    (dir, altitude as f32)
 }
 
 /// Derive time-of-day (hours 0..24) from the rotation angle for backward
@@ -196,27 +222,58 @@ mod tests {
     }
 
     #[test]
-    fn sun_direction_no_tilt_noon() {
-        // At rotation=π (noon), no tilt, orbital_angle=0: star at +X.
-        // After rotating by π around Y, star appears at -X in body frame.
+    fn sun_direction_no_tilt_noon_high_elevation() {
+        // At rotation=π (noon), no tilt, orbital_angle=0.
+        // At 45° latitude the noon elevation should be ~45°.
         let state = OrbitalState {
             rotation_angle: std::f64::consts::PI,
             orbital_angle: 0.0,
             ..OrbitalState::default()
         };
-        let (dir, _elev) = compute_sun_direction(&state, 0.0, 0.0, 0.0);
-        // With no tilt, sun should be in XZ plane (y ≈ 0).
+        let (_dir, elev) = compute_sun_direction(&state, 0.0, 0.0, 0.0);
+        let elev_deg = elev.to_degrees();
         assert!(
-            dir[1].abs() < 0.01,
-            "No tilt: sun Y should be ~0, got {}",
-            dir[1]
+            (elev_deg - 45.0).abs() < 1.0,
+            "Noon at 45°N should be ~45° elevation, got {elev_deg:.1}°"
+        );
+    }
+
+    #[test]
+    fn sun_direction_noon_at_equator() {
+        // At the equator (lat=0) with no tilt at noon, sun should be overhead (~90°).
+        let state = OrbitalState {
+            rotation_angle: std::f64::consts::PI,
+            orbital_angle: 0.0,
+            ..OrbitalState::default()
+        };
+        let (_dir, elev) = compute_sun_direction_at_latitude(&state, 0.0, 0.0, 0.0, 0.0);
+        let elev_deg = elev.to_degrees();
+        assert!(
+            (elev_deg - 90.0).abs() < 1.0,
+            "Noon at equator should be ~90° elevation, got {elev_deg:.1}°"
+        );
+    }
+
+    #[test]
+    fn sun_direction_midnight_below_horizon() {
+        // At rotation=0 (midnight) the sun should be below the horizon.
+        let state = OrbitalState {
+            rotation_angle: 0.0,
+            orbital_angle: 0.0,
+            ..OrbitalState::default()
+        };
+        let (_dir, elev) = compute_sun_direction(&state, 0.0, 0.0, 0.0);
+        assert!(
+            elev < 0.0,
+            "Midnight elevation should be negative, got {:.1}°",
+            elev.to_degrees()
         );
     }
 
     #[test]
     fn sun_direction_with_tilt_solstice() {
         // At summer solstice (orbital_angle=π/2) with 23.44° tilt,
-        // the sun should reach higher elevations.
+        // noon elevation should be higher than at winter solstice.
         let state = OrbitalState {
             rotation_angle: std::f64::consts::PI,
             orbital_angle: std::f64::consts::FRAC_PI_2,
@@ -235,7 +292,9 @@ mod tests {
 
         assert!(
             elev_summer > elev_winter,
-            "Summer elevation ({elev_summer}) should exceed winter ({elev_winter})"
+            "Summer elevation ({:.1}°) should exceed winter ({:.1}°)",
+            elev_summer.to_degrees(),
+            elev_winter.to_degrees()
         );
     }
 

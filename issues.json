@@ -4,7 +4,7 @@
     "title": "No atmospheric sky effects visible \u2014 world appears gray/colorless",
     "category": "rendering",
     "severity": "high",
-    "status": "open",
+    "status": "fix-attempted",
     "reported": "2026-04-01",
     "description": "When running the game, the sky appears gray or black instead of showing a blue sky with Rayleigh scattering from the Bevy Atmosphere component. The world looks colorless despite Atmosphere::earthlike(), ClearColor::BLACK, and DistanceFog all being configured.",
     "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up \u2014 sky should be blue with sun-driven scattering but appears flat gray.",
@@ -16,12 +16,13 @@
     "related_commits": [
       "74e5f7e"
     ],
-    "resolution": null,
+    "resolution": "Root cause: compute_sun_direction() used a body-frame rotation model that kept the sun permanently on the horizon (Y=0). Replaced with standard astronomical solar position formula using observer latitude (default 45\u00b0N). Sun now arcs from sunrise (6AM, 0\u00b0) to noon (45\u00b0) and sets properly.",
     "notes": [
       "Code investigation shows all components are present: Atmosphere::earthlike(medium), ScatteringMedium::default(), ClearColor::BLACK, DistanceFog, Bloom::NATURAL (for HDR).",
       "AtmospherePlugin is auto-registered by PbrPlugin \u2014 no extra plugin needed.",
       "Atmosphere requires HDR on the camera \u2014 Bloom::NATURAL should satisfy this but verify at runtime.",
-      "Try running with RUST_LOG=bevy_pbr=debug to check for atmosphere shader warnings."
+      "Try running with RUST_LOG=bevy_pbr=debug to check for atmosphere shader warnings.",
+      "Fixed orbital model: replaced body-frame rotation matrix with standard solar position formula (altitude = arcsin(sin(\u03c6)sin(\u03b4) + cos(\u03c6)cos(\u03b4)cos(H))). Added compute_sun_direction_at_latitude() for latitude-aware computation."
     ]
   },
   {
