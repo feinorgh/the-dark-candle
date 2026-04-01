@@ -1013,14 +1013,7 @@ fn heightmap_gradient(
 }
 
 /// Local slope magnitude at `(x, z)`.
-fn local_slope(
-    heights: &[f64],
-    w: usize,
-    h: usize,
-    x: usize,
-    z: usize,
-    cell_size: f64,
-) -> f64 {
+fn local_slope(heights: &[f64], w: usize, h: usize, x: usize, z: usize, cell_size: f64) -> f64 {
     if x < 1 || x >= w - 1 || z < 1 || z >= h - 1 {
         return 0.0;
     }
@@ -1552,7 +1545,10 @@ mod tests {
         let config = HydraulicErosionConfig::default();
         hydraulic_erode(&mut heights, w, h, cell_size, &config, 42);
 
-        assert_eq!(heights, original, "Disabled erosion should not modify terrain");
+        assert_eq!(
+            heights, original,
+            "Disabled erosion should not modify terrain"
+        );
     }
 
     #[test]

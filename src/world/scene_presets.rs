@@ -253,8 +253,8 @@ fn archipelago_preset() -> PlanetConfig {
             micro_amplitude: 1.2,
             // Continent mask: many small islands
             continent_enabled: true,
-            continent_freq: 0.006,         // higher freq = smaller landmasses
-            continent_threshold: 0.2,       // only peaks above 0.2 become land
+            continent_freq: 0.006,    // higher freq = smaller landmasses
+            continent_threshold: 0.2, // only peaks above 0.2 become land
             shelf_blend_width: 0.15,
             ocean_floor_depth: 1.0,
             ocean_floor_amplitude: 0.15,
@@ -467,10 +467,7 @@ mod tests {
             ScenePreset::from_name("spherical"),
             Some(ScenePreset::SphericalPlanet)
         );
-        assert_eq!(
-            ScenePreset::from_name("alpine"),
-            Some(ScenePreset::Alpine)
-        );
+        assert_eq!(ScenePreset::from_name("alpine"), Some(ScenePreset::Alpine));
         assert_eq!(
             ScenePreset::from_name("mountains"),
             Some(ScenePreset::Alpine)
@@ -551,25 +548,35 @@ mod tests {
         for name in ScenePreset::available_names() {
             let preset = ScenePreset::from_name(name).unwrap();
             let config = preset.planet_config();
-            assert!(config.height_scale > 0.0, "{name}: height_scale must be positive");
+            assert!(
+                config.height_scale > 0.0,
+                "{name}: height_scale must be positive"
+            );
             assert!(config.seed > 0, "{name}: seed must be non-zero");
             assert!(
                 config.cave_threshold < 0.0,
                 "{name}: cave_threshold should be negative"
             );
-            assert!(config.soil_depth > 0.0, "{name}: soil_depth must be positive");
+            assert!(
+                config.soil_depth > 0.0,
+                "{name}: soil_depth must be positive"
+            );
         }
     }
 
     #[test]
     fn new_presets_use_noise_stack() {
-        for name in &["alpine", "archipelago", "desert_canyon", "rolling_plains", "volcanic", "tundra_fjords"] {
+        for name in &[
+            "alpine",
+            "archipelago",
+            "desert_canyon",
+            "rolling_plains",
+            "volcanic",
+            "tundra_fjords",
+        ] {
             let preset = ScenePreset::from_name(name).unwrap();
             let config = preset.planet_config();
-            assert!(
-                config.noise.is_some(),
-                "{name} should use NoiseStack"
-            );
+            assert!(config.noise.is_some(), "{name} should use NoiseStack");
         }
     }
 
@@ -585,7 +592,10 @@ mod tests {
     #[test]
     fn alpine_has_high_relief() {
         let config = ScenePreset::Alpine.planet_config();
-        assert!(config.height_scale >= 60.0, "Alpine should have high relief");
+        assert!(
+            config.height_scale >= 60.0,
+            "Alpine should have high relief"
+        );
         let noise = config.noise.as_ref().unwrap();
         assert!(
             noise.selector_thresholds.0 < -0.3,

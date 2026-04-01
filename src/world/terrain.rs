@@ -355,16 +355,10 @@ impl TerrainGenerator {
 
                 // Per-column biome/slope data (advanced mode only)
                 let (slope, env, effective_soil) = if use_advanced {
-                    let s = biome_map::compute_slope(
-                        |x, z| self.sample_height(x, z),
-                        world_x,
-                        world_z,
-                    );
+                    let s =
+                        biome_map::compute_slope(|x, z| self.sample_height(x, z), world_x, world_z);
                     let e = self.env_map.sample(world_x, world_z);
-                    let soil = biome_map::adjusted_soil_depth(
-                        self.config.soil_depth as f64,
-                        s,
-                    );
+                    let soil = biome_map::adjusted_soil_depth(self.config.soil_depth as f64, s);
                     (s, Some(e), soil)
                 } else {
                     (0.0, None, self.config.soil_depth as f64)
@@ -400,20 +394,16 @@ impl TerrainGenerator {
                     } else if use_advanced {
                         // Geological strata with ore veins
                         let strata_depth = depth - effective_soil;
-                        ore_material(strata_depth, seed, world_x, wy_f64, world_z)
-                            .unwrap_or_else(|| {
-                                strata_material(strata_depth, seed, world_x, wy_f64, world_z)
-                            })
+                        ore_material(strata_depth, seed, world_x, wy_f64, world_z).unwrap_or_else(
+                            || strata_material(strata_depth, seed, world_x, wy_f64, world_z),
+                        )
                     } else {
                         // Legacy: uniform stone
                         MaterialId::STONE
                     };
 
                     // Cave carving (only underground, not too close to surface)
-                    if material != MaterialId::AIR
-                        && material != MaterialId::WATER
-                        && depth > 2.0
-                    {
+                    if material != MaterialId::AIR && material != MaterialId::WATER && depth > 2.0 {
                         let is_cave = if use_advanced {
                             is_multi_scale_cave(
                                 seed,
@@ -427,8 +417,7 @@ impl TerrainGenerator {
                         };
 
                         if is_cave {
-                            let sea_level_depth =
-                                (self.config.sea_level as f64 - wy_f64).max(0.0);
+                            let sea_level_depth = (self.config.sea_level as f64 - wy_f64).max(0.0);
                             let fill = if use_advanced {
                                 cave_fill_material(depth, sea_level_depth)
                             } else {
@@ -439,8 +428,7 @@ impl TerrainGenerator {
                         }
 
                         // Crystal deposits on cave-adjacent walls
-                        if use_advanced
-                            && is_crystal_deposit(depth, seed, world_x, wy_f64, world_z)
+                        if use_advanced && is_crystal_deposit(depth, seed, world_x, wy_f64, world_z)
                         {
                             chunk.set_material(lx, ly, lz, MaterialId::QUARTZ_CRYSTAL);
                             continue;
@@ -589,9 +577,8 @@ impl SphericalTerrainGenerator {
         // Deep: geological strata or layer-based
         let strata_depth = depth_below_surface - self.planet.soil_depth;
         let base_mat = if use_advanced {
-            ore_material(strata_depth, seed, world_x, world_y, world_z).unwrap_or_else(|| {
-                strata_material(strata_depth, seed, world_x, world_y, world_z)
-            })
+            ore_material(strata_depth, seed, world_x, world_y, world_z)
+                .unwrap_or_else(|| strata_material(strata_depth, seed, world_x, world_y, world_z))
         } else {
             self.planet
                 .layer_at_radius(r)
@@ -1332,7 +1319,11 @@ mod tests {
             mat_shallow == MaterialId::SANDSTONE || mat_shallow == MaterialId::LIMESTONE,
             "Depth 19.9 should be sedimentary"
         );
-        assert_eq!(mat_mid, MaterialId::STONE, "Depth 20.0 should be metamorphic");
+        assert_eq!(
+            mat_mid,
+            MaterialId::STONE,
+            "Depth 20.0 should be metamorphic"
+        );
         assert!(
             mat_deep == MaterialId::GRANITE || mat_deep == MaterialId::BASALT,
             "Depth 60.0 should be igneous"
@@ -1460,7 +1451,10 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "No crystal deposits found at depth 60m in 5000 samples");
+        assert!(
+            found,
+            "No crystal deposits found at depth 60m in 5000 samples"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # World Module
 
-Voxel world infrastructure: types, chunk storage, terrain generation, Surface Nets meshing, and collision queries.
+Voxel world infrastructure: types, chunk storage, terrain generation (NoiseStack noise engine, biome integration, scene presets), Surface Nets meshing, erosion (D8 valley carving + hydraulic), collision queries, and planetary terrain sampling.
 
 ## Spatial Mapping
 
@@ -10,10 +10,16 @@ Voxel world infrastructure: types, chunk storage, terrain generation, Surface Ne
 
 | File | Purpose |
 |------|---------|
-| `voxel.rs` | `MaterialId`, `Voxel` types |
+| `voxel.rs` | `MaterialId` (28 types), `Voxel` type |
 | `chunk.rs` | `Chunk` (32³ flat array), `ChunkCoord` |
 | `chunk_manager.rs` | `ChunkMap`, cylindrical chunk loading |
-| `terrain.rs` | Layered Perlin noise terrain generation |
+| `noise.rs` | `NoiseStack` — composable FBM, ridged fractal, domain warping, terrain selector, micro-detail, continent masks |
+| `biome_map.rs` | `EnvironmentMap` — deterministic temperature/moisture, slope/altitude surface material selection |
+| `terrain.rs` | Unified terrain generator (flat/spherical/planetary), geological strata, ore veins, multi-scale caves |
+| `scene_presets.rs` | 8 scene presets with tuned `PlanetConfig` (alpine, archipelago, desert, plains, volcanic, tundra, valley, spherical) |
+| `erosion.rs` | D8 valley carving + hydraulic erosion (droplet, grid, combined modes), repose slippage |
+| `planet.rs` | `PlanetConfig`, `NoiseConfig`, `HydraulicErosionConfig`, terrain mode enum |
+| `planetary_sampler.rs` | `PlanetaryTerrainSampler` — IDW interpolation from geodesic cells to voxel chunks |
 | `meshing.rs` | Surface Nets mesh extraction + per-material vertex coloring |
 | `collision.rs` | Ground height queries for camera/entity gravity |
 | `raycast.rs` | Discrete 3D grid ray march (26 directions), surface-voxel detection |
@@ -31,23 +37,38 @@ Voxel world infrastructure: types, chunk storage, terrain generation, Surface Ne
 | `pressure` | 101325.0 | Pa | Sea level atmospheric pressure |
 | `damage` | 0.0 | — | 0.0 = intact, 1.0 = destroyed |
 
-### MaterialId Registry
+### MaterialId Registry (28 types)
 
-| ID | Name | Notes |
-|----|------|-------|
-| 0 | Air | Default, transparent |
-| 1 | Stone | Structural, high hardness |
-| 2 | Dirt | Terrain surface layer |
-| 3 | Water | Fluid, swimmable |
-| 4 | Iron | Dense, high melting point |
-| 5 | Wood | Flammable |
-| 6 | Sand | Granular |
-| 7 | Grass | Spreads to dirt (biology) |
-| 8 | Ice | Frozen water |
-| 9 | Steam | Boiled water |
-| 10 | Lava | Molten stone |
-| 11 | Ash | Combustion product |
-| 12 | Organic Matter | Corpse decomposition (biology) |
+| ID | Name | Category | Notes |
+|----|------|----------|-------|
+| 0 | Air | — | Default, transparent |
+| 1 | Stone | Rock | Structural, high hardness |
+| 2 | Dirt | Soil | Terrain surface layer |
+| 3 | Water | Fluid | Swimmable |
+| 4 | Iron | Metal | Dense, high melting point |
+| 5 | Wood | Organic | Flammable |
+| 6 | Sand | Granular | Desert/beach terrain surface |
+| 7 | Grass | Organic | Spreads to dirt (biology) |
+| 8 | Ice | Frozen | Frozen water |
+| 9 | Steam | Gas | Boiled water |
+| 10 | Lava | Molten | Molten stone |
+| 11 | Ash | Combustion | Fire product |
+| 12 | Glass | Mineral | Transparent, refractive (n=1.52) |
+| 13 | Oxygen | Gas | Combustion oxidizer |
+| 14 | Hydrogen | Gas | Combustion fuel |
+| 15 | Organic Matter | Organic | Decomposition product |
+| 16 | Twig | Organic | Tree branches |
+| 17 | Dry Leaves | Organic | Tree foliage (flammable) |
+| 18 | Bark | Organic | Tree outer layer |
+| 19 | Charcoal | Combustion | Burned wood |
+| 20 | Sandstone | Sedimentary | 2–20 m depth strata |
+| 21 | Limestone | Sedimentary | 2–20 m depth strata |
+| 22 | Granite | Igneous | 60 m+ depth strata |
+| 23 | Basalt | Igneous | 60 m+ depth strata |
+| 24 | Coal | Ore | 5–30 m depth range |
+| 25 | Copper Ore | Ore | 15–50 m depth range |
+| 26 | Gold Ore | Ore | 50 m+ depth range |
+| 27 | Quartz Crystal | Mineral | Deep cave walls only |
 
 When adding new materials: define a `MaterialId` constant in `voxel.rs`, create a `.material.ron` file in `assets/data/materials/`, and update this table.
 
@@ -55,6 +76,110 @@ When adding new materials: define a `MaterialId` constant in `voxel.rs`, create 
 
 - **Imported by:** physics, chemistry, biology, behavior, camera
 - **Imports from:** `crate::camera::FpsCamera` (for chunk loading around player)
+
+## NoiseStack Engine (`noise.rs`)
+
+Composable multi-layer noise system replacing the old 2-layer Perlin blend.
+
+### Configuration
+
+`NoiseConfig` (serde-deserializable) controls all noise parameters:
+- `base_freq` — fundamental frequency (default 0.01)
+- `octaves` — FBM octave count (3/6/8 for low/medium/high detail)
+- `ridged_weight` — blend weight for ridged multi-fractal (mountain ridges)
+- `warp_strength` — domain warping amplitude (terrain distortion)
+- `micro_detail_freq` / `micro_detail_amp` — fine-scale surface variation
+- `continent_freq` / `continent_threshold` / `shelf_blend_width` / `ocean_floor_depth` — continent/ocean masking
+
+### Key Methods
+
+- `NoiseStack::new(config, seed)` — build from config
+- `sample(x, z)` — full terrain height (FBM + ridged + selector + warp + micro-detail + continent mask)
+- `sample_land(x, z)` — raw land noise before continent blending
+- `continent_value(x, z)` — continent mask (>threshold = land)
+- `continent_blend(x, z)` — smoothstep shelf transition factor
+- `ocean_floor_noise(x, z)` — low-amplitude underwater terrain
+
+### Usage
+
+```rust
+let config = NoiseConfig { base_freq: 0.008, octaves: 6, ridged_weight: 0.4, ..default() };
+let stack = NoiseStack::new(&config, 42);
+let height = stack.sample(x as f64, z as f64); // returns 0.0..1.0 range
+```
+
+## Scene Presets (`scene_presets.rs`)
+
+8 named terrain presets with tuned `PlanetConfig` values:
+
+| Preset | Key Features |
+|--------|-------------|
+| `valley_river` | Deep valley carving, moderate height |
+| `spherical_planet` | Spherical terrain mode |
+| `alpine` | High ridged mountains, dense caves, heavy erosion |
+| `archipelago` | Continent masking for island chains |
+| `desert_canyon` | High warp, deep canyons, sparse caves |
+| `rolling_plains` | Low height scale, gentle terrain |
+| `volcanic` | Very high peaks, lava-filled caves |
+| `tundra_fjords` | Ridged coastlines, moderate erosion |
+
+CLI: `--scene <name>` selects a preset. Additional flags (`--seed`, `--terrain-detail`, `--height-scale`, `--caves`, `--erosion`, `--hydraulic-erosion`) override preset defaults.
+
+## Geological Depth (`terrain.rs`)
+
+Standalone functions for underground material selection:
+
+- `strata_material(depth, seed, x, z)` — depth-based rock layers:
+  - 0–20 m: sedimentary (sandstone/limestone, noise-selected)
+  - 20–60 m: metamorphic (stone)
+  - 60 m+: igneous (granite/basalt, noise-selected)
+- `ore_material(depth, seed, x, y, z)` — 3D Perlin ore veins at depth-specific ranges (coal 5–30 m, copper 15–50 m, iron 30–80 m, gold 50 m+)
+- `is_crystal_deposit(x, y, z, seed)` — quartz crystal deposits on deep cave walls
+- `is_multi_scale_cave(x, y, z, seed, threshold)` — 3-layer OR-combined caves (caverns freq=0.01, tunnels freq=0.04, tubes freq=0.025)
+- `cave_fill_material(y, sea_level, depth)` — AIR normally, WATER near sea level, LAVA at depth >80 m
+
+## Biome-Terrain Integration (`biome_map.rs`)
+
+Deterministic environment and surface material system (no ECS dependencies).
+
+### EnvironmentMap
+
+- `EnvironmentMap::new(seed)` — builds temperature and moisture noise fields
+- `temperature(x, z)` — returns 0.0..1.0 (cold..hot)
+- `moisture(x, z)` — returns 0.0..1.0 (dry..wet)
+
+### Surface Material Selection
+
+`surface_material(env_map, x, z, altitude, slope, sea_level)` applies rules in priority order:
+1. Slope > 1.5 → Stone (cliffs)
+2. Slope > 0.8 → Dirt (steep hillsides)
+3. Altitude > 60 + cold → Ice (high peaks)
+4. Altitude > 45 → Dirt/Stone (alpine zone)
+5. Low altitude near sea level → Sand (coastal)
+6. Arid + hot → Sand (desert)
+7. Cold → Dirt (tundra)
+8. Default → Grass
+
+### Helpers
+
+- `compute_slope(heightmap, x, z, size)` — central-difference gradient magnitude
+- `adjusted_soil_depth(base, slope)` — valleys thicker, ridges thinner
+
+## Hydraulic Erosion (`erosion.rs`)
+
+Two erosion systems coexist:
+
+### D8 Valley Carving (original)
+- `fill_sinks()` → `compute_d8_directions()` → `compute_flow_accumulation()` → `carve_valley()`
+- Depth ∝ ln(flow), width ∝ √flow
+
+### Hydraulic Erosion (new)
+- `HydraulicErosionConfig` — droplet_count, grid_iterations, max_lifetime, inertia, capacity, deposition, erosion, evaporation, min_slope
+- `HydraulicMode` — Droplet / Grid / Combined
+- `droplet_erode(heightmap, config, seed)` — Beyer-variant droplet simulation
+- `grid_erode(heightmap, config)` — grid-based water/sediment flow
+- `repose_slippage(heightmap, angle)` — 3-pass D8 angle-of-repose correction
+- `hydraulic_erode(heightmap, config, seed)` — combined dispatcher (grid → repose → droplet)
 
 ## Ray-Cast Module (`raycast.rs`)
 

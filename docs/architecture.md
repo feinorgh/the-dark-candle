@@ -17,7 +17,7 @@ This game strictly adheres to Bevy's ECS model.
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| `world` | `src/world/` | Chunks, voxels, terrain generation, Surface Nets meshing, collision |
+| `world` | `src/world/` | Chunks, voxels, terrain generation (NoiseStack, biome integration, scene presets), geological strata & ores, multi-scale caves, hydraulic erosion, Surface Nets meshing, collision, planetary sampling |
 | `physics` | `src/physics/` | Gravity, collision, AMR fluid, LBM gas, FLIP/PIC particles |
 | `chemistry` | `src/chemistry/` | Materials, heat transfer, reactions, state transitions |
 | `biology` | `src/biology/` | Metabolism, health, growth, death, plant systems |

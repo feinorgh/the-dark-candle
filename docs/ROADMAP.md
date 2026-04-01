@@ -297,31 +297,18 @@ fully implemented and tested but not yet running in-game or visible to the
 player. Phases 9b (chemistry runtime), 9c (thermal glow), and 9d (time-of-day)
 will bridge this gap — see their detailed sections below Phase 9a.
 
-### Terrain Detail & World Generation Options
+### Terrain Detail & World Generation Options ✅
 
-The terrain generator currently uses only two Perlin noise layers blended at a
-fixed 70/30 ratio, producing smooth, repetitive landscapes. This milestone
-upgrades to multi-octave FBM, ridged multi-fractal, domain warping, geological
-strata, multi-scale caves, and biome-terrain integration. All detail is computed
-once during async chunk generation — zero runtime FPS impact.
-
-Ten tasks across five tracks:
-
-1. **Noise engine** — `NoiseStack` with composable FBM, ridged fractal, domain
-   warping, terrain-type selector, and micro-detail (T1, T2)
-2. **World presets & CLI** — 6+ scene presets (alpine, archipelago, desert,
-   plains, volcanic, tundra), extended CLI flags, and a world creation UI
-   screen (T3, T4, T5)
-3. **Geological depth** — Rock strata by depth (sedimentary/metamorphic/igneous),
-   ore veins (coal, copper, iron, gold, crystal), enhanced multi-scale cave
-   system with caverns, tunnels, and tube networks (T6, T7)
-4. **Biome-terrain integration** — Biome map generation, per-biome terrain
-   modifiers (height bias, roughness, erosion rate), slope/altitude surface
-   materials (T8, T9)
-5. **Hydraulic erosion** — Rainfall-driven droplet simulation producing
-   fine-scale gullies, smoothed ridges, and sediment deposition. Per-region
-   rainfall intensity controls droplet density — rainy areas get more
-   erosion detail. Runs once at generation time (T10)
+Implemented: composable `NoiseStack` noise engine (FBM, ridged fractal, domain
+warping, terrain-type selector, micro-detail), 8 scene presets (alpine,
+archipelago, desert canyon, rolling plains, volcanic, tundra fjords, plus
+valley river and spherical planet), geological depth strata with ore veins,
+multi-scale cave systems, continent/ocean masks, biome-terrain integration
+(slope/altitude surface materials), and hydraulic erosion (droplet, grid,
+combined modes). 8 new geological materials (sandstone, limestone, granite,
+basalt, coal, copper ore, gold ore, quartz crystal). World creation UI screen
+with preset selector. Extended CLI flags: `--seed`, `--terrain-detail`,
+`--height-scale`, `--caves`, `--erosion`, `--hydraulic-erosion`.
 
 Full design: **[terrain-generation.md](terrain-generation.md)**
 

@@ -237,10 +237,7 @@ mod tests {
             let x = (i as f64) * 11.1;
             let z = (i as f64) * 7.7;
             let m = map.sample(x, z).moisture;
-            assert!(
-                (0.0..=1.0).contains(&m),
-                "Moisture {m} out of range [0, 1]"
-            );
+            assert!((0.0..=1.0).contains(&m), "Moisture {m} out of range [0, 1]");
         }
     }
 
@@ -337,7 +334,10 @@ mod tests {
     #[test]
     fn compute_slope_flat_terrain_is_zero() {
         let slope = compute_slope(|_, _| 64.0, 10.0, 10.0);
-        assert!(slope.abs() < 1e-10, "Flat terrain slope should be ~0, got {slope}");
+        assert!(
+            slope.abs() < 1e-10,
+            "Flat terrain slope should be ~0, got {slope}"
+        );
     }
 
     #[test]

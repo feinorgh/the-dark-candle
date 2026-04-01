@@ -307,7 +307,10 @@ impl NoiseStack {
     /// in between → continental shelf (gradual transition).
     pub fn continent_value(&self, x: f64, z: f64) -> f64 {
         let perlin = Perlin::new(self.seed.wrapping_add(350));
-        perlin.get([x * self.config.continent_freq, z * self.config.continent_freq])
+        perlin.get([
+            x * self.config.continent_freq,
+            z * self.config.continent_freq,
+        ])
     }
 
     /// Low-amplitude ocean floor terrain at `(x, z)`.
@@ -450,7 +453,7 @@ mod tests {
             for z in (-500..500).step_by(17) {
                 let v = stack.fbm(x as f64, z as f64);
                 assert!(
-                    v >= -1.0 && v <= 1.0,
+                    (-1.0..=1.0).contains(&v),
                     "FBM out of [-1, 1]: {v} at ({x}, {z})"
                 );
             }
@@ -466,7 +469,10 @@ mod tests {
         }
         let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
         let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        assert!(max - min > 0.01, "FBM shows no variation: min={min}, max={max}");
+        assert!(
+            max - min > 0.01,
+            "FBM shows no variation: min={min}, max={max}"
+        );
     }
 
     #[test]
@@ -526,7 +532,7 @@ mod tests {
             for z in (-500..500).step_by(23) {
                 let v = stack.selector_value(x as f64, z as f64);
                 assert!(
-                    v >= -1.0 && v <= 1.0,
+                    (-1.0..=1.0).contains(&v),
                     "Selector out of [-1, 1]: {v} at ({x}, {z})"
                 );
             }
@@ -797,7 +803,10 @@ mod tests {
         // With continent disabled, sample should equal sample_land
         let v_off = stack_off.sample(100.0, 200.0);
         let v_land = stack_off.sample_land(100.0, 200.0);
-        assert_eq!(v_off, v_land, "Disabled continent should pass through land noise");
+        assert_eq!(
+            v_off, v_land,
+            "Disabled continent should pass through land noise"
+        );
 
         // With continent enabled at a land position, it should also equal land
         // (find a position with blend=1.0)

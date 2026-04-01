@@ -144,7 +144,10 @@ fn main() {
 
     // If a scene was selected via CLI, skip the world creation screen
     // by starting directly in the Loading state.
-    if app.world().contains_resource::<the_dark_candle::world::planet::PlanetConfig>() {
+    if app
+        .world()
+        .contains_resource::<the_dark_candle::world::planet::PlanetConfig>()
+    {
         app.insert_resource(SkipWorldCreation);
     }
 
@@ -189,9 +192,7 @@ fn main() {
 /// Apply CLI flag overrides to an already-inserted `PlanetConfig`.
 fn apply_cli_overrides(cli: &Cli, app: &mut App) {
     use the_dark_candle::world::{
-        erosion::ErosionConfig,
-        noise::NoiseConfig,
-        planet::PlanetConfig,
+        erosion::ErosionConfig, noise::NoiseConfig, planet::PlanetConfig,
     };
 
     // If no PlanetConfig resource exists yet, nothing to override.

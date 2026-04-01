@@ -58,11 +58,15 @@ terrain detail.
 
 ### 🧱 Voxel World
 - **Octree chunks** — 32³ base resolution with adaptive multi-resolution subdivision
-- **20 material types** — loaded from RON data files (stone, water, iron, lava, wood, glass…)
-- **Procedural terrain** — noise-based heightmaps, valley/river carving, hydraulic erosion
+- **28 material types** — loaded from RON data files: stone, water, iron, lava, wood, glass, plus geological materials (sandstone, limestone, granite, basalt) and ores (coal, copper, gold, quartz crystal)
+- **NoiseStack noise engine** — composable multi-octave FBM, ridged fractals, domain warping, terrain-type selector, micro-detail, continent/ocean masks
+- **Procedural terrain** — noise-based heightmaps, valley/river carving, hydraulic erosion (droplet, grid, and combined modes)
+- **Geological depth** — stratified rock layers (sedimentary/metamorphic/igneous) with depth-based ore veins and multi-scale cave systems (caverns, tunnels, worm tubes with underground lakes and lava)
+- **Biome-terrain integration** — slope/altitude-aware surface materials, per-biome terrain modifiers (height bias, roughness, erosion rate)
 - **Planetary terrain mode** — `--planet` runs the full geodesic pipeline (tectonics → biomes → geology) and drives voxel surface height, materials, and ore veins from `PlanetData`; `ChunkBiomeData` propagates temperature and precipitation to all procgen systems
 - **Tree generation** — L-system-inspired procedural trees with bark, wood, twig, and leaf materials
-- **Scene presets** — valley river, volcanic island, ocean, flat terrain, spherical planet, and more
+- **8 scene presets** — alpine, archipelago, desert canyon, rolling plains, volcanic, tundra fjords, valley river, spherical planet
+- **World creation UI** — in-game preset selector screen; bypassed by CLI `--scene` flag
 
 ### ⚗️ Physics & Chemistry
 - **SI units throughout** — 1 voxel = 1 metre, real densities, conductivities, specific heats
@@ -131,6 +135,12 @@ cargo run --features bevy/dynamic_linking
 # Run with release optimisations
 cargo run --release
 
+# Run with a specific scene preset and seed
+cargo run --release -- --scene alpine --seed 12345
+
+# Tune terrain generation
+cargo run --release -- --scene volcanic --terrain-detail 3 --height-scale 80.0 --caves dense --hydraulic-erosion moderate
+
 # Run with planet-driven terrain (generates a geodesic planet first)
 cargo run --release -- --planet --planet-seed 42 --planet-level 5
 ```
@@ -176,7 +186,7 @@ cargo run --release --bin worldgen -- \
 ### Run Tests
 
 ```bash
-cargo test --lib                 # 1305 unit tests
+cargo test --lib                 # 1372+ unit tests
 cargo test --test simulations    # Physics simulation scenarios
 cargo test --test validate_assets  # Asset loading validation
 ```
@@ -189,7 +199,7 @@ The codebase is organised into focused ECS modules:
 
 | Module | Description |
 |--------|-------------|
-| `world/` | Octree chunks, meshing, terrain generation, raycasting, erosion |
+| `world/` | Octree chunks, meshing, terrain generation (NoiseStack, biome integration, scene presets), erosion (D8 valley + hydraulic), raycasting, planetary sampling |
 | `physics/` | Rigid bodies, gravity, collision, LBM gas, FLIP fluid, atmosphere |
 | `chemistry/` | Heat transfer, reactions, state transitions, radiation |
 | `planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, rendering |
@@ -207,12 +217,12 @@ The codebase is organised into focused ECS modules:
 | `simulation/` | Headless tick-based simulation runner for tests |
 | `camera/` | First-person camera controller |
 
-**146 source files · ~60K lines of Rust · 1305+ tests**
+**148 source files · ~53K lines of Rust · 1372+ tests**
 
 ### Data-Driven Design
 
 Game data lives in `assets/data/` as RON files:
-- **19 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties
+- **27 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties (including 8 geological: sandstone, limestone, granite, basalt, coal, copper ore, gold ore, quartz crystal)
 - **8 chemical reactions** — reactants, products, activation energy, enthalpy
 - **1 tree species** — L-system parameters for procedural generation
 - **Configs** — atmosphere, fluid, planet, subdivision, universal constants
@@ -246,6 +256,7 @@ pipeline is functional and produces visually compelling worlds. The voxel engine
 physics, and chemistry systems are tested and working at the simulation level.
 
 Current focus areas:
+- Terrain detail & world generation (8 scene presets, geological depth, hydraulic erosion) ✅
 - Connecting planetary generation to the in-game voxel world
 - Expanding the creature AI and ecology systems
 - Performance optimisation for real-time gameplay

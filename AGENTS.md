@@ -34,7 +34,7 @@ This game uses a strict Data-Driven ECS architecture. We use the `bevy_common_as
 1. **No Hardcoded Data:** Enemy stats, weapon damage, and level properties must be loaded from `.ron` (Rusty Object Notation) files.
 2. **Data Structs:** Data containers must derive `serde::Deserialize`, `bevy::asset::Asset`, and `bevy::reflect::TypePath`.
 3. **File Locations:** All `.ron` files go in the `assets/data/` directory.
-4. **Key modules:** `src/world/` (chunks, meshing, raycast), `src/chemistry/` (heat, reactions, transitions), `src/physics/` (rigid body, gravity, collision, LBM gas dynamics, atmosphere), `src/lighting/` (sun cycle, light maps, sky scattering, volumetric clouds, fog, cloud shadows), `src/data/` (material/reaction RON loading), `src/diagnostics/` (ECS dump, screenshots, visualization), `src/gpu/` (headless wgpu compute shader renderer).
+4. **Key modules:** `src/world/` (chunks, meshing, raycast, NoiseStack noise engine, biome integration, scene presets, geological strata, hydraulic erosion, planetary sampling), `src/chemistry/` (heat, reactions, transitions), `src/physics/` (rigid body, gravity, collision, LBM gas dynamics, atmosphere), `src/lighting/` (sun cycle, light maps, sky scattering, volumetric clouds, fog, cloud shadows), `src/data/` (material/reaction RON loading), `src/diagnostics/` (ECS dump, screenshots, visualization), `src/gpu/` (headless wgpu compute shader renderer).
 
 ### Example: How to Add a New Entity Type
 If tasked with creating a new entity (like an Item or Enemy):

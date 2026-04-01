@@ -37,8 +37,14 @@ impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>()
             // World creation screen
-            .add_systems(OnEnter(GameState::WorldCreation), spawn_world_creation_screen)
-            .add_systems(OnExit(GameState::WorldCreation), despawn_world_creation_screen)
+            .add_systems(
+                OnEnter(GameState::WorldCreation),
+                spawn_world_creation_screen,
+            )
+            .add_systems(
+                OnExit(GameState::WorldCreation),
+                despawn_world_creation_screen,
+            )
             .add_systems(
                 Update,
                 world_creation_interaction.run_if(in_state(GameState::WorldCreation)),
@@ -169,11 +175,7 @@ fn spawn_world_creation_screen(
         });
 }
 
-fn spawn_preset_button(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    preset: ScenePreset,
-) {
+fn spawn_preset_button(parent: &mut ChildSpawnerCommands, label: &str, preset: ScenePreset) {
     parent
         .spawn((
             WorldCreationButton::Preset(preset),
@@ -197,11 +199,7 @@ fn spawn_preset_button(
         ));
 }
 
-fn spawn_world_button(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    marker: WorldCreationButton,
-) {
+fn spawn_world_button(parent: &mut ChildSpawnerCommands, label: &str, marker: WorldCreationButton) {
     parent
         .spawn((
             marker,
