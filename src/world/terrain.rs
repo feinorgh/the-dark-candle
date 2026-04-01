@@ -29,6 +29,19 @@ use super::noise::NoiseStack;
 use super::planet::{PlanetConfig, TerrainMode};
 use super::voxel::MaterialId;
 
+/// Compute continuous density for Surface Nets interpolation.
+///
+/// `depth` is the signed distance below the terrain surface (positive =
+/// underground, negative = above surface).  Returns a value in \[0, 1\]
+/// where 0.5 is the isosurface.
+///
+/// The gradient spans 2 m (±1 m from the surface), giving Surface Nets
+/// enough variation to place vertices at sub-voxel accuracy.
+#[inline]
+pub fn terrain_density(depth: f64) -> f32 {
+    (0.5 + depth * 0.5).clamp(0.0, 1.0) as f32
+}
+
 // ── Geological strata & ore veins ──────────────────────────────────────────
 
 /// Select a rock material based on depth below the terrain surface.
@@ -424,6 +437,7 @@ impl TerrainGenerator {
                                 MaterialId::AIR
                             };
                             chunk.set_material(lx, ly, lz, fill);
+                            // Binary density for caves (set_material handles it)
                             continue;
                         }
 
@@ -436,6 +450,17 @@ impl TerrainGenerator {
                     }
 
                     chunk.set_material(lx, ly, lz, material);
+
+                    // Compute smooth density for Surface Nets interpolation.
+                    // For terrain surface voxels, density encodes the fractional
+                    // position within the voxel. For water, use distance to sea level.
+                    let density = if material == MaterialId::WATER {
+                        let sea_depth = self.config.sea_level as f64 - wy_f64;
+                        terrain_density(sea_depth)
+                    } else {
+                        terrain_density(depth)
+                    };
+                    chunk.get_mut(lx, ly, lz).density = density;
                 }
             }
         }
@@ -534,6 +559,15 @@ impl SphericalTerrainGenerator {
                     let material = self.material_at_radius(r, surface_r, world_x, world_y, world_z);
 
                     chunk.set_material(lx, ly, lz, material);
+
+                    // Smooth density: depth below surface = surface_r - r.
+                    // For water voxels, use distance below sea level radius.
+                    let density = if material == MaterialId::WATER {
+                        terrain_density(self.planet.sea_level_radius - r)
+                    } else {
+                        terrain_density(surface_r - r)
+                    };
+                    chunk.get_mut(lx, ly, lz).density = density;
                 }
             }
         }
@@ -1533,6 +1567,83 @@ mod tests {
         assert!(
             found_water_or_lava,
             "Deep caves should contain water or lava fill"
+        );
+    }
+
+    #[test]
+    fn terrain_density_function_values() {
+        // Isosurface at depth=0 → density 0.5
+        assert!((terrain_density(0.0) - 0.5).abs() < f32::EPSILON);
+        // 1 m below surface → density 1.0
+        assert!((terrain_density(1.0) - 1.0).abs() < f32::EPSILON);
+        // 1 m above surface → density 0.0
+        assert!((terrain_density(-1.0) - 0.0).abs() < f32::EPSILON);
+        // Deep underground → clamped at 1.0
+        assert!((terrain_density(100.0) - 1.0).abs() < f32::EPSILON);
+        // High above → clamped at 0.0
+        assert!((terrain_density(-50.0) - 0.0).abs() < f32::EPSILON);
+        // Half-meter below → 0.75
+        assert!((terrain_density(0.5) - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn generated_chunk_has_smooth_density_at_surface() {
+        let generator = default_generator();
+        // Use y=64..95 — above sea level, so above-surface voxels are AIR.
+        let coord = ChunkCoord::new(0, 2, 0);
+        let mut chunk = Chunk::new_empty(coord);
+        generator.generate_chunk(&mut chunk);
+
+        // Find a column that has the terrain surface within this chunk.
+        let origin = coord.world_origin();
+        let mut found_gradient = false;
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                let world_x = (origin.x + lx as i32) as f64;
+                let world_z = (origin.z + lz as i32) as f64;
+                let height = generator.sample_height(world_x, world_z);
+
+                // Check if the surface falls within this chunk's Y range
+                let chunk_y_min = origin.y as f64;
+                let chunk_y_max = chunk_y_min + CHUNK_SIZE as f64;
+                if height < chunk_y_min || height >= chunk_y_max {
+                    continue;
+                }
+
+                // Find the voxel at the surface level
+                let surface_ly = (height - chunk_y_min) as usize;
+                if surface_ly == 0 || surface_ly >= CHUNK_SIZE - 1 {
+                    continue;
+                }
+
+                let below = chunk.get(lx, surface_ly, lz);
+                let above = chunk.get(lx, surface_ly + 1, lz);
+
+                // Surface voxels should have density != binary 0.0 or 1.0
+                // (unless the surface height falls exactly on an integer)
+                let frac = height - height.floor();
+                if frac > 0.01 && frac < 0.99 {
+                    assert!(
+                        below.density > 0.5 && below.density < 1.0,
+                        "Below-surface density should be in (0.5, 1.0), got {}",
+                        below.density,
+                    );
+                    assert!(
+                        above.density < 0.5 && above.density > 0.0,
+                        "Above-surface density should be in (0.0, 0.5), got {}",
+                        above.density,
+                    );
+                    found_gradient = true;
+                    break;
+                }
+            }
+            if found_gradient {
+                break;
+            }
+        }
+        assert!(
+            found_gradient,
+            "Should find at least one column with smooth density gradient"
         );
     }
 }

@@ -148,10 +148,10 @@ fn material_color(mat: MaterialId, color_map: Option<&MaterialColorMap>) -> [f32
         .unwrap_or_else(|| material_color_fallback(mat))
 }
 
-/// Sample the scalar field: 1.0 for solid, 0.0 for air.
+/// Sample the scalar field using the voxel's continuous density.
 /// Out-of-bounds samples return 0.0 (air) to create surfaces at chunk edges
 /// when no neighbor data is available.
-/// Returns (solidity, material, temperature_K).
+/// Returns (density, material, temperature_K).
 #[inline]
 fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
     if x >= 0
@@ -162,11 +162,7 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
         && (z as usize) < CHUNK_SIZE
     {
         let v = chunk.get(x as usize, y as usize, z as usize);
-        if v.is_air() {
-            (0.0, MaterialId::AIR, v.temperature)
-        } else {
-            (1.0, v.material, v.temperature)
-        }
+        (v.density, v.material, v.temperature)
     } else {
         (0.0, MaterialId::AIR, 288.15)
     }
@@ -194,11 +190,7 @@ impl NeighborVoxels {
     fn sample_slice(slice: &[Voxel], x: usize, y: usize, z: usize) -> (f32, MaterialId, f32) {
         let idx = x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z;
         let v = &slice[idx];
-        if v.is_air() {
-            (0.0, MaterialId::AIR, v.temperature)
-        } else {
-            (1.0, v.material, v.temperature)
-        }
+        (v.density, v.material, v.temperature)
     }
 
     /// Sample the scalar field, crossing into neighbor chunks when needed.
@@ -269,7 +261,7 @@ pub fn generate_mesh_with_colors(
 }
 
 /// Sample the scalar field from an octree at a given cell coordinate and size.
-/// Returns (solidity, material, temperature_K). Out-of-bounds → air.
+/// Returns (density, material, temperature_K). Out-of-bounds → air.
 #[inline]
 fn sample_octree(
     tree: &OctreeNode<Voxel>,
@@ -286,11 +278,7 @@ fn sample_octree(
         && (z as usize) < size
     {
         let v = tree.get(x as usize, y as usize, z as usize, size);
-        if v.is_air() {
-            (0.0, MaterialId::AIR, v.temperature)
-        } else {
-            (1.0, v.material, v.temperature)
-        }
+        (v.density, v.material, v.temperature)
     } else {
         (0.0, MaterialId::AIR, 288.15)
     }
@@ -1661,5 +1649,65 @@ mod tests {
         let (solidity, mat, _temp) = full_neighbors.sample(&chunk, CHUNK_SIZE as i32, 0, 0);
         assert_eq!(solidity, 1.0, "+X neighbor stone → solid");
         assert_eq!(mat, MaterialId::STONE);
+    }
+
+    #[test]
+    fn smooth_density_shifts_vertex_positions() {
+        use crate::world::terrain::terrain_density;
+
+        // Create a chunk with a terrain surface at height y≈16.7.
+        // Voxels at y≤16 are solid (density > 0.5), y≥17 are air (density < 0.5).
+        let surface_height = 16.7;
+        let coord = ChunkCoord::new(0, 0, 0);
+
+        // Binary version: density = 0.0 or 1.0
+        let mut binary_chunk = Chunk::new_empty(coord);
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE {
+                    if (y as f64) <= surface_height {
+                        binary_chunk.set_material(x, y, z, MaterialId::STONE);
+                        // set_material sets density=1.0 for solid, 0.0 for air
+                    }
+                }
+            }
+        }
+
+        // Smooth version: density encodes fractional surface position
+        let mut smooth_chunk = Chunk::new_empty(coord);
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                for y in 0..CHUNK_SIZE {
+                    let depth = surface_height - y as f64;
+                    if (y as f64) <= surface_height {
+                        smooth_chunk.set_material(x, y, z, MaterialId::STONE);
+                    }
+                    smooth_chunk.get_mut(x, y, z).density = terrain_density(depth);
+                }
+            }
+        }
+
+        let binary_mesh = generate_mesh(&binary_chunk);
+        let smooth_mesh = generate_mesh(&smooth_chunk);
+
+        // Both should produce valid meshes
+        assert!(binary_mesh.vertex_count() > 0);
+        assert!(smooth_mesh.vertex_count() > 0);
+
+        // With smooth density, Surface Nets vertex positions should differ
+        // from the binary mesh (shifted toward the actual surface at y=16.7).
+        // The Y coordinate of surface vertices should average closer to 16.7
+        // in the smooth mesh vs ~16.5 in the binary mesh.
+        let binary_avg_y: f32 = binary_mesh.positions.iter().map(|p| p[1]).sum::<f32>()
+            / binary_mesh.vertex_count() as f32;
+        let smooth_avg_y: f32 = smooth_mesh.positions.iter().map(|p| p[1]).sum::<f32>()
+            / smooth_mesh.vertex_count() as f32;
+
+        let target_y = surface_height as f32;
+        assert!(
+            (smooth_avg_y - target_y).abs() < (binary_avg_y - target_y).abs(),
+            "Smooth density avg Y ({smooth_avg_y}) should be closer to surface \
+             ({target_y}) than binary avg Y ({binary_avg_y})"
+        );
     }
 }

@@ -129,10 +129,13 @@ impl Chunk {
     }
 
     /// Set only the material at a position, preserving other voxel state.
+    /// Density is reset to binary (0.0 for air, 1.0 for solid).
     #[inline]
     pub fn set_material(&mut self, x: usize, y: usize, z: usize, material: MaterialId) {
         self.dirty = true;
-        self.voxels[Self::index(x, y, z)].material = material;
+        let v = &mut self.voxels[Self::index(x, y, z)];
+        v.material = material;
+        v.density = if material.is_air() { 0.0 } else { 1.0 };
     }
 
     /// Whether the chunk has been modified since the dirty flag was last cleared.
@@ -482,6 +485,7 @@ mod tests {
             pressure: 2.5,
             damage: 0.3,
             latent_heat_buffer: 0.0,
+            density: 1.0,
         };
         chunk.set(7, 7, 7, v);
 

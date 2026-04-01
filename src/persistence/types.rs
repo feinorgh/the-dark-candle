@@ -171,6 +171,11 @@ pub fn decode_rle(runs: &[VoxelRun]) -> Vec<crate::world::voxel::Voxel> {
             pressure: r.pressure,
             damage: r.damage,
             latent_heat_buffer: 0.0,
+            density: if MaterialId(r.material).is_air() {
+                0.0
+            } else {
+                1.0
+            },
         };
         for _ in 0..r.count {
             out.push(v);

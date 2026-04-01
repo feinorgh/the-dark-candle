@@ -28,6 +28,7 @@ use crate::planet::grid::{CellId, CellIndex};
 use crate::planet::{BiomeType, PlanetData, RockType};
 use crate::world::chunk::{CHUNK_SIZE, Chunk};
 use crate::world::planet::PlanetConfig;
+use crate::world::terrain::terrain_density;
 use crate::world::voxel::{MaterialId, Voxel};
 
 // ─── ChunkBiomeData component ─────────────────────────────────────────────────
@@ -312,12 +313,22 @@ impl PlanetaryTerrainSampler {
                         material
                     };
 
+                    let density = if final_material == MaterialId::WATER {
+                        terrain_density(sea_r - r)
+                    } else if final_material.is_air() && depth < 0.0 {
+                        // Cave-carved air deep underground: binary 0.0
+                        0.0
+                    } else {
+                        terrain_density(depth)
+                    };
+
                     let voxel = Voxel {
                         material: final_material,
                         temperature: temp_k,
                         pressure: crate::physics::constants::ATMOSPHERIC_PRESSURE,
                         damage: 0.0,
                         latent_heat_buffer: 0.0,
+                        density,
                     };
                     chunk.set(lx, ly, lz, voxel);
                 }

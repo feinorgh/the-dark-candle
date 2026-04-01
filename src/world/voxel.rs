@@ -70,6 +70,20 @@ pub struct Voxel {
     /// critical — finer cells at interfaces will capture the phase front
     /// directly rather than averaging over 1 m³.
     pub latent_heat_buffer: f32,
+    /// Continuous density used by Surface Nets for sub-voxel vertex placement.
+    ///
+    /// Range 0.0–1.0: the isosurface lies at 0.5.  Values near the terrain
+    /// surface encode the fractional distance so that the mesher can
+    /// interpolate edge crossings to sub-voxel accuracy.  Deep underground
+    /// voxels store 1.0; high-altitude air stores 0.0.
+    #[serde(default = "default_density_from_context")]
+    pub density: f32,
+}
+
+/// Serde default: density 0.0 (air).  Material-aware defaults are handled
+/// by `Voxel::new()` and `Chunk::set_material()`.
+fn default_density_from_context() -> f32 {
+    0.0
 }
 
 impl Default for Voxel {
@@ -80,6 +94,7 @@ impl Default for Voxel {
             pressure: 101_325.0,
             damage: 0.0,
             latent_heat_buffer: 0.0,
+            density: 0.0,
         }
     }
 }
@@ -88,6 +103,7 @@ impl Voxel {
     pub fn new(material: MaterialId) -> Self {
         Self {
             material,
+            density: if material.is_air() { 0.0 } else { 1.0 },
             ..Default::default()
         }
     }

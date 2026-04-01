@@ -642,6 +642,7 @@ fn build_forest_fire_scene(config: &TreeConfig, scene_size: usize, depth: u32) -
         pressure: 101_325.0,
         damage: 0.0,
         latent_heat_buffer: 0.0,
+        density: 0.0,
     };
     let mut scene = vec![air; hi_size * hi_size * hi_size];
 

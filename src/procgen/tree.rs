@@ -155,6 +155,7 @@ pub fn generate_tree(config: &TreeConfig, grid_size: usize) -> OctreeNode<Voxel>
         pressure: 101_325.0,
         damage: 0.0,
         latent_heat_buffer: 0.0,
+        density: 0.0,
     };
 
     let mut root = OctreeNode::new_leaf(air);
@@ -370,6 +371,7 @@ fn fill_disc(
                     pressure: 101_325.0,
                     damage: 0.0,
                     latent_heat_buffer: 0.0,
+                    density: 1.0,
                 };
                 root.set(gx, gy, gz, hi_size, target_size, voxel);
             }
@@ -391,6 +393,7 @@ fn add_leaf_cluster(
         pressure: 101_325.0,
         damage: 0.0,
         latent_heat_buffer: 0.0,
+        density: 1.0,
     };
 
     let radius: i32 = 3; // cells in each direction
