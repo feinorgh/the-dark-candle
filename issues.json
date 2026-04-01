@@ -76,7 +76,7 @@
     "title": "In-game map (M key) does not open",
     "category": "input",
     "severity": "high",
-    "status": "fix-attempted",
+    "status": "resolved",
     "reported": "2026-04-01",
     "description": "Pressing M during gameplay does not open the in-game map overlay. The map system (src/map/) was implemented with M key toggle, Tab for local/global switch, and ESC to close, but none of these appear to function at runtime.",
     "reproduction": "Run `cargo run --features bevy/dynamic_linking`. During gameplay (Playing state), press M. Map overlay should appear but does not.",
@@ -89,7 +89,7 @@
     "related_commits": [
       "b002808"
     ],
-    "resolution": null,
+    "resolution": "Fixed discovery tracking (Local<bool> initial scan guard) and confirmed map toggle works. Map overlay displays correctly.",
     "notes": [
       "Code investigation shows MapPlugin IS registered in main.rs.",
       "toggle_map system listens for KeyCode::KeyM with just_pressed().",
