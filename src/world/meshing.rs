@@ -250,7 +250,7 @@ impl NeighborVoxels {
 
 /// Generate a mesh from a chunk's voxel data using the Surface Nets algorithm.
 pub fn generate_mesh(chunk: &Chunk) -> ChunkMesh {
-    generate_mesh_with_colors(chunk, &NeighborVoxels::default(), None, false)
+    generate_mesh_with_colors(chunk, &NeighborVoxels::default(), None, false, false)
 }
 
 /// Generate a mesh from a chunk, using the color map for material colors.
@@ -262,10 +262,12 @@ pub fn generate_mesh_with_colors(
     neighbors: &NeighborVoxels,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
+    spherical: bool,
 ) -> ChunkMesh {
     generate_mesh_generic(
         CHUNK_SIZE as i32 + 1,
         1.0,
+        spherical,
         |x, y, z| neighbors.sample(chunk, x, y, z),
         |mat, temp| {
             if thermal_vision {
@@ -310,7 +312,14 @@ fn sample_octree(
 ///
 /// `size` is the grid dimension (e.g. CHUNK_SIZE = 32).
 pub fn generate_mesh_from_octree(tree: &OctreeNode<Voxel>, size: usize) -> ChunkMesh {
-    generate_mesh_from_octree_with_colors(tree, size, &NeighborVoxels::default(), None, false)
+    generate_mesh_from_octree_with_colors(
+        tree,
+        size,
+        &NeighborVoxels::default(),
+        None,
+        false,
+        false,
+    )
 }
 
 /// Generate a mesh from an octree volume, using the color map for materials.
@@ -324,10 +333,12 @@ pub fn generate_mesh_from_octree_with_colors(
     neighbors: &NeighborVoxels,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
+    spherical: bool,
 ) -> ChunkMesh {
     generate_mesh_generic(
         size as i32 + 1,
         1.0,
+        spherical,
         |x, y, z| {
             let cs = size as i32;
             if x >= 0 && y >= 0 && z >= 0 && x < cs && y < cs && z < cs {
@@ -373,7 +384,7 @@ pub fn generate_mesh_from_octree_with_colors(
 /// 4 = quarter (8³), etc. The output mesh covers the same world-space volume
 /// but with fewer vertices and triangles.
 pub fn generate_mesh_lod(chunk: &Chunk, lod_step: usize) -> ChunkMesh {
-    generate_mesh_lod_with_colors(chunk, lod_step, None, false)
+    generate_mesh_lod_with_colors(chunk, lod_step, None, false, false)
 }
 
 /// Generate a mesh at reduced resolution for LOD, using the color map.
@@ -382,6 +393,7 @@ pub fn generate_mesh_lod_with_colors(
     lod_step: usize,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
+    spherical: bool,
 ) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = CHUNK_SIZE / lod_step;
@@ -390,6 +402,7 @@ pub fn generate_mesh_lod_with_colors(
     generate_mesh_generic(
         effective_size as i32,
         lod_step as f32,
+        spherical,
         |x, y, z| {
             let fx = x * step;
             let fy = y * step;
@@ -412,7 +425,7 @@ pub fn generate_mesh_from_octree_lod(
     size: usize,
     lod_step: usize,
 ) -> ChunkMesh {
-    generate_mesh_from_octree_lod_with_colors(tree, size, lod_step, None, false)
+    generate_mesh_from_octree_lod_with_colors(tree, size, lod_step, None, false, false)
 }
 
 /// Generate a mesh from an octree at reduced resolution, using the color map.
@@ -422,6 +435,7 @@ pub fn generate_mesh_from_octree_lod_with_colors(
     lod_step: usize,
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
+    spherical: bool,
 ) -> ChunkMesh {
     assert!(lod_step > 0 && lod_step.is_power_of_two());
     let effective_size = size / lod_step;
@@ -430,6 +444,7 @@ pub fn generate_mesh_from_octree_lod_with_colors(
     generate_mesh_generic(
         effective_size as i32,
         lod_step as f32,
+        spherical,
         |x, y, z| {
             let fx = x * step;
             let fy = y * step;
@@ -453,7 +468,13 @@ pub fn generate_mesh_from_octree_lod_with_colors(
 /// grid_size) still span the full chunk extent.
 /// `sample_fn(x, y, z)` returns (scalar, material, temperature) for the given cell corner.
 /// `color_fn(mat, temperature)` returns the RGBA color for a material and temperature.
-fn generate_mesh_generic<F, C>(grid_size: i32, scale: f32, sample_fn: F, color_fn: C) -> ChunkMesh
+fn generate_mesh_generic<F, C>(
+    grid_size: i32,
+    scale: f32,
+    spherical: bool,
+    sample_fn: F,
+    color_fn: C,
+) -> ChunkMesh
 where
     F: Fn(i32, i32, i32) -> (f32, MaterialId, f32),
     C: Fn(MaterialId, f32) -> [f32; 4],
@@ -622,7 +643,7 @@ where
     }
 
     // Phase 3: Normals
-    compute_normals(&positions, &indices, &mut normals);
+    compute_normals(&positions, &indices, &mut normals, spherical);
 
     ChunkMesh {
         positions,
@@ -646,7 +667,16 @@ fn emit_quad(indices: &mut Vec<u32>, a: u32, b: u32, c: u32, d: u32) {
 }
 
 /// Compute smooth vertex normals by averaging face normals of adjacent triangles.
-fn compute_normals(positions: &[[f32; 3]], indices: &[u32], normals: &mut [[f32; 3]]) {
+///
+/// When `spherical` is true, degenerate normals (zero accumulated face area)
+/// fall back to the radial direction `normalize(vertex_position)` instead of
+/// global Y.  This is correct for terrain on a sphere centered at the origin.
+fn compute_normals(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    normals: &mut [[f32; 3]],
+    spherical: bool,
+) {
     // Reset all normals to zero
     for n in normals.iter_mut() {
         *n = [0.0, 0.0, 0.0];
@@ -672,13 +702,18 @@ fn compute_normals(positions: &[[f32; 3]], indices: &[u32], normals: &mut [[f32;
     }
 
     // Normalize
-    for n in normals.iter_mut() {
+    for (i, n) in normals.iter_mut().enumerate() {
         let v = Vec3::from_array(*n);
         let len = v.length();
         if len > 1e-8 {
             *n = (v / len).to_array();
+        } else if spherical {
+            // On a sphere centered at the origin, the surface normal is the
+            // radial direction from center through the vertex.
+            let pos = Vec3::from_array(positions[i]);
+            *n = pos.normalize_or(Vec3::Y).to_array();
         } else {
-            *n = [0.0, 1.0, 0.0]; // fallback up
+            *n = [0.0, 1.0, 0.0];
         }
     }
 }
@@ -757,6 +792,7 @@ fn lod_step(level: LodLevel) -> usize {
 ///
 /// `neighbors` carries the 6 face-adjacent chunk snapshots needed to eliminate
 /// seam gaps at chunk boundaries.
+#[allow(clippy::too_many_arguments)]
 fn generate_chunk_mesh(
     chunk: &Chunk,
     octree: Option<&ChunkOctree>,
@@ -765,6 +801,7 @@ fn generate_chunk_mesh(
     color_map: Option<&MaterialColorMap>,
     thermal_vision: bool,
     light_map: Option<&ChunkLightMap>,
+    spherical: bool,
 ) -> ChunkMesh {
     let mut mesh = match octree {
         Some(oct) if lod_step_size <= 1 => generate_mesh_from_octree_with_colors(
@@ -773,6 +810,7 @@ fn generate_chunk_mesh(
             neighbors,
             color_map,
             thermal_vision,
+            spherical,
         ),
         Some(oct) => generate_mesh_from_octree_lod_with_colors(
             &oct.0,
@@ -780,11 +818,18 @@ fn generate_chunk_mesh(
             lod_step_size,
             color_map,
             thermal_vision,
+            spherical,
         ),
         None if lod_step_size <= 1 => {
-            generate_mesh_with_colors(chunk, neighbors, color_map, thermal_vision)
+            generate_mesh_with_colors(chunk, neighbors, color_map, thermal_vision, spherical)
         }
-        None => generate_mesh_lod_with_colors(chunk, lod_step_size, color_map, thermal_vision),
+        None => generate_mesh_lod_with_colors(
+            chunk,
+            lod_step_size,
+            color_map,
+            thermal_vision,
+            spherical,
+        ),
     };
 
     if let Some(lm) = light_map {
@@ -813,6 +858,7 @@ pub(super) fn dispatch_mesh_tasks(
     color_map: Option<Res<MaterialColorMap>>,
     thermal_mode: Option<Res<ThermalVisionMode>>,
     chunk_map: Res<ChunkMap>,
+    planet: Res<super::planet::PlanetConfig>,
     camera_q: Query<&Transform, With<Camera3d>>,
     mut chunk_queries: ParamSet<(
         // p0: mutable query for the chunks we are dispatching mesh tasks for.
@@ -835,6 +881,7 @@ pub(super) fn dispatch_mesh_tasks(
     let default_config = LodConfig::default();
     let config = lod_config.as_deref().unwrap_or(&default_config);
     let thermal_vision = thermal_mode.as_ref().is_some_and(|m| m.0);
+    let spherical = planet.is_spherical();
     let camera_pos = camera_q
         .iter()
         .next()
@@ -929,6 +976,7 @@ pub(super) fn dispatch_mesh_tasks(
                 color_map_clone.as_ref(),
                 thermal_vision,
                 light_map_clone.as_ref(),
+                spherical,
             );
             ChunkMeshResult { mesh, lod_level }
         });
@@ -1122,6 +1170,7 @@ impl Plugin for MeshingPlugin {
 #[cfg(test)]
 mod tests {
     use super::super::chunk::ChunkCoord;
+    use super::super::planet::PlanetConfig;
     use super::*;
 
     #[test]
@@ -1525,6 +1574,7 @@ mod tests {
         app.init_resource::<ChunkMap>();
         app.insert_resource(LodConfig::default());
         app.insert_resource(MaterialColorMap::from_defaults());
+        app.insert_resource(PlanetConfig::default());
         app.add_systems(Update, dispatch_mesh_tasks);
 
         // Spawn more dirty chunks than the per-frame budget.
@@ -1556,6 +1606,7 @@ mod tests {
         app.init_resource::<ChunkMap>();
         app.insert_resource(LodConfig::default());
         app.insert_resource(MaterialColorMap::from_defaults());
+        app.insert_resource(PlanetConfig::default());
         app.add_systems(Update, dispatch_mesh_tasks);
 
         // Spawn clean (non-dirty) chunks.
@@ -1600,6 +1651,7 @@ mod tests {
                 None,
                 false,
                 None,
+                false,
             );
             let direct = if step <= 1 {
                 generate_mesh(&chunk)
@@ -1632,7 +1684,7 @@ mod tests {
 
         // Mesh with no neighbors → boundary surfaces on all 6 faces.
         let mesh_no_neighbors =
-            generate_mesh_with_colors(&chunk, &NeighborVoxels::default(), None, false);
+            generate_mesh_with_colors(&chunk, &NeighborVoxels::default(), None, false, false);
 
         // Provide a solid +X neighbor snapshot.
         let neighbor_chunk = Chunk::new_filled(ChunkCoord::new(1, 0, 0), MaterialId::STONE);
@@ -1640,7 +1692,7 @@ mod tests {
             px: Some(neighbor_chunk.flat_snapshot()),
             ..Default::default()
         };
-        let mesh_with_px = generate_mesh_with_colors(&chunk, &neighbors, None, false);
+        let mesh_with_px = generate_mesh_with_colors(&chunk, &neighbors, None, false, false);
 
         // With a solid +X neighbor, the +X boundary surface is eliminated (solid
         // meets solid → no surface). So fewer vertices/triangles overall.

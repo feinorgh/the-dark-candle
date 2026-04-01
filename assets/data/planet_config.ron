@@ -2,6 +2,9 @@
 //
 // Spherical terrain mode: planet centered at origin, surface features from
 // noise sampled in spherical coordinates, geological layers by radial depth.
+//
+// Noise frequencies are in radian-space (lat ∈ [-π/2, π/2], lon ∈ [-π, π]).
+// 1 radian at surface ≈ 32 000 m, so fbm_base_freq 1.0 → wavelength ≈ 32 km.
 (
     mode: Spherical,
     mean_radius: 32000.0,
@@ -9,7 +12,7 @@
     surface_gravity: 9.80665,
     rotation_rate: 7.292e-5,
     rotation_axis: (0.0, 1.0, 0.0),
-    height_scale: 32.0,
+    height_scale: 4000.0,
     layers: [
         (
             name: "inner_core",
@@ -37,9 +40,25 @@
         ),
     ],
     seed: 42,
-    continent_freq: 0.005,
-    detail_freq: 0.02,
+    continent_freq: 1.0,
+    detail_freq: 3.0,
     cave_freq: 0.03,
     cave_threshold: -0.3,
     soil_depth: 4.0,
+    noise: Some((
+        fbm_octaves: 6,
+        fbm_persistence: 0.5,
+        fbm_lacunarity: 2.0,
+        fbm_base_freq: 1.0,
+        ridged_octaves: 5,
+        ridged_gain: 2.0,
+        ridged_base_freq: 1.5,
+        selector_freq: 0.5,
+        selector_thresholds: (-0.2, 0.3),
+        warp_strength: 0.1,
+        warp_freq: 0.8,
+        micro_freq: 15.0,
+        micro_amplitude: 0.02,
+        continent_enabled: false,
+    )),
 )

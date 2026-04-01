@@ -90,6 +90,7 @@ fn local_up_from_position(pos: Vec3) -> Vec3 {
 fn spawn_camera(
     mut commands: Commands,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
+    planet: Res<PlanetConfig>,
     mut media: ResMut<Assets<ScatteringMedium>>,
 ) {
     // Pick a spawn position on the terrain surface.
@@ -145,11 +146,27 @@ fn spawn_camera(
 
     let medium = media.add(ScatteringMedium::default());
 
+    // Configure atmosphere radii to match the actual planet.
+    // ScatteringMedium::default() assumes a 60 km atmosphere height
+    // (Rayleigh scale height 8 km = 8/60 normalized). We preserve that
+    // thickness so the scattering coefficients remain physically correct.
+    let atmosphere = if planet.is_spherical() {
+        let r = planet.mean_radius as f32;
+        Atmosphere {
+            bottom_radius: r,
+            top_radius: r + 60_000.0,
+            ground_albedo: Vec3::splat(0.3),
+            medium: medium.clone(),
+        }
+    } else {
+        Atmosphere::earthlike(medium)
+    };
+
     commands.spawn((
         Camera3d::default(),
         Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
         Bloom::NATURAL,
-        Atmosphere::earthlike(medium),
+        atmosphere,
         DistanceFog {
             color: Color::srgba(0.7, 0.78, 0.9, 1.0),
             directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),

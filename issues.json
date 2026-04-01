@@ -200,13 +200,13 @@
   },
   {
     "id": "CAMERA-001",
-    "title": "Camera horizon tilted at 45° on spherical planet at 45° latitude",
+    "title": "Camera horizon tilted at 45\u00b0 on spherical planet at 45\u00b0 latitude",
     "category": "camera",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "In spherical terrain mode, the player spawns at 45° latitude but the camera always treats global Y as 'up'. The local surface normal at 45° latitude is (cos45°, sin45°, 0), creating a 45° mismatch between the camera's horizon and the actual ground plane. The ground appears tilted by the same angle as the player's latitude.",
-    "reproduction": "Run `cargo run --features bevy/dynamic_linking` with spherical terrain mode (default). Observe the ground is tilted ~45° from the camera's horizon.",
+    "description": "In spherical terrain mode, the player spawns at 45\u00b0 latitude but the camera always treats global Y as 'up'. The local surface normal at 45\u00b0 latitude is (cos45\u00b0, sin45\u00b0, 0), creating a 45\u00b0 mismatch between the camera's horizon and the actual ground plane. The ground appears tilted by the same angle as the player's latitude.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking` with spherical terrain mode (default). Observe the ground is tilted ~45\u00b0 from the camera's horizon.",
     "suspected_files": [
       "src/camera/mod.rs"
     ],
@@ -214,9 +214,62 @@
     "related_commits": [],
     "resolution": "Three fixes in src/camera/mod.rs: (1) camera_look() now prepends Quat::from_rotation_arc(Vec3::Y, local_up) as a base orientation in spherical mode, aligning camera Y with the radial surface normal. (2) spawn_camera() passes the local surface normal as the looking_at up hint. (3) Fly-mode Space/Shift use local_up instead of Vec3::Y. Added local_up_from_position() helper reused by all three systems. 6 new unit tests.",
     "notes": [
-      "Gravity and movement tangent-plane projection were already correct — only the camera orientation was wrong.",
-      "Quat::from_rotation_arc has a singularity at the south pole (local_up ≈ -Y) but this is an acceptable edge case.",
+      "Gravity and movement tangent-plane projection were already correct \u2014 only the camera orientation was wrong.",
+      "Quat::from_rotation_arc has a singularity at the south pole (local_up \u2248 -Y) but this is an acceptable edge case.",
       "The fix applies only in spherical mode; flat mode behavior is unchanged."
     ]
+  },
+  {
+    "id": "RENDER-001",
+    "title": "Atmosphere radii mismatch \u2014 sky horizon wrong on small planet",
+    "category": "rendering",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-06-18",
+    "description": "Atmosphere::earthlike() sets bottom_radius=6,360,000m (Earth) but our planet is 32,000m. The shader thinks the camera is deep inside a massive planet, causing wrong sky horizon and scattering.",
+    "reproduction": "Run game in spherical mode. Look at horizon \u2014 sky scattering looks wrong, horizon doesn't match planet curvature.",
+    "suspected_files": [
+      "src/camera/mod.rs"
+    ],
+    "suspected_cause": "Atmosphere::earthlike() hardcodes Earth radii. Need custom Atmosphere with bottom_radius=32000, top_radius=92000 (planet + 60km atmosphere).",
+    "related_commits": [],
+    "resolution": "Replaced Atmosphere::earthlike(medium) with custom Atmosphere { bottom_radius: mean_radius, top_radius: mean_radius + 60000 } in spawn_camera when in spherical mode. ScatteringMedium::default() 60km coefficients are preserved.",
+    "notes": [
+      "Bevy hardcodes atmo_y=Vec3::Y in prepare_atmosphere_transforms \u2014 LUT is always Y-up. Can't fix without Bevy PR. But correct radii fix scattering math."
+    ]
+  },
+  {
+    "id": "RENDER-002",
+    "title": "Flat terrain on spherical planet \u2014 noise config too weak",
+    "category": "rendering",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-06-18",
+    "description": "height_scale=32m on a 32km planet (0.1%) makes terrain invisible. No NoiseConfig in planet_config.ron, legacy 2-layer blend with continent_freq=0.005 in radian-space produces nearly constant noise.",
+    "reproduction": "Run game \u2014 terrain appears completely flat, no mountains or features visible.",
+    "suspected_files": [
+      "assets/data/planet_config.ron"
+    ],
+    "suspected_cause": "height_scale too small. continent_freq/detail_freq in radian-space need to be ~1.0 for visible features. NoiseConfig not configured.",
+    "related_commits": [],
+    "resolution": "Increased height_scale to 4000m (12.5% of radius). Added full NoiseConfig with radian-scaled frequencies (fbm_base_freq=1.0, ridged_base_freq=1.5, selector_freq=0.5, micro_freq=15.0). continent_freq=1.0, detail_freq=3.0.",
+    "notes": []
+  },
+  {
+    "id": "RENDER-003",
+    "title": "Degenerate mesh normals point global Y on spherical planet",
+    "category": "rendering",
+    "severity": "medium",
+    "status": "resolved",
+    "reported": "2026-06-18",
+    "description": "compute_normals() falls back to [0,1,0] for degenerate triangles. On a sphere, this is wrong \u2014 the fallback should be the radial direction from the planet center.",
+    "reproduction": "Run game in spherical mode. Observe terrain spikes/lighting artifacts along chunk boundaries where normals collapse.",
+    "suspected_files": [
+      "src/world/meshing.rs"
+    ],
+    "suspected_cause": "Hardcoded [0,1,0] fallback in compute_normals doesn't account for spherical geometry.",
+    "related_commits": [],
+    "resolution": "Added spherical:bool parameter through generate_mesh_generic \u2192 compute_normals. When spherical, degenerate fallback uses normalize(vertex_position) instead of [0,1,0]. Threaded from dispatch_mesh_tasks via PlanetConfig.",
+    "notes": []
   }
 ]

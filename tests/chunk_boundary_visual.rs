@@ -94,9 +94,9 @@ fn world_mesh(chunks: &[Chunk], use_neighbors: bool) -> (Vec<[f32; 3]>, Vec<[f32
 
             let mesh: ChunkMesh = if use_neighbors {
                 let nb = build_neighbors(chunks, cx, cz);
-                generate_mesh_with_colors(chunk, &nb, None, false)
+                generate_mesh_with_colors(chunk, &nb, None, false, false)
             } else {
-                generate_mesh_with_colors(chunk, &NeighborVoxels::default(), None, false)
+                generate_mesh_with_colors(chunk, &NeighborVoxels::default(), None, false, false)
             };
 
             let base = positions.len() as u32;
