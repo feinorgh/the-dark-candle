@@ -1,3 +1,4 @@
+pub mod biome_map;
 pub mod chunk;
 pub mod chunk_manager;
 pub mod collision;
@@ -5,6 +6,7 @@ pub mod erosion;
 pub mod interpolation;
 pub mod lod;
 pub mod meshing;
+pub mod noise;
 pub mod octree;
 pub mod planet;
 pub mod planetary_sampler;
@@ -106,7 +108,7 @@ fn rebuild_terrain_gen_if_planetary(
 
     let sampler = PlanetaryTerrainSampler::new(planetary.0.clone(), planet_config.clone());
     *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(
-        terrain::UnifiedTerrainGenerator::Planetary(sampler),
+        terrain::UnifiedTerrainGenerator::Planetary(Box::new(sampler)),
     ));
 }
 

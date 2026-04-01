@@ -5,6 +5,11 @@ BiomeData(
     temperature_range: (260.0, 310.0),
     moisture_range: (0.4, 1.0),
     surface_material: "Grass",
+    terrain: Some((
+        height_bias: 0.0,
+        roughness: 1.0,
+        erosion_rate: 1.5,
+    )),
     creature_spawns: [
         SpawnEntry(id: "wolf", weight: 2.0, max_per_chunk: 3),
         SpawnEntry(id: "deer", weight: 5.0, max_per_chunk: 5),

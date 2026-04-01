@@ -22,10 +22,153 @@ use std::sync::OnceLock;
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
 
+use super::biome_map::{self, EnvironmentMap};
 use super::chunk::{CHUNK_SIZE, Chunk};
 use super::erosion::{ErosionConfig, FlowMap, carve_valley};
+use super::noise::NoiseStack;
 use super::planet::{PlanetConfig, TerrainMode};
 use super::voxel::MaterialId;
+
+// ── Geological strata & ore veins ──────────────────────────────────────────
+
+/// Select a rock material based on depth below the terrain surface.
+///
+/// Uses a low-frequency 3D noise to vary the material within each stratum,
+/// creating natural-looking geological variation.
+fn strata_material(depth: f64, seed: u32, world_x: f64, world_y: f64, world_z: f64) -> MaterialId {
+    let strata_noise = Perlin::new(seed.wrapping_add(400));
+    let n = strata_noise.get([world_x * 0.02, world_y * 0.02, world_z * 0.02]);
+
+    if depth < 20.0 {
+        // Sedimentary layer
+        if n > 0.0 {
+            MaterialId::SANDSTONE
+        } else {
+            MaterialId::LIMESTONE
+        }
+    } else if depth < 60.0 {
+        // Metamorphic layer (use existing STONE as slate/quartzite analog)
+        MaterialId::STONE
+    } else {
+        // Igneous layer
+        if n > 0.0 {
+            MaterialId::GRANITE
+        } else {
+            MaterialId::BASALT
+        }
+    }
+}
+
+/// Check if an ore vein exists at this position and return the ore material.
+///
+/// Each ore type uses its own noise field and only fires within its valid
+/// depth range.
+fn ore_material(
+    depth: f64,
+    seed: u32,
+    world_x: f64,
+    world_y: f64,
+    world_z: f64,
+) -> Option<MaterialId> {
+    // Coal: 5–30 m, common
+    if (5.0..=30.0).contains(&depth) {
+        let noise = Perlin::new(seed.wrapping_add(500));
+        if noise.get([world_x * 0.08, world_y * 0.08, world_z * 0.08]) < -0.15 {
+            return Some(MaterialId::COAL);
+        }
+    }
+
+    // Copper ore: 15–50 m, moderate
+    if (15.0..=50.0).contains(&depth) {
+        let noise = Perlin::new(seed.wrapping_add(501));
+        if noise.get([world_x * 0.06, world_y * 0.06, world_z * 0.06]) < -0.20 {
+            return Some(MaterialId::COPPER_ORE);
+        }
+    }
+
+    // Iron ore: 30–80 m, moderate
+    if (30.0..=80.0).contains(&depth) {
+        let noise = Perlin::new(seed.wrapping_add(502));
+        if noise.get([world_x * 0.05, world_y * 0.05, world_z * 0.05]) < -0.25 {
+            return Some(MaterialId::IRON);
+        }
+    }
+
+    // Gold ore: 50 m+, rare
+    if depth >= 50.0 {
+        let noise = Perlin::new(seed.wrapping_add(503));
+        if noise.get([world_x * 0.04, world_y * 0.04, world_z * 0.04]) < -0.35 {
+            return Some(MaterialId::GOLD_ORE);
+        }
+    }
+
+    None
+}
+
+// ── Multi-scale cave system ────────────────────────────────────────────────
+
+/// Multi-scale cave system: three OR-combined layers.
+///
+/// - **Caverns**: low-frequency (0.01) → cathedral-sized chambers.
+/// - **Tunnels**: mid-frequency (0.04) → narrow connecting passages.
+/// - **Tubes**: two perpendicular 2D noise fields (0.025) → worm-like networks.
+///
+/// Returns `true` if the position should be carved as a cave.
+fn is_multi_scale_cave(
+    seed: u32,
+    cave_threshold: f64,
+    world_x: f64,
+    world_y: f64,
+    world_z: f64,
+) -> bool {
+    // Caverns (cathedral-sized chambers)
+    let cavern_noise = Perlin::new(seed.wrapping_add(600));
+    let cavern = cavern_noise.get([world_x * 0.01, world_y * 0.01, world_z * 0.01]);
+    if cavern < cave_threshold * 0.5 {
+        // Scale threshold: caverns use half the threshold for rarity control
+        return true;
+    }
+
+    // Tunnels (narrow passages)
+    let tunnel_noise = Perlin::new(seed.wrapping_add(601));
+    let tunnel = tunnel_noise.get([world_x * 0.04, world_y * 0.04, world_z * 0.04]);
+    if tunnel < cave_threshold * 1.2 {
+        return true;
+    }
+
+    // Tube networks (worm-like — intersection of two 2D noise fields)
+    let tube_xz = Perlin::new(seed.wrapping_add(602));
+    let tube_xy = Perlin::new(seed.wrapping_add(603));
+    let t_xz = tube_xz.get([world_x * 0.025, world_z * 0.025]);
+    let t_xy = tube_xy.get([world_x * 0.025, world_y * 0.025]);
+    if t_xz < cave_threshold * 0.85 && t_xy < cave_threshold * 0.85 {
+        return true;
+    }
+
+    false
+}
+
+/// Determine the cave-fill material (AIR, WATER, or LAVA based on depth).
+fn cave_fill_material(depth: f64, sea_level_depth: f64) -> MaterialId {
+    if depth > 80.0 {
+        // Deep lava tubes (rare — only some positions)
+        MaterialId::LAVA
+    } else if depth > sea_level_depth + 5.0 {
+        // Underground lakes
+        MaterialId::WATER
+    } else {
+        MaterialId::AIR
+    }
+}
+
+/// Check if a cave wall should have crystal deposits (deep cavern walls).
+fn is_crystal_deposit(depth: f64, seed: u32, world_x: f64, world_y: f64, world_z: f64) -> bool {
+    if depth < 40.0 {
+        return false;
+    }
+    let noise = Perlin::new(seed.wrapping_add(604));
+    noise.get([world_x * 0.10, world_y * 0.10, world_z * 0.10]) < -0.30
+}
 
 /// Configuration for terrain generation, stored as a Bevy resource.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -72,6 +215,10 @@ pub struct TerrainGenerator {
     continent_noise: Perlin,
     detail_noise: Perlin,
     cave_noise: Perlin,
+    /// Composable multi-octave noise stack (replaces 2-layer blend when present).
+    noise_stack: Option<NoiseStack>,
+    /// Environment map for biome-driven surface materials.
+    env_map: EnvironmentMap,
     /// Cached flow-accumulation map, computed lazily on first chunk generation.
     flow_map: OnceLock<FlowMap>,
 }
@@ -81,11 +228,31 @@ impl TerrainGenerator {
         let continent_noise = Perlin::new(config.seed);
         let detail_noise = Perlin::new(config.seed.wrapping_add(1));
         let cave_noise = Perlin::new(config.seed.wrapping_add(2));
+        let env_map = EnvironmentMap::new(config.seed);
         Self {
             config,
             continent_noise,
             detail_noise,
             cave_noise,
+            noise_stack: None,
+            env_map,
+            flow_map: OnceLock::new(),
+        }
+    }
+
+    /// Create a generator with a `NoiseStack` for multi-octave terrain.
+    pub fn with_noise_stack(config: TerrainConfig, noise_stack: NoiseStack) -> Self {
+        let continent_noise = Perlin::new(config.seed);
+        let detail_noise = Perlin::new(config.seed.wrapping_add(1));
+        let cave_noise = Perlin::new(config.seed.wrapping_add(2));
+        let env_map = EnvironmentMap::new(config.seed);
+        Self {
+            config,
+            continent_noise,
+            detail_noise,
+            cave_noise,
+            noise_stack: Some(noise_stack),
+            env_map,
             flow_map: OnceLock::new(),
         }
     }
@@ -97,17 +264,22 @@ impl TerrainGenerator {
     /// Sample the terrain height at a world XZ position.
     /// Returns a float height in voxel units.
     pub fn sample_height(&self, world_x: f64, world_z: f64) -> f64 {
-        let cx = world_x * self.config.continent_freq;
-        let cz = world_z * self.config.continent_freq;
-        let continent = self.continent_noise.get([cx, cz]);
+        if let Some(ref stack) = self.noise_stack {
+            let combined = stack.sample(world_x, world_z);
+            self.config.sea_level as f64 + combined * self.config.height_scale
+        } else {
+            // Legacy 2-layer blend
+            let cx = world_x * self.config.continent_freq;
+            let cz = world_z * self.config.continent_freq;
+            let continent = self.continent_noise.get([cx, cz]);
 
-        let dx = world_x * self.config.detail_freq;
-        let dz = world_z * self.config.detail_freq;
-        let detail = self.detail_noise.get([dx, dz]);
+            let dx = world_x * self.config.detail_freq;
+            let dz = world_z * self.config.detail_freq;
+            let detail = self.detail_noise.get([dx, dz]);
 
-        // Combine: continent provides broad shape, detail adds mountains/hills
-        let combined = continent * 0.7 + detail * 0.3;
-        self.config.sea_level as f64 + combined * self.config.height_scale
+            let combined = continent * 0.7 + detail * 0.3;
+            self.config.sea_level as f64 + combined * self.config.height_scale
+        }
     }
 
     /// Check if a world position should be carved as a cave.
@@ -132,6 +304,8 @@ impl TerrainGenerator {
                 continent_noise: Perlin::new(self.config.seed),
                 detail_noise: Perlin::new(self.config.seed.wrapping_add(1)),
                 cave_noise: Perlin::new(self.config.seed.wrapping_add(2)),
+                noise_stack: None,
+                env_map: EnvironmentMap::new(self.config.seed),
                 flow_map: OnceLock::new(),
             };
             FlowMap::compute(
@@ -148,6 +322,8 @@ impl TerrainGenerator {
     pub fn generate_chunk(&self, chunk: &mut Chunk) {
         let origin = chunk.coord.world_origin();
         let erosion_enabled = self.config.erosion.enabled;
+        let seed = self.config.seed;
+        let use_advanced = self.noise_stack.is_some();
 
         // Lazily compute the flow map on first use
         let flow_map = if erosion_enabled {
@@ -177,9 +353,27 @@ impl TerrainGenerator {
                     (base_height, None)
                 };
 
+                // Per-column biome/slope data (advanced mode only)
+                let (slope, env, effective_soil) = if use_advanced {
+                    let s = biome_map::compute_slope(
+                        |x, z| self.sample_height(x, z),
+                        world_x,
+                        world_z,
+                    );
+                    let e = self.env_map.sample(world_x, world_z);
+                    let soil = biome_map::adjusted_soil_depth(
+                        self.config.soil_depth as f64,
+                        s,
+                    );
+                    (s, Some(e), soil)
+                } else {
+                    (0.0, None, self.config.soil_depth as f64)
+                };
+
                 for ly in 0..CHUNK_SIZE {
                     let world_y = origin.y + ly as i32;
                     let wy_f64 = world_y as f64;
+                    let depth = height - wy_f64;
 
                     let material = if wy_f64 > height {
                         // Above terrain surface
@@ -189,32 +383,71 @@ impl TerrainGenerator {
                             MaterialId::AIR
                         }
                     } else if wy_f64 > height - 1.0 {
-                        // Top layer: use erosion material override or grass
+                        // Top layer: slope/altitude/biome-aware surface material
                         if let Some(mat) = erosion_material {
                             mat
+                        } else if use_advanced {
+                            let alt = wy_f64 - self.config.sea_level as f64;
+                            biome_map::surface_material(slope, alt, env.as_ref().unwrap())
                         } else if world_y >= self.config.sea_level {
                             MaterialId::GRASS
                         } else {
                             MaterialId::DIRT
                         }
-                    } else if wy_f64 > height - self.config.soil_depth as f64 {
+                    } else if depth < effective_soil {
                         // Soil layers
                         MaterialId::DIRT
+                    } else if use_advanced {
+                        // Geological strata with ore veins
+                        let strata_depth = depth - effective_soil;
+                        ore_material(strata_depth, seed, world_x, wy_f64, world_z)
+                            .unwrap_or_else(|| {
+                                strata_material(strata_depth, seed, world_x, wy_f64, world_z)
+                            })
                     } else {
-                        // Deep underground: stone
+                        // Legacy: uniform stone
                         MaterialId::STONE
                     };
 
-                    // Cave carving (only underground, using base height for threshold)
+                    // Cave carving (only underground, not too close to surface)
                     if material != MaterialId::AIR
                         && material != MaterialId::WATER
-                        && wy_f64 < base_height - 2.0
-                        && self.is_cave(world_x, wy_f64, world_z)
+                        && depth > 2.0
                     {
-                        chunk.set_material(lx, ly, lz, MaterialId::AIR);
-                    } else {
-                        chunk.set_material(lx, ly, lz, material);
+                        let is_cave = if use_advanced {
+                            is_multi_scale_cave(
+                                seed,
+                                self.config.cave_threshold,
+                                world_x,
+                                wy_f64,
+                                world_z,
+                            )
+                        } else {
+                            self.is_cave(world_x, wy_f64, world_z)
+                        };
+
+                        if is_cave {
+                            let sea_level_depth =
+                                (self.config.sea_level as f64 - wy_f64).max(0.0);
+                            let fill = if use_advanced {
+                                cave_fill_material(depth, sea_level_depth)
+                            } else {
+                                MaterialId::AIR
+                            };
+                            chunk.set_material(lx, ly, lz, fill);
+                            continue;
+                        }
+
+                        // Crystal deposits on cave-adjacent walls
+                        if use_advanced
+                            && is_crystal_deposit(depth, seed, world_x, wy_f64, world_z)
+                        {
+                            chunk.set_material(lx, ly, lz, MaterialId::QUARTZ_CRYSTAL);
+                            continue;
+                        }
                     }
+
+                    chunk.set_material(lx, ly, lz, material);
                 }
             }
         }
@@ -235,6 +468,8 @@ pub struct SphericalTerrainGenerator {
     continent_noise: Perlin,
     detail_noise: Perlin,
     cave_noise: Perlin,
+    /// Composable multi-octave noise stack (replaces 2-layer blend when present).
+    noise_stack: Option<NoiseStack>,
 }
 
 impl SphericalTerrainGenerator {
@@ -242,11 +477,16 @@ impl SphericalTerrainGenerator {
         let continent_noise = Perlin::new(planet.seed);
         let detail_noise = Perlin::new(planet.seed.wrapping_add(1));
         let cave_noise = Perlin::new(planet.seed.wrapping_add(2));
+        let noise_stack = planet
+            .noise
+            .as_ref()
+            .map(|cfg| NoiseStack::new(planet.seed, cfg.clone()));
         Self {
             planet,
             continent_noise,
             detail_noise,
             cave_noise,
+            noise_stack,
         }
     }
 
@@ -259,17 +499,20 @@ impl SphericalTerrainGenerator {
     /// Returns the radial distance from planet center to the terrain surface
     /// at that angular position.
     pub fn sample_surface_radius(&self, lat: f64, lon: f64) -> f64 {
-        // Use lat/lon as 2D noise coordinates (avoids pole distortion because
-        // the noise function is sampled on the sphere, not projected from a plane).
-        let cx = lon * self.planet.continent_freq;
-        let cz = lat * self.planet.continent_freq;
-        let continent = self.continent_noise.get([cx, cz]);
+        let combined = if let Some(ref stack) = self.noise_stack {
+            stack.sample(lon, lat)
+        } else {
+            // Legacy 2-layer blend using lat/lon as noise coordinates.
+            let cx = lon * self.planet.continent_freq;
+            let cz = lat * self.planet.continent_freq;
+            let continent = self.continent_noise.get([cx, cz]);
 
-        let dx = lon * self.planet.detail_freq;
-        let dz = lat * self.planet.detail_freq;
-        let detail = self.detail_noise.get([dx, dz]);
+            let dx = lon * self.planet.detail_freq;
+            let dz = lat * self.planet.detail_freq;
+            let detail = self.detail_noise.get([dx, dz]);
 
-        let combined = continent * 0.7 + detail * 0.3;
+            continent * 0.7 + detail * 0.3
+        };
         self.planet.surface_radius_at(lat, lon, combined)
     }
 
@@ -317,6 +560,9 @@ impl SphericalTerrainGenerator {
         world_y: f64,
         world_z: f64,
     ) -> MaterialId {
+        let use_advanced = self.noise_stack.is_some();
+        let seed = self.planet.seed;
+
         if r > surface_r {
             // Above terrain surface
             if r < self.planet.sea_level_radius {
@@ -340,22 +586,44 @@ impl SphericalTerrainGenerator {
             return MaterialId::DIRT;
         }
 
-        // Deep: assign by geological layer
-        let mat = self
-            .planet
-            .layer_at_radius(r)
-            .map(|l| material_from_layer_name(&l.material))
-            .unwrap_or(MaterialId::STONE);
+        // Deep: geological strata or layer-based
+        let strata_depth = depth_below_surface - self.planet.soil_depth;
+        let base_mat = if use_advanced {
+            ore_material(strata_depth, seed, world_x, world_y, world_z).unwrap_or_else(|| {
+                strata_material(strata_depth, seed, world_x, world_y, world_z)
+            })
+        } else {
+            self.planet
+                .layer_at_radius(r)
+                .map(|l| material_from_layer_name(&l.material))
+                .unwrap_or(MaterialId::STONE)
+        };
 
         // Cave carving (only within crust, not too close to surface)
-        if depth_below_surface > 2.0
-            && r > self.planet.mean_radius - 4000.0 // Only in crust band
-            && self.is_cave(world_x, world_y, world_z)
-        {
-            return MaterialId::AIR;
+        if depth_below_surface > 2.0 && r > self.planet.mean_radius - 4000.0 {
+            let is_cave = if use_advanced {
+                is_multi_scale_cave(seed, self.planet.cave_threshold, world_x, world_y, world_z)
+            } else {
+                self.is_cave(world_x, world_y, world_z)
+            };
+
+            if is_cave {
+                if use_advanced {
+                    let sea_level_depth = (self.planet.sea_level_radius - r).max(0.0);
+                    return cave_fill_material(depth_below_surface, sea_level_depth);
+                }
+                return MaterialId::AIR;
+            }
+
+            // Crystal deposits on cave-adjacent walls
+            if use_advanced
+                && is_crystal_deposit(depth_below_surface, seed, world_x, world_y, world_z)
+            {
+                return MaterialId::QUARTZ_CRYSTAL;
+            }
         }
 
-        mat
+        base_mat
     }
 }
 
@@ -378,11 +646,10 @@ fn material_from_layer_name(name: &str) -> MaterialId {
 
 /// Unified terrain generator that dispatches to flat or spherical mode.
 pub enum UnifiedTerrainGenerator {
-    Flat(TerrainGenerator),
-    Spherical(SphericalTerrainGenerator),
-    /// Planet-data-driven spherical generator.  Uses IDW elevation from the
-    /// tectonic/biome simulation rather than pure Perlin noise.
-    Planetary(super::planetary_sampler::PlanetaryTerrainSampler),
+    Flat(Box<TerrainGenerator>),
+    Spherical(Box<SphericalTerrainGenerator>),
+    /// Planet-data-driven spherical generator.
+    Planetary(Box<super::planetary_sampler::PlanetaryTerrainSampler>),
 }
 
 impl UnifiedTerrainGenerator {
@@ -401,10 +668,15 @@ impl UnifiedTerrainGenerator {
                     soil_depth: planet.soil_depth as i32,
                     erosion: planet.erosion.clone().unwrap_or_default(),
                 };
-                Self::Flat(TerrainGenerator::new(config))
+                if let Some(ref noise_cfg) = planet.noise {
+                    let stack = NoiseStack::new(planet.seed, noise_cfg.clone());
+                    Self::Flat(Box::new(TerrainGenerator::with_noise_stack(config, stack)))
+                } else {
+                    Self::Flat(Box::new(TerrainGenerator::new(config)))
+                }
             }
             TerrainMode::Spherical => {
-                Self::Spherical(SphericalTerrainGenerator::new(planet.clone()))
+                Self::Spherical(Box::new(SphericalTerrainGenerator::new(planet.clone())))
             }
         }
     }
@@ -972,5 +1244,301 @@ mod tests {
                 "Same seed should produce identical terrain with erosion"
             );
         }
+    }
+
+    // ── Geology tests ────────────────────────────────────────────────────
+
+    fn advanced_generator() -> TerrainGenerator {
+        use crate::world::noise::{NoiseConfig, NoiseStack};
+        let config = TerrainConfig {
+            seed: 42,
+            erosion: ErosionConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let stack = NoiseStack::new(42, NoiseConfig::default());
+        TerrainGenerator::with_noise_stack(config, stack)
+    }
+
+    #[test]
+    fn strata_sedimentary_at_shallow_depth() {
+        let seed = 42u32;
+        // Sample many positions at depth=10 (sedimentary layer: 0-20m)
+        let mut sandstone = 0;
+        let mut limestone = 0;
+        for x in 0..20 {
+            for z in 0..20 {
+                let mat = strata_material(10.0, seed, x as f64 * 10.0, 0.0, z as f64 * 10.0);
+                match mat {
+                    m if m == MaterialId::SANDSTONE => sandstone += 1,
+                    m if m == MaterialId::LIMESTONE => limestone += 1,
+                    other => panic!(
+                        "Expected sandstone or limestone at depth 10, got {:?}",
+                        other
+                    ),
+                }
+            }
+        }
+        assert!(sandstone > 0, "No sandstone found in sedimentary layer");
+        assert!(limestone > 0, "No limestone found in sedimentary layer");
+    }
+
+    #[test]
+    fn strata_metamorphic_at_mid_depth() {
+        let seed = 42u32;
+        // depth=40 → metamorphic layer (20-60m), always STONE
+        for x in 0..10 {
+            for z in 0..10 {
+                let mat = strata_material(40.0, seed, x as f64 * 5.0, 0.0, z as f64 * 5.0);
+                assert_eq!(
+                    mat,
+                    MaterialId::STONE,
+                    "Metamorphic layer at depth 40 should be stone"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strata_igneous_at_deep_depth() {
+        let seed = 42u32;
+        let mut granite = 0;
+        let mut basalt = 0;
+        for x in 0..20 {
+            for z in 0..20 {
+                let mat = strata_material(80.0, seed, x as f64 * 10.0, 0.0, z as f64 * 10.0);
+                match mat {
+                    m if m == MaterialId::GRANITE => granite += 1,
+                    m if m == MaterialId::BASALT => basalt += 1,
+                    other => panic!("Expected granite or basalt at depth 80, got {:?}", other),
+                }
+            }
+        }
+        assert!(granite > 0, "No granite found in igneous layer");
+        assert!(basalt > 0, "No basalt found in igneous layer");
+    }
+
+    #[test]
+    fn strata_boundaries_are_correct() {
+        let seed = 42u32;
+        // Boundary at 20m: depth 19.9 → sedimentary, depth 20.0 → metamorphic
+        let mat_shallow = strata_material(19.9, seed, 0.0, 0.0, 0.0);
+        let mat_mid = strata_material(20.0, seed, 0.0, 0.0, 0.0);
+        let mat_deep = strata_material(60.0, seed, 0.0, 0.0, 0.0);
+
+        assert!(
+            mat_shallow == MaterialId::SANDSTONE || mat_shallow == MaterialId::LIMESTONE,
+            "Depth 19.9 should be sedimentary"
+        );
+        assert_eq!(mat_mid, MaterialId::STONE, "Depth 20.0 should be metamorphic");
+        assert!(
+            mat_deep == MaterialId::GRANITE || mat_deep == MaterialId::BASALT,
+            "Depth 60.0 should be igneous"
+        );
+    }
+
+    #[test]
+    fn ore_veins_respect_depth_ranges() {
+        let seed = 42u32;
+        // Coal should never appear above depth 5 or below depth 30
+        let mut coal_count = 0;
+        let mut iron_count = 0;
+        let mut gold_count = 0;
+        let sample_count = 5000;
+
+        for i in 0..sample_count {
+            let x = (i as f64) * 3.7;
+            let z = (i as f64) * 2.3;
+
+            // Depth 2: no coal
+            assert!(
+                ore_material(2.0, seed, x, 0.0, z) != Some(MaterialId::COAL),
+                "Coal should not appear at depth 2"
+            );
+            // Depth 35: no coal
+            assert!(
+                ore_material(35.0, seed, x, 0.0, z) != Some(MaterialId::COAL),
+                "Coal should not appear at depth 35"
+            );
+
+            // Count occurrences at valid depths
+            if ore_material(15.0, seed, x, 15.0, z) == Some(MaterialId::COAL) {
+                coal_count += 1;
+            }
+            if ore_material(50.0, seed, x, 50.0, z) == Some(MaterialId::IRON) {
+                iron_count += 1;
+            }
+            if ore_material(70.0, seed, x, 70.0, z) == Some(MaterialId::GOLD_ORE) {
+                gold_count += 1;
+            }
+        }
+
+        // With 5000 samples, we should find some of each ore at valid depths
+        assert!(coal_count > 0, "No coal found at valid depths");
+        assert!(iron_count > 0, "No iron found at valid depths");
+        assert!(gold_count > 0, "No gold found at valid depths");
+        // Gold should be rarer than coal (stricter threshold)
+        assert!(
+            gold_count < coal_count,
+            "Gold ({gold_count}) should be rarer than coal ({coal_count})"
+        );
+    }
+
+    #[test]
+    fn ore_no_gold_above_50m() {
+        let seed = 42u32;
+        for i in 0..1000 {
+            let x = (i as f64) * 7.1;
+            let z = (i as f64) * 4.3;
+            assert!(
+                ore_material(49.0, seed, x, 49.0, z) != Some(MaterialId::GOLD_ORE),
+                "Gold should not appear above 50m depth"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_scale_caves_produce_variety() {
+        let seed = 42u32;
+        let threshold = -0.3;
+        let mut cave_count = 0;
+        let samples = 10_000;
+
+        for i in 0..samples {
+            let x = (i as f64) * 1.7;
+            let y = (i as f64) * 0.9;
+            let z = (i as f64) * 2.1;
+            if is_multi_scale_cave(seed, threshold, x, y, z) {
+                cave_count += 1;
+            }
+        }
+
+        // Caves should exist but not dominate
+        let ratio = cave_count as f64 / samples as f64;
+        assert!(
+            ratio > 0.01,
+            "Cave ratio {ratio:.3} too low — caves barely exist"
+        );
+        assert!(
+            ratio < 0.5,
+            "Cave ratio {ratio:.3} too high — more cave than rock"
+        );
+    }
+
+    #[test]
+    fn cave_fill_material_varies_by_depth() {
+        // Shallow caves → AIR
+        assert_eq!(cave_fill_material(10.0, 64.0), MaterialId::AIR);
+        // Below sea level + 5 → WATER (underground lakes)
+        assert_eq!(cave_fill_material(75.0, 64.0), MaterialId::WATER);
+        // Very deep → LAVA
+        assert_eq!(cave_fill_material(85.0, 64.0), MaterialId::LAVA);
+    }
+
+    #[test]
+    fn crystal_deposits_only_at_depth() {
+        let seed = 42u32;
+        // Should never appear above 40m
+        for i in 0..1000 {
+            let x = (i as f64) * 3.3;
+            let z = (i as f64) * 2.7;
+            assert!(
+                !is_crystal_deposit(39.0, seed, x, 0.0, z),
+                "Crystal deposit should not appear above 40m"
+            );
+        }
+
+        // Should appear at some deep positions
+        let mut found = false;
+        for i in 0..5000 {
+            let x = (i as f64) * 1.1;
+            let z = (i as f64) * 0.9;
+            if is_crystal_deposit(60.0, seed, x, 60.0, z) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "No crystal deposits found at depth 60m in 5000 samples");
+    }
+
+    #[test]
+    fn advanced_generator_deep_chunk_has_geological_variety() {
+        let tgen = advanced_generator();
+        // Y=-3 → voxels ~96m below surface, should contain igneous + ores + caves
+        let coord = ChunkCoord::new(0, -3, 0);
+        let mut chunk = Chunk::new_empty(coord);
+        tgen.generate_chunk(&mut chunk);
+
+        let mut material_set = std::collections::HashSet::new();
+        for v in chunk.voxels() {
+            if !v.is_air() {
+                material_set.insert(v.material);
+            }
+        }
+
+        // A deep chunk with advanced geology should have more than just STONE
+        assert!(
+            material_set.len() >= 2,
+            "Deep chunk should have geological variety, got {:?}",
+            material_set
+        );
+    }
+
+    #[test]
+    fn advanced_generator_surface_chunk_has_strata() {
+        let tgen = advanced_generator();
+        // Y=0 has surface + shallow underground
+        let coord = ChunkCoord::new(5, 0, 5);
+        let mut chunk = Chunk::new_empty(coord);
+        tgen.generate_chunk(&mut chunk);
+
+        let mut has_sedimentary = false;
+        for v in chunk.voxels() {
+            if v.material == MaterialId::SANDSTONE || v.material == MaterialId::LIMESTONE {
+                has_sedimentary = true;
+                break;
+            }
+        }
+        // At y=0 chunk range (0-31), surface terrain + shallow underground
+        // should reveal sedimentary layers in at least some positions
+        // (depends on terrain height — if surface is high enough, sub-surface is visible)
+        // We test at (5,0,5) which with seed 42 should have some terrain below
+        assert!(
+            has_sedimentary,
+            "Surface chunk at (5,0,5) should contain some sedimentary rock"
+        );
+    }
+
+    #[test]
+    fn advanced_generator_caves_contain_fill_materials() {
+        let tgen = advanced_generator();
+        // Test multiple deep chunks to find cave fill materials
+        let mut found_water_or_lava = false;
+        for cy in [-4, -5, -6] {
+            for cx in [0, 1, 2, -1, -2] {
+                let coord = ChunkCoord::new(cx, cy, 0);
+                let mut chunk = Chunk::new_empty(coord);
+                tgen.generate_chunk(&mut chunk);
+
+                for v in chunk.voxels() {
+                    if v.material == MaterialId::WATER || v.material == MaterialId::LAVA {
+                        found_water_or_lava = true;
+                        break;
+                    }
+                }
+                if found_water_or_lava {
+                    break;
+                }
+            }
+            if found_water_or_lava {
+                break;
+            }
+        }
+        assert!(
+            found_water_or_lava,
+            "Deep caves should contain water or lava fill"
+        );
     }
 }

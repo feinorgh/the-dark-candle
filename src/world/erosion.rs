@@ -615,6 +615,431 @@ pub fn carve_valley(
 }
 
 // -------------------------------------------------------------------
+// Hydraulic Erosion
+// -------------------------------------------------------------------
+
+/// Simulation mode for hydraulic erosion.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Default)]
+pub enum HydraulicMode {
+    /// Droplet simulation only (fine gullies).
+    Droplet,
+    /// Grid-based simulation only (broad shaping).
+    Grid,
+    /// Grid pass → repose slippage → droplet pass.
+    #[default]
+    Combined,
+}
+
+/// Configuration for hydraulic erosion simulation.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+pub struct HydraulicErosionConfig {
+    /// Whether hydraulic erosion is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Simulation mode.
+    #[serde(default)]
+    pub mode: HydraulicMode,
+    /// Number of droplet simulation iterations (per grid cell, approximately).
+    #[serde(default = "default_droplet_iterations")]
+    pub droplet_iterations: u32,
+    /// Maximum lifetime of each droplet (steps before evaporation).
+    #[serde(default = "default_droplet_lifetime")]
+    pub droplet_lifetime: u32,
+    /// Sediment capacity factor (higher = droplet can carry more).
+    #[serde(default = "default_sediment_capacity")]
+    pub sediment_capacity: f64,
+    /// Erosion speed: fraction of deficit eroded per step.
+    #[serde(default = "default_erosion_speed")]
+    pub erosion_speed: f64,
+    /// Deposition speed: fraction of excess deposited per step.
+    #[serde(default = "default_deposition_speed")]
+    pub deposition_speed: f64,
+    /// Evaporation rate per step (fraction of water lost).
+    #[serde(default = "default_evaporation_rate")]
+    pub evaporation_rate: f64,
+    /// Minimum slope for sediment capacity (prevents zero capacity on flat).
+    #[serde(default = "default_min_slope")]
+    pub min_slope: f64,
+    /// Inertia: how much the droplet retains its previous direction (0–1).
+    #[serde(default = "default_inertia")]
+    pub inertia: f64,
+    /// Gravity for droplet velocity (m/s², typically 9.8).
+    #[serde(default = "default_droplet_gravity")]
+    pub gravity: f64,
+    /// Number of grid-based erosion iterations.
+    #[serde(default = "default_grid_iterations")]
+    pub grid_iterations: u32,
+    /// Angle-of-repose tangent: slopes above this cause material slippage.
+    #[serde(default = "default_repose_tangent")]
+    pub repose_tangent: f64,
+}
+
+fn default_droplet_iterations() -> u32 {
+    50_000
+}
+fn default_droplet_lifetime() -> u32 {
+    64
+}
+fn default_sediment_capacity() -> f64 {
+    8.0
+}
+fn default_erosion_speed() -> f64 {
+    0.3
+}
+fn default_deposition_speed() -> f64 {
+    0.3
+}
+fn default_evaporation_rate() -> f64 {
+    0.01
+}
+fn default_min_slope() -> f64 {
+    0.01
+}
+fn default_inertia() -> f64 {
+    0.3
+}
+fn default_droplet_gravity() -> f64 {
+    9.80665
+}
+fn default_grid_iterations() -> u32 {
+    20
+}
+fn default_repose_tangent() -> f64 {
+    0.8 // ~38° angle of repose (typical for loose sediment)
+}
+
+impl Default for HydraulicErosionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: HydraulicMode::default(),
+            droplet_iterations: default_droplet_iterations(),
+            droplet_lifetime: default_droplet_lifetime(),
+            sediment_capacity: default_sediment_capacity(),
+            erosion_speed: default_erosion_speed(),
+            deposition_speed: default_deposition_speed(),
+            evaporation_rate: default_evaporation_rate(),
+            min_slope: default_min_slope(),
+            inertia: default_inertia(),
+            gravity: default_droplet_gravity(),
+            grid_iterations: default_grid_iterations(),
+            repose_tangent: default_repose_tangent(),
+        }
+    }
+}
+
+/// Run hydraulic erosion on a heightmap grid in-place.
+///
+/// `heights` is a row-major `w × h` grid.  `cell_size` is the spatial
+/// resolution in meters.  `config` controls the simulation parameters.
+/// `seed` provides determinism for droplet spawn locations.
+pub fn hydraulic_erode(
+    heights: &mut [f64],
+    w: usize,
+    h: usize,
+    cell_size: f64,
+    config: &HydraulicErosionConfig,
+    seed: u32,
+) {
+    if !config.enabled || w < 3 || h < 3 {
+        return;
+    }
+
+    match config.mode {
+        HydraulicMode::Droplet => {
+            droplet_erode(heights, w, h, cell_size, config, seed);
+        }
+        HydraulicMode::Grid => {
+            grid_erode(heights, w, h, cell_size, config);
+            repose_slippage(heights, w, h, cell_size, config);
+        }
+        HydraulicMode::Combined => {
+            grid_erode(heights, w, h, cell_size, config);
+            repose_slippage(heights, w, h, cell_size, config);
+            droplet_erode(heights, w, h, cell_size, config, seed);
+        }
+    }
+}
+
+/// Droplet-based erosion (simplified Beyer variant).
+///
+/// Spawns droplets at pseudo-random positions.  Each droplet flows downhill,
+/// eroding steep slopes and depositing on flat areas until it evaporates.
+fn droplet_erode(
+    heights: &mut [f64],
+    w: usize,
+    h: usize,
+    cell_size: f64,
+    config: &HydraulicErosionConfig,
+    seed: u32,
+) {
+    let n = config.droplet_iterations;
+
+    for i in 0..n {
+        // Deterministic pseudo-random spawn position
+        let hash = simple_hash(seed, i);
+        let mut px = (hash % (w as u32 - 2)) as f64 + 1.0;
+        let mut pz = ((hash / (w as u32)) % (h as u32 - 2)) as f64 + 1.0;
+        let mut dx = 0.0_f64;
+        let mut dz = 0.0_f64;
+        let mut speed = 0.0_f64;
+        let mut water = 1.0_f64;
+        let mut sediment = 0.0_f64;
+
+        for _ in 0..config.droplet_lifetime {
+            let ix = px as usize;
+            let iz = pz as usize;
+
+            if ix < 1 || ix >= w - 1 || iz < 1 || iz >= h - 1 {
+                break;
+            }
+
+            // Compute gradient via bilinear interpolation of neighbors
+            let (gx, gz) = heightmap_gradient(heights, w, ix, iz, cell_size);
+
+            // Apply inertia
+            dx = dx * config.inertia - gx * (1.0 - config.inertia);
+            dz = dz * config.inertia - gz * (1.0 - config.inertia);
+
+            // Normalize direction
+            let len = (dx * dx + dz * dz).sqrt();
+            if len < 1e-10 {
+                break;
+            }
+            dx /= len;
+            dz /= len;
+
+            // Move droplet
+            let new_px = px + dx;
+            let new_pz = pz + dz;
+
+            let new_ix = new_px as usize;
+            let new_iz = new_pz as usize;
+            if new_ix < 1 || new_ix >= w - 1 || new_iz < 1 || new_iz >= h - 1 {
+                break;
+            }
+
+            // Height difference
+            let old_h = heights[iz * w + ix];
+            let new_h = heights[new_iz * w + new_ix];
+            let delta_h = new_h - old_h;
+
+            // Sediment capacity based on slope
+            let slope = (-delta_h / cell_size).max(config.min_slope);
+            let capacity = slope * speed * water * config.sediment_capacity;
+
+            if sediment > capacity || delta_h > 0.0 {
+                // Deposit sediment
+                let deposit = if delta_h > 0.0 {
+                    // Going uphill: deposit min of sediment or height difference
+                    sediment.min(delta_h)
+                } else {
+                    (sediment - capacity) * config.deposition_speed
+                };
+                heights[iz * w + ix] += deposit;
+                sediment -= deposit;
+            } else {
+                // Erode
+                let erode = ((capacity - sediment) * config.erosion_speed).min(-delta_h);
+                heights[iz * w + ix] -= erode;
+                sediment += erode;
+            }
+
+            // Update velocity and evaporate
+            speed = (speed * speed + delta_h.abs() * config.gravity).sqrt();
+            water *= 1.0 - config.evaporation_rate;
+
+            px = new_px;
+            pz = new_pz;
+
+            if water < 0.001 {
+                break;
+            }
+        }
+    }
+}
+
+/// Grid-based erosion: water/sediment/velocity field simulation.
+///
+/// Distributes water uniformly and iteratively moves it downhill,
+/// eroding steep cells and depositing on flat cells.
+fn grid_erode(
+    heights: &mut [f64],
+    w: usize,
+    h: usize,
+    cell_size: f64,
+    config: &HydraulicErosionConfig,
+) {
+    let n = w * h;
+    let mut water = vec![0.01_f64; n];
+    let mut sediment = vec![0.0_f64; n];
+    let mut new_water = vec![0.0_f64; n];
+    let mut new_sediment = vec![0.0_f64; n];
+
+    for _ in 0..config.grid_iterations {
+        // Rain: add water everywhere
+        for w_cell in water.iter_mut() {
+            *w_cell += 0.01;
+        }
+
+        // Flow: move water downhill
+        new_water.fill(0.0);
+        new_sediment.fill(0.0);
+
+        for z in 1..h - 1 {
+            for x in 1..w - 1 {
+                let idx = z * w + x;
+                let h_cur = heights[idx] + water[idx];
+
+                // Find lowest neighbor
+                let mut best_idx = idx;
+                let mut best_h = h_cur;
+
+                for &(ddx, ddz) in &D8_OFFSETS {
+                    let nx = x as i32 + ddx;
+                    let nz = z as i32 + ddz;
+                    if nx >= 0 && (nx as usize) < w && nz >= 0 && (nz as usize) < h {
+                        let ni = nz as usize * w + nx as usize;
+                        let nh = heights[ni] + water[ni];
+                        if nh < best_h {
+                            best_h = nh;
+                            best_idx = ni;
+                        }
+                    }
+                }
+
+                if best_idx != idx {
+                    let delta = (h_cur - best_h).min(water[idx]);
+                    let transfer_frac = delta / h_cur.max(1e-10);
+                    let water_transfer = water[idx] * transfer_frac * 0.5;
+                    let sed_transfer = sediment[idx] * transfer_frac * 0.5;
+
+                    new_water[best_idx] += water_transfer;
+                    new_water[idx] -= water_transfer;
+                    new_sediment[best_idx] += sed_transfer;
+                    new_sediment[idx] -= sed_transfer;
+                }
+            }
+        }
+
+        // Apply transfers
+        for i in 0..n {
+            water[i] = (water[i] + new_water[i]).max(0.0);
+            sediment[i] = (sediment[i] + new_sediment[i]).max(0.0);
+        }
+
+        // Erosion/deposition
+        for z in 1..h - 1 {
+            for x in 1..w - 1 {
+                let idx = z * w + x;
+                let slope = local_slope(heights, w, h, x, z, cell_size);
+                let capacity = water[idx] * slope * config.sediment_capacity * 0.1;
+
+                if sediment[idx] > capacity {
+                    let deposit = (sediment[idx] - capacity) * config.deposition_speed;
+                    heights[idx] += deposit;
+                    sediment[idx] -= deposit;
+                } else {
+                    let erode = (capacity - sediment[idx]) * config.erosion_speed * 0.1;
+                    heights[idx] -= erode;
+                    sediment[idx] += erode;
+                }
+            }
+        }
+
+        // Evaporation
+        for w_cell in water.iter_mut() {
+            *w_cell *= 1.0 - config.evaporation_rate * 5.0;
+        }
+    }
+}
+
+/// Angle-of-repose slippage: flatten slopes steeper than the repose angle.
+fn repose_slippage(
+    heights: &mut [f64],
+    w: usize,
+    h: usize,
+    cell_size: f64,
+    config: &HydraulicErosionConfig,
+) {
+    for _ in 0..3 {
+        // Multiple passes for convergence
+        for z in 1..h - 1 {
+            for x in 1..w - 1 {
+                let idx = z * w + x;
+
+                for &(ddx, ddz) in &D8_OFFSETS {
+                    let nx = (x as i32 + ddx) as usize;
+                    let nz = (z as i32 + ddz) as usize;
+                    if nx < w && nz < h {
+                        let ni = nz * w + nx;
+                        let diff = heights[idx] - heights[ni];
+                        let dist = if ddx.abs() + ddz.abs() == 2 {
+                            cell_size * std::f64::consts::SQRT_2
+                        } else {
+                            cell_size
+                        };
+                        let max_d = config.repose_tangent * dist;
+
+                        if diff > max_d {
+                            let excess = (diff - max_d) * 0.5;
+                            heights[idx] -= excess;
+                            heights[ni] += excess;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Hydraulic erosion helpers ──────────────────────────────────────────
+
+/// Compute heightmap gradient at `(ix, iz)` using central differences.
+fn heightmap_gradient(
+    heights: &[f64],
+    w: usize,
+    ix: usize,
+    iz: usize,
+    cell_size: f64,
+) -> (f64, f64) {
+    let left = heights[iz * w + (ix - 1)];
+    let right = heights[iz * w + (ix + 1)];
+    let up = heights[(iz - 1) * w + ix];
+    let down = heights[(iz + 1) * w + ix];
+    let gx = (right - left) / (2.0 * cell_size);
+    let gz = (down - up) / (2.0 * cell_size);
+    (gx, gz)
+}
+
+/// Local slope magnitude at `(x, z)`.
+fn local_slope(
+    heights: &[f64],
+    w: usize,
+    h: usize,
+    x: usize,
+    z: usize,
+    cell_size: f64,
+) -> f64 {
+    if x < 1 || x >= w - 1 || z < 1 || z >= h - 1 {
+        return 0.0;
+    }
+    let (gx, gz) = heightmap_gradient(heights, w, x, z, cell_size);
+    (gx * gx + gz * gz).sqrt()
+}
+
+/// Simple deterministic hash for pseudo-random droplet placement.
+fn simple_hash(seed: u32, index: u32) -> u32 {
+    let mut x = seed.wrapping_mul(1103515245).wrapping_add(index);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x45d9f3b);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x45d9f3b);
+    x ^= x >> 16;
+    x
+}
+
+// -------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------
 
@@ -976,5 +1401,184 @@ mod tests {
             (u_carved - expected_u).abs() < TOL,
             "U mismatch: {u_carved} vs {expected_u}"
         );
+    }
+
+    // ── Hydraulic erosion tests ─────────────────────────────────────────
+
+    fn default_hydraulic_config() -> HydraulicErosionConfig {
+        HydraulicErosionConfig {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    fn tilted_heightmap(w: usize, h: usize, cell_size: f64) -> Vec<f64> {
+        let mut heights = vec![0.0; w * h];
+        for z in 0..h {
+            for x in 0..w {
+                heights[z * w + x] = (x as f64) * cell_size * 0.5;
+            }
+        }
+        heights
+    }
+
+    #[test]
+    fn hydraulic_config_defaults_are_sensible() {
+        let cfg = HydraulicErosionConfig::default();
+        assert!(!cfg.enabled);
+        assert!(cfg.droplet_iterations > 0);
+        assert!(cfg.droplet_lifetime > 0);
+        assert!(cfg.sediment_capacity > 0.0);
+        assert!(cfg.erosion_speed > 0.0);
+        assert!(cfg.deposition_speed > 0.0);
+        assert!(cfg.evaporation_rate > 0.0);
+        assert!(cfg.gravity > 0.0);
+        assert!(cfg.repose_tangent > 0.0);
+    }
+
+    #[test]
+    fn droplet_erosion_modifies_terrain() {
+        let w = 64;
+        let h = 64;
+        let cell_size = 1.0;
+        let mut heights = tilted_heightmap(w, h, cell_size);
+        let original: Vec<f64> = heights.clone();
+        let config = HydraulicErosionConfig {
+            enabled: true,
+            mode: HydraulicMode::Droplet,
+            droplet_iterations: 5000,
+            ..Default::default()
+        };
+
+        droplet_erode(&mut heights, w, h, cell_size, &config, 42);
+
+        let mut changed = 0;
+        for (a, b) in original.iter().zip(heights.iter()) {
+            if (a - b).abs() > 1e-10 {
+                changed += 1;
+            }
+        }
+        assert!(
+            changed > 10,
+            "Droplet erosion should modify multiple cells, got {changed}"
+        );
+    }
+
+    #[test]
+    fn grid_erosion_modifies_terrain() {
+        let w = 32;
+        let h = 32;
+        let cell_size = 2.0;
+        let mut heights = tilted_heightmap(w, h, cell_size);
+        let original: Vec<f64> = heights.clone();
+        let config = default_hydraulic_config();
+
+        grid_erode(&mut heights, w, h, cell_size, &config);
+
+        let mut changed = 0;
+        for (a, b) in original.iter().zip(heights.iter()) {
+            if (a - b).abs() > 1e-10 {
+                changed += 1;
+            }
+        }
+        assert!(
+            changed > 10,
+            "Grid erosion should modify multiple cells, got {changed}"
+        );
+    }
+
+    #[test]
+    fn repose_slippage_flattens_steep_slopes() {
+        let w = 16;
+        let h = 16;
+        let cell_size = 1.0;
+        let mut heights = vec![0.0; w * h];
+        for z in 0..h {
+            for x in w / 2..w {
+                heights[z * w + x] = 100.0;
+            }
+        }
+
+        let config = default_hydraulic_config();
+        repose_slippage(&mut heights, w, h, cell_size, &config);
+
+        let edge_x = w / 2;
+        let z_mid = h / 2;
+        let left = heights[z_mid * w + (edge_x - 1)];
+        let right = heights[z_mid * w + edge_x];
+        let diff = right - left;
+        assert!(
+            diff < 100.0,
+            "Cliff should be less steep after slippage, diff={diff}"
+        );
+    }
+
+    #[test]
+    fn combined_erosion_modifies_terrain() {
+        let w = 32;
+        let h = 32;
+        let cell_size = 2.0;
+        let mut heights = tilted_heightmap(w, h, cell_size);
+        let original: Vec<f64> = heights.clone();
+        let config = HydraulicErosionConfig {
+            enabled: true,
+            mode: HydraulicMode::Combined,
+            droplet_iterations: 1000,
+            grid_iterations: 5,
+            ..Default::default()
+        };
+
+        hydraulic_erode(&mut heights, w, h, cell_size, &config, 42);
+
+        let total_change: f64 = original
+            .iter()
+            .zip(heights.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            total_change > 1.0,
+            "Combined erosion should produce meaningful changes, total_change={total_change}"
+        );
+    }
+
+    #[test]
+    fn disabled_hydraulic_erosion_does_nothing() {
+        let w = 16;
+        let h = 16;
+        let cell_size = 1.0;
+        let mut heights = tilted_heightmap(w, h, cell_size);
+        let original: Vec<f64> = heights.clone();
+
+        let config = HydraulicErosionConfig::default();
+        hydraulic_erode(&mut heights, w, h, cell_size, &config, 42);
+
+        assert_eq!(heights, original, "Disabled erosion should not modify terrain");
+    }
+
+    #[test]
+    fn droplet_erosion_is_deterministic() {
+        let w = 32;
+        let h = 32;
+        let cell_size = 1.0;
+        let config = HydraulicErosionConfig {
+            enabled: true,
+            mode: HydraulicMode::Droplet,
+            droplet_iterations: 2000,
+            ..Default::default()
+        };
+
+        let mut h1 = tilted_heightmap(w, h, cell_size);
+        let mut h2 = tilted_heightmap(w, h, cell_size);
+        droplet_erode(&mut h1, w, h, cell_size, &config, 42);
+        droplet_erode(&mut h2, w, h, cell_size, &config, 42);
+
+        assert_eq!(h1, h2, "Same seed should produce identical erosion");
+    }
+
+    #[test]
+    fn simple_hash_is_deterministic() {
+        assert_eq!(simple_hash(42, 0), simple_hash(42, 0));
+        assert_ne!(simple_hash(42, 0), simple_hash(42, 1));
+        assert_ne!(simple_hash(42, 0), simple_hash(43, 0));
     }
 }

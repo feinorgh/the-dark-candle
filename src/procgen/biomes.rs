@@ -44,6 +44,9 @@ pub struct BiomeData {
     pub moisture_range: (f32, f32),
     /// Surface material name (what the top layer is made of).
     pub surface_material: String,
+    /// Optional terrain modifiers for biome-specific terrain shaping.
+    #[serde(default)]
+    pub terrain: Option<BiomeTerrainModifiers>,
     /// Creature spawn table.
     #[serde(default)]
     pub creature_spawns: Vec<SpawnEntry>,
@@ -56,6 +59,32 @@ pub struct BiomeData {
     /// Tree spawn table (voxel trees stamped into chunks).
     #[serde(default)]
     pub tree_spawns: Vec<SpawnEntry>,
+}
+
+/// Terrain modifiers loaded from biome RON files.
+///
+/// These affect how terrain is generated within the biome region.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct BiomeTerrainModifiers {
+    /// Height bias in voxels added to base terrain (negative = lower terrain).
+    #[serde(default)]
+    pub height_bias: f32,
+    /// Roughness multiplier (0.0 = smooth, 1.0 = normal, 2.0 = very rough).
+    #[serde(default = "default_roughness")]
+    pub roughness: f32,
+    /// Erosion rate multiplier (higher = more erosion in this biome).
+    #[serde(default = "default_erosion_rate")]
+    pub erosion_rate: f32,
+    /// Override subsurface material (e.g. "sandstone" for deserts).
+    #[serde(default)]
+    pub subsurface: Option<String>,
+}
+
+fn default_roughness() -> f32 {
+    1.0
+}
+fn default_erosion_rate() -> f32 {
+    1.0
 }
 
 /// Select a spawn entry from a weighted table using a random value in [0.0, 1.0).
@@ -114,6 +143,7 @@ mod tests {
             temperature_range: (260.0, 310.0),
             moisture_range: (0.4, 1.0),
             surface_material: "Grass".into(),
+            terrain: None,
             creature_spawns: vec![
                 SpawnEntry {
                     id: "wolf".into(),
@@ -149,6 +179,7 @@ mod tests {
             temperature_range: (270.0, 290.0),
             moisture_range: (0.2, 0.8),
             surface_material: "Stone".into(),
+            terrain: None,
             creature_spawns: vec![SpawnEntry {
                 id: "cave_spider".into(),
                 weight: 5.0,

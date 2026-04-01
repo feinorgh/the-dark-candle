@@ -9,7 +9,7 @@ use the_dark_candle::{
     data::DataPlugin,
     diagnostics::DiagnosticsPlugin,
     entities::EntityPlugin,
-    game_state::GameStatePlugin,
+    game_state::{GameStatePlugin, SkipWorldCreation},
     lighting::LightingPlugin,
     persistence::PersistencePlugin,
     physics::PhysicsPlugin,
@@ -23,8 +23,9 @@ use the_dark_candle::{
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Cli {
-    /// Load a named scene preset (e.g. "valley_river", "spherical_planet").
-    /// Available presets: valley_river, spherical_planet
+    /// Load a named scene preset.
+    /// Available: valley_river, spherical_planet, alpine, archipelago,
+    /// desert_canyon, rolling_plains, volcanic, tundra_fjords
     #[arg(long)]
     scene: Option<String>,
 
@@ -47,6 +48,30 @@ struct Cli {
     /// Random seed for planetary generation (used with `--planet`).
     #[arg(long, default_value_t = 42)]
     planet_seed: u64,
+
+    /// World generation seed.  Overrides the preset's default seed.
+    #[arg(long)]
+    seed: Option<u32>,
+
+    /// Terrain detail level: 1=fast (3 octaves), 2=balanced (6), 3=rich (8).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+    terrain_detail: Option<u8>,
+
+    /// Override the terrain height scale (amplitude in voxels/meters).
+    #[arg(long)]
+    height_scale: Option<f64>,
+
+    /// Cave density: off, sparse, normal, dense.
+    #[arg(long)]
+    caves: Option<String>,
+
+    /// Erosion intensity: off, light, moderate, heavy.
+    #[arg(long)]
+    erosion: Option<String>,
+
+    /// Hydraulic erosion: off, light, moderate, heavy.
+    #[arg(long)]
+    hydraulic_erosion: Option<String>,
 }
 
 fn main() {
@@ -114,6 +139,15 @@ fn main() {
         }
     }
 
+    // Apply CLI overrides to the PlanetConfig (if one was inserted above).
+    apply_cli_overrides(&cli, &mut app);
+
+    // If a scene was selected via CLI, skip the world creation screen
+    // by starting directly in the Loading state.
+    if app.world().contains_resource::<the_dark_candle::world::planet::PlanetConfig>() {
+        app.insert_resource(SkipWorldCreation);
+    }
+
     // Log stale-entity command errors instead of panicking.  This is a
     // safety net for rare frame-boundary races between chunk despawn and
     // systems that hold deferred commands on those entities.
@@ -150,4 +184,153 @@ fn main() {
         the_dark_candle::audio::AudioPlugin,
     ))
     .run();
+}
+
+/// Apply CLI flag overrides to an already-inserted `PlanetConfig`.
+fn apply_cli_overrides(cli: &Cli, app: &mut App) {
+    use the_dark_candle::world::{
+        erosion::ErosionConfig,
+        noise::NoiseConfig,
+        planet::PlanetConfig,
+    };
+
+    // If no PlanetConfig resource exists yet, nothing to override.
+    if !app.world().contains_resource::<PlanetConfig>() {
+        // Check if any override flags were given without a preset.
+        let has_overrides = cli.seed.is_some()
+            || cli.terrain_detail.is_some()
+            || cli.height_scale.is_some()
+            || cli.caves.is_some()
+            || cli.erosion.is_some()
+            || cli.hydraulic_erosion.is_some();
+        if has_overrides {
+            // Insert a default config so overrides can apply.
+            app.insert_resource(PlanetConfig::default());
+        } else {
+            return;
+        }
+    }
+
+    let mut config = app.world().resource::<PlanetConfig>().clone();
+
+    if let Some(seed) = cli.seed {
+        config.seed = seed;
+    }
+
+    if let Some(hs) = cli.height_scale {
+        config.height_scale = hs;
+    }
+
+    // Terrain detail: adjust FBM/ridged octaves.
+    if let Some(detail) = cli.terrain_detail {
+        let noise = config.noise.get_or_insert_with(NoiseConfig::default);
+        match detail {
+            1 => {
+                noise.fbm_octaves = 3;
+                noise.ridged_octaves = 3;
+            }
+            2 => {
+                noise.fbm_octaves = 6;
+                noise.ridged_octaves = 5;
+            }
+            3 => {
+                noise.fbm_octaves = 8;
+                noise.ridged_octaves = 7;
+            }
+            _ => {}
+        }
+    }
+
+    // Cave density: adjust cave_threshold.
+    if let Some(ref caves) = cli.caves {
+        match caves.to_lowercase().as_str() {
+            "off" | "none" => config.cave_threshold = -999.0,
+            "sparse" => config.cave_threshold = -0.45,
+            "normal" => config.cave_threshold = -0.3,
+            "dense" => config.cave_threshold = -0.2,
+            other => {
+                eprintln!("Unknown cave density: '{other}'. Options: off, sparse, normal, dense");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Erosion intensity.
+    if let Some(ref erosion) = cli.erosion {
+        match erosion.to_lowercase().as_str() {
+            "off" | "none" => config.erosion = None,
+            "light" => {
+                config.erosion = Some(ErosionConfig {
+                    enabled: true,
+                    flow_threshold: 60.0,
+                    depth_scale: 2.0,
+                    max_channel_depth: 8.0,
+                    ..Default::default()
+                });
+            }
+            "moderate" => {
+                config.erosion = Some(ErosionConfig {
+                    enabled: true,
+                    ..Default::default()
+                });
+            }
+            "heavy" => {
+                config.erosion = Some(ErosionConfig {
+                    enabled: true,
+                    flow_threshold: 20.0,
+                    depth_scale: 5.0,
+                    max_channel_depth: 20.0,
+                    width_scale: 3.0,
+                    ..Default::default()
+                });
+            }
+            other => {
+                eprintln!(
+                    "Unknown erosion intensity: '{other}'. Options: off, light, moderate, heavy"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(ref hydraulic) = cli.hydraulic_erosion {
+        use the_dark_candle::world::erosion::{HydraulicErosionConfig, HydraulicMode};
+        match hydraulic.to_lowercase().as_str() {
+            "off" | "none" => config.hydraulic_erosion = None,
+            "light" => {
+                config.hydraulic_erosion = Some(HydraulicErosionConfig {
+                    enabled: true,
+                    mode: HydraulicMode::Droplet,
+                    droplet_iterations: 10_000,
+                    ..Default::default()
+                });
+            }
+            "moderate" => {
+                config.hydraulic_erosion = Some(HydraulicErosionConfig {
+                    enabled: true,
+                    mode: HydraulicMode::Combined,
+                    droplet_iterations: 30_000,
+                    grid_iterations: 15,
+                    ..Default::default()
+                });
+            }
+            "heavy" => {
+                config.hydraulic_erosion = Some(HydraulicErosionConfig {
+                    enabled: true,
+                    mode: HydraulicMode::Combined,
+                    droplet_iterations: 80_000,
+                    grid_iterations: 30,
+                    ..Default::default()
+                });
+            }
+            other => {
+                eprintln!(
+                    "Unknown hydraulic erosion intensity: '{other}'. Options: off, light, moderate, heavy"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    app.insert_resource(config);
 }

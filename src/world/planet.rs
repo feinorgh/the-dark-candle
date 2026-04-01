@@ -17,7 +17,8 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use super::erosion::ErosionConfig;
+use super::erosion::{ErosionConfig, HydraulicErosionConfig};
+use super::noise::NoiseConfig;
 
 /// Gravitational constant G in m³/(kg·s²). NIST CODATA 2018.
 pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;
@@ -125,10 +126,22 @@ pub struct PlanetConfig {
     #[serde(default = "default_soil_depth")]
     pub soil_depth: f64,
 
+    /// Composable noise stack configuration.  When present, the terrain
+    /// generators use `NoiseStack` instead of the legacy 2-layer Perlin blend.
+    /// Fields like `continent_freq` and `detail_freq` are ignored when this
+    /// is `Some`.
+    #[serde(default)]
+    pub noise: Option<NoiseConfig>,
+
     /// Erosion and valley carving configuration. When present, overrides the
     /// default `ErosionConfig` used by the flat terrain generator.
     #[serde(default)]
     pub erosion: Option<ErosionConfig>,
+
+    /// Hydraulic erosion configuration.  Applied to the heightmap after
+    /// noise generation but before voxel fill.
+    #[serde(default)]
+    pub hydraulic_erosion: Option<HydraulicErosionConfig>,
 }
 
 fn default_rotation_axis() -> [f64; 3] {
@@ -173,7 +186,9 @@ impl Default for PlanetConfig {
             cave_freq: 0.03,
             cave_threshold: -0.3,
             soil_depth: 4.0,
+            noise: None,
             erosion: None,
+            hydraulic_erosion: None,
         }
     }
 }

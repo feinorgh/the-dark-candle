@@ -34,6 +34,14 @@ impl MaterialId {
     pub const DRY_LEAVES: Self = Self(17);
     pub const BARK: Self = Self(18);
     pub const CHARCOAL: Self = Self(19);
+    pub const SANDSTONE: Self = Self(20);
+    pub const LIMESTONE: Self = Self(21);
+    pub const GRANITE: Self = Self(22);
+    pub const BASALT: Self = Self(23);
+    pub const COAL: Self = Self(24);
+    pub const COPPER_ORE: Self = Self(25);
+    pub const GOLD_ORE: Self = Self(26);
+    pub const QUARTZ_CRYSTAL: Self = Self(27);
 
     pub fn is_air(self) -> bool {
         self.0 == 0

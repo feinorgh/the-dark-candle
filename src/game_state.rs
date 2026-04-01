@@ -1,4 +1,4 @@
-// Game state machine: Loading → Playing ↔ Paused.
+// Game state machine: WorldCreation → Loading → Playing ↔ Paused.
 //
 // Uses Bevy 0.18 States for state transitions.  FixedUpdate is paused via
 // `Time<Virtual>` when not Playing (no need to add run_if to every system).
@@ -12,11 +12,18 @@ use bevy::prelude::*;
 use crate::persistence::{LoadRequest, SaveRequest, SaveSlot, list_save_slots};
 use crate::world::chunk_manager::PendingChunks;
 
+/// Marker resource: when present, the WorldCreation state is skipped
+/// (scene was selected via CLI).
+#[derive(Resource)]
+pub struct SkipWorldCreation;
+
 /// Top-level game state.
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
-    /// Initial state: terrain is generating, loading screen shown.
+    /// World creation: user configures world parameters before generating.
     #[default]
+    WorldCreation,
+    /// Terrain is generating, loading screen shown.
     Loading,
     /// Gameplay active: cursor locked, world simulating.
     Playing,
@@ -29,6 +36,14 @@ pub struct GameStatePlugin;
 impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>()
+            // World creation screen
+            .add_systems(OnEnter(GameState::WorldCreation), spawn_world_creation_screen)
+            .add_systems(OnExit(GameState::WorldCreation), despawn_world_creation_screen)
+            .add_systems(
+                Update,
+                world_creation_interaction.run_if(in_state(GameState::WorldCreation)),
+            )
+            // Loading screen
             .add_systems(OnEnter(GameState::Loading), spawn_loading_screen)
             .add_systems(OnExit(GameState::Loading), despawn_loading_screen)
             .add_systems(
@@ -46,6 +61,226 @@ impl Plugin for GameStatePlugin {
                 Update,
                 pause_menu_interaction.run_if(in_state(GameState::Paused)),
             );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// World creation screen
+// ---------------------------------------------------------------------------
+
+use crate::world::noise::NoiseConfig;
+use crate::world::planet::PlanetConfig;
+use crate::world::scene_presets::ScenePreset;
+
+#[derive(Component)]
+struct WorldCreationScreen;
+
+#[derive(Component)]
+enum WorldCreationButton {
+    Preset(ScenePreset),
+    Generate,
+}
+
+/// Currently selected preset for the world creation screen.
+#[derive(Resource, Default)]
+struct SelectedPreset(Option<ScenePreset>);
+
+fn spawn_world_creation_screen(
+    mut commands: Commands,
+    skip: Option<Res<SkipWorldCreation>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if skip.is_some() {
+        // CLI already configured the world — jump straight to Loading.
+        next_state.set(GameState::Loading);
+        return;
+    }
+
+    commands.init_resource::<SelectedPreset>();
+
+    commands
+        .spawn((
+            WorldCreationScreen,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(20.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.05, 0.05, 0.08)),
+        ))
+        .with_children(|parent| {
+            // Title
+            parent.spawn((
+                Text::new("Create Your World"),
+                TextFont {
+                    font_size: 42.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.7, 0.3)),
+            ));
+
+            // Subtitle
+            parent.spawn((
+                Text::new("Choose a terrain preset:"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+            ));
+
+            // Preset buttons in a row
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(10.0),
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|row| {
+                    let presets = [
+                        (ScenePreset::ValleyRiver, "Valley River"),
+                        (ScenePreset::Alpine, "Alpine"),
+                        (ScenePreset::Archipelago, "Archipelago"),
+                        (ScenePreset::DesertCanyon, "Desert Canyon"),
+                        (ScenePreset::RollingPlains, "Rolling Plains"),
+                        (ScenePreset::Volcanic, "Volcanic"),
+                        (ScenePreset::TundraFjords, "Tundra Fjords"),
+                    ];
+
+                    for (preset, label) in presets {
+                        spawn_preset_button(row, label, preset);
+                    }
+                });
+
+            // Spacer
+            parent.spawn(Node {
+                height: Val::Px(20.0),
+                ..default()
+            });
+
+            // Generate button
+            spawn_world_button(parent, "Generate World", WorldCreationButton::Generate);
+        });
+}
+
+fn spawn_preset_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    preset: ScenePreset,
+) {
+    parent
+        .spawn((
+            WorldCreationButton::Preset(preset),
+            Button,
+            Node {
+                width: Val::Px(140.0),
+                height: Val::Px(40.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.15, 0.15, 0.2)),
+        ))
+        .with_child((
+            Text::new(label.to_string()),
+            TextFont {
+                font_size: 16.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+}
+
+fn spawn_world_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    marker: WorldCreationButton,
+) {
+    parent
+        .spawn((
+            marker,
+            Button,
+            Node {
+                width: Val::Px(220.0),
+                height: Val::Px(55.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.2, 0.5, 0.3)),
+        ))
+        .with_child((
+            Text::new(label.to_string()),
+            TextFont {
+                font_size: 24.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+}
+
+fn world_creation_interaction(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut selected: ResMut<SelectedPreset>,
+    mut interaction_query: Query<
+        (&Interaction, &WorldCreationButton, &mut BackgroundColor),
+        Changed<Interaction>,
+    >,
+) {
+    for (interaction, button, mut bg) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => match button {
+                WorldCreationButton::Preset(preset) => {
+                    selected.0 = Some(preset.clone());
+                }
+                WorldCreationButton::Generate => {
+                    let config = if let Some(ref preset) = selected.0 {
+                        preset.planet_config()
+                    } else {
+                        PlanetConfig {
+                            noise: Some(NoiseConfig::default()),
+                            ..Default::default()
+                        }
+                    };
+                    commands.insert_resource(config);
+                    next_state.set(GameState::Loading);
+                }
+            },
+            Interaction::Hovered => {
+                let is_selected = matches!(button, WorldCreationButton::Preset(p) if selected.0.as_ref() == Some(p));
+                if is_selected {
+                    *bg = BackgroundColor(Color::srgb(0.3, 0.6, 0.4));
+                } else {
+                    *bg = BackgroundColor(Color::srgb(0.25, 0.25, 0.3));
+                }
+            }
+            Interaction::None => {
+                let is_selected = matches!(button, WorldCreationButton::Preset(p) if selected.0.as_ref() == Some(p));
+                if is_selected {
+                    *bg = BackgroundColor(Color::srgb(0.25, 0.5, 0.35));
+                } else if matches!(button, WorldCreationButton::Generate) {
+                    *bg = BackgroundColor(Color::srgb(0.2, 0.5, 0.3));
+                } else {
+                    *bg = BackgroundColor(Color::srgb(0.15, 0.15, 0.2));
+                }
+            }
+        }
+    }
+}
+
+fn despawn_world_creation_screen(
+    mut commands: Commands,
+    query: Query<Entity, With<WorldCreationScreen>>,
+) {
+    for entity in &query {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -375,7 +610,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_state_is_loading() {
-        assert_eq!(GameState::default(), GameState::Loading);
+    fn default_state_is_world_creation() {
+        assert_eq!(GameState::default(), GameState::WorldCreation);
     }
 }
