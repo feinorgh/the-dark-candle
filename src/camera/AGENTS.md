@@ -45,6 +45,23 @@ All physics constants reference `crate::physics::constants` for the single sourc
 - Mouse input uses `Res<AccumulatedMouseMotion>` resource, NOT `EventReader<MouseMotion>`.
 - Pitch is clamped to ±89° to prevent gimbal lock.
 
+## Atmosphere & Fog (on camera entity)
+
+The camera entity includes atmospheric rendering components:
+
+- `Atmosphere::earthlike(medium)` — GPU atmospheric scattering (Rayleigh+Mie+Ozone)
+- `ScatteringMedium::default()` — standard Earth medium, added via `world.resource_mut::<Assets<ScatteringMedium>>()`
+- `DistanceFog` — exponential squared falloff, 500 m visibility
+- `Bloom::NATURAL` — satisfies HDR requirement for `Atmosphere`
+
+Imports: `bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium}` (NOT in prelude).
+
+The fog color is dynamically updated by `update_fog()` in `src/lighting/mod.rs` — see lighting AGENTS.md.
+
+## Map State Integration
+
+When `GameState::Map` is entered (M key), `OnEnter(GameState::Map)` triggers `release_cursor` so the mouse is freed for map interaction. The map module (`src/map/`) handles all map UI; the camera module just handles cursor release.
+
 ## Gotchas
 
 - The gravity system runs on `Update` (chained with camera_look and camera_move). Camera uses its own vertical_velocity for simplicity.

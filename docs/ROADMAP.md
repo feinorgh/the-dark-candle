@@ -20,7 +20,7 @@ Simulation Stack (each layer reads/writes shared ECS components):
 ```
 
 Modules: `camera`, `world`, `physics`, `chemistry`, `biology`, `entities`,
-`procgen`, `behavior`, `social`, `data`, `persistence`, `planet`.
+`procgen`, `behavior`, `social`, `data`, `persistence`, `planet`, `map`.
 
 All entity/material/reaction data is loaded from `.ron` files under `assets/data/`.
 
@@ -83,8 +83,8 @@ identity and territory. Reputation from observed actions. Group behaviors
 ## Current State
 
 **All 7 original phases are complete.** The codebase has:
-- 110+ source files, ~39,000 lines of Rust (edition 2024)
-- 1296+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
+- 148+ source files, ~53,000 lines of Rust (edition 2024)
+- 1372+ passing tests (lib) + 14 integration + 3 simulation + 9 visual rendering
 - Pre-commit hooks: `cargo fmt` → `cargo clippy -D warnings` → `cargo test`
 - CI/CD: GitHub Actions (Linux, Windows, macOS)
 - Cross-compilation: `x86_64-pc-windows-gnu`
@@ -94,6 +94,9 @@ identity and territory. Reputation from observed actions. Group behaviors
 
 | Commit | Description |
 |--------|-------------|
+| `b002808` | In-game map system: local discovery + global planet map (M key toggle) |
+| `74e5f7e` | Atmospheric sky rendering: Bevy Atmosphere + DistanceFog + ClearColor |
+| `3f2b946` | Terrain Detail milestone: NoiseStack, 8 presets, geology, caves, erosion |
 | `06ff4b9` | SVO octree voxel subdivision system |
 | `d5881e8` | AMR Navier-Stokes fluid simulation |
 | `1e75f32` | D3Q19 LBM gas simulation |
@@ -288,9 +291,10 @@ Full design: **[structural-construction.md](structural-construction.md)**
 
 With the core simulation stack complete, spherical terrain done (Phase 8,
 including planetary terrain connection), atmosphere simulation implemented
-(Phase 9), and structural construction designed (Phase 11), the project also
-needs integration, polish, and gameplay. These are not yet planned in detail —
-each will get a session plan when started.
+(Phase 9), atmospheric sky rendering integrated into gameplay, in-game map
+system operational, and structural construction designed (Phase 11), the
+project also needs integration, polish, and gameplay. These are not yet
+planned in detail — each will get a session plan when started.
 
 **Near-term visual integration (Phase 9b–9d):** The chemistry/heat physics are
 fully implemented and tested but not yet running in-game or visible to the
@@ -311,6 +315,34 @@ with preset selector. Extended CLI flags: `--seed`, `--terrain-detail`,
 `--height-scale`, `--caves`, `--erosion`, `--hydraulic-erosion`.
 
 Full design: **[terrain-generation.md](terrain-generation.md)**
+
+### Atmospheric Sky Integration ✅
+
+Connected the existing Rayleigh/Mie scattering code (Phase 12 Tier 1, `sky.rs`
++ `scattering.rs`) to the in-game camera via Bevy's built-in `Atmosphere`
+component. Previously the sky model was only used in headless visualization
+exports — the in-game world appeared flat gray.
+
+- **Atmosphere component** on camera: `Atmosphere::earthlike(medium)` +
+  `ScatteringMedium::default()` — drives GPU atmospheric sky rendering
+- **ClearColor(Color::BLACK)** — provides background for atmosphere shader
+- **DistanceFog** — 500 m visibility, exponential squared falloff
+- **update_fog() system** — syncs fog color to sun elevation (warm dawn →
+  cool noon → dark night), ambient light reduced (noon 200→80, night 10→5)
+
+### In-Game Map System ✅
+
+Dual-mode map accessible via M key: local discovery map + global planet map.
+
+- **Local discovery map** — biome-colored pixel per discovered chunk column,
+  fog-of-war for unexplored, centered on player, 4 zoom levels (1/2/4/8 px/chunk)
+- **Global planet map** — equirectangular projection via `render_projection()`,
+  player lat/lon marker, zoom/pan (only when `PlanetaryData` available)
+- **Tab key** switches local ↔ global; ESC closes
+- **Discovery persistence** — `DiscoveredColumns` saved/loaded with game,
+  SAVE_VERSION bumped 3→4
+
+**Module:** `src/map/` (discovery.rs, local_map.rs, global_map.rs, ui.rs)
 
 ### Coupling & Integration
 - **Cross-model fluid coupling** — AMR ↔ LBM mass/heat exchange at liquid-gas

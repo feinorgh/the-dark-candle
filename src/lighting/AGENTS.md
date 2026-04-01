@@ -138,3 +138,36 @@ where α is the absorption coefficient (m⁻¹) per RGB channel and d is path le
 - `get_clamped()` returns fully lit for out-of-bounds coordinates. This means chunk edges assume open sky, which is correct for top-exposed chunks but may need inter-chunk propagation later.
 - `propagate_sunlight` only handles top-down columns. Lateral light spread (e.g. light entering a cave mouth) requires a future flood-fill pass.
 - Shadow ray origin is offset 0.5 in the to_light direction to avoid self-intersection.
+
+## GPU Atmospheric Sky (Bevy Atmosphere)
+
+The physically-based sky model from `sky.rs` and `scattering.rs` is used for headless visualization. For in-game rendering, the camera uses Bevy's built-in `Atmosphere` component which provides real-time GPU atmospheric scattering.
+
+### Components (on camera entity, spawned in `src/camera/mod.rs`)
+
+- `Atmosphere::earthlike(medium)` — Earth-like Rayleigh+Mie+Ozone scattering
+- `ScatteringMedium::default()` — standard atmospheric medium (requires `Handle<ScatteringMedium>`)
+- No extra plugin needed — `AtmospherePlugin` is auto-registered by `PbrPlugin`
+- Reads the existing `DirectionalLight` (Sun entity) for sun direction
+
+### ClearColor
+
+`ClearColor(Color::BLACK)` is inserted as a resource in `LightingPlugin::build()`. Required so the atmosphere shader draws sky color over the background.
+
+### DistanceFog
+
+`DistanceFog` component on the camera with exponential squared falloff, 500 m visibility. Provides atmospheric depth cueing.
+
+### update_fog() System
+
+Runs on `Update`, syncs fog color to time-of-day:
+- Computes sun elevation from `TimeOfDay` + `DayNightConfig`
+- Dawn/dusk (low elevation): warm orange-pink tones
+- Noon (high elevation): desaturated blue-white
+- Night (below horizon): near-black
+- Also reduced `AmbientLight`: noon 200→80, night 10→5
+
+### Imports
+
+- `bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium}` — NOT in prelude
+- `Atmosphere` has `#[require(AtmosphereSettings, Hdr)]` — camera must have HDR (satisfied by `Bloom::NATURAL`)

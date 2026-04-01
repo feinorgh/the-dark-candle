@@ -84,7 +84,8 @@ terrain detail.
 - **Viscosity, surface tension, and buoyancy** from real material properties
 
 ### 🌤️ Atmosphere & Weather
-- **Rayleigh & Mie scattering** — physically-based sky colours
+- **Atmospheric sky rendering** — Bevy 0.18 `Atmosphere::earthlike()` component with GPU Rayleigh+Mie+Ozone scattering
+- **Distance fog** — time-of-day color adaptation (warm dawn → blue noon → dark night) via `update_fog()` system
 - **Day/night cycle** — orbital sun position with twilight transitions
 - **Volumetric clouds** — 3D noise density with GPU ray marching
 - **Weather particles** — rain, snow, and sand with wind advection from LBM field
@@ -105,11 +106,12 @@ terrain detail.
 - **Food sources** — forageable resources with regrowth timers
 
 ### 🎮 Game Systems
-- **Save/load** — 4 save slots (1 autosave + 3 manual) in RON format
+- **Save/load** — 4 save slots (1 autosave + 3 manual) in RON format (SAVE_VERSION=4)
 - **First-person camera** — WASD + mouse look with configurable sensitivity
 - **HUD** — health, temperature, coordinates, diagnostics overlay
 - **Hotbar** — material selection for placement
 - **Interaction** — voxel placement and removal via raycast
+- **In-game map** — M key overlay with local discovery map (biome-colored, fog-of-war, 4 zoom levels) and global planet map (equirectangular projection, lat/lon marker, zoom/pan)
 
 ### 🖥️ GPU Compute
 - **Headless wgpu pipelines** — no window required for rendering
@@ -203,7 +205,7 @@ The codebase is organised into focused ECS modules:
 | `physics/` | Rigid bodies, gravity, collision, LBM gas, FLIP fluid, atmosphere |
 | `chemistry/` | Heat transfer, reactions, state transitions, radiation |
 | `planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, rendering |
-| `lighting/` | Sun cycle, sky scattering, light maps, volumetric clouds, fog |
+| `lighting/` | Sun cycle, atmospheric sky (Bevy Atmosphere component), light maps, volumetric clouds, distance fog |
 | `weather/` | Particle emitters, wind advection, snow/rain accumulation |
 | `biology/` | Metabolism, body temperature, hydration, energy systems |
 | `behavior/` | Behaviour trees, AI decision-making |
@@ -212,17 +214,18 @@ The codebase is organised into focused ECS modules:
 | `procgen/` | Tree generation, biome decoration |
 | `gpu/` | Headless wgpu compute pipelines (atmosphere, terrain, particles) |
 | `data/` | RON asset loading for materials, reactions, configs |
-| `persistence/` | Save/load system |
+| `persistence/` | Save/load system (SAVE_VERSION=4) |
 | `diagnostics/` | ECS dump, screenshots, video encoding, visualisation |
 | `simulation/` | Headless tick-based simulation runner for tests |
 | `camera/` | First-person camera controller |
+| `map/` | In-game map overlay: local discovery map + global planet map |
 
 **148 source files · ~53K lines of Rust · 1372+ tests**
 
 ### Data-Driven Design
 
 Game data lives in `assets/data/` as RON files:
-- **27 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties (including 8 geological: sandstone, limestone, granite, basalt, coal, copper ore, gold ore, quartz crystal)
+- **28 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties (including 8 geological: sandstone, limestone, granite, basalt, coal, copper ore, gold ore, quartz crystal)
 - **8 chemical reactions** — reactants, products, activation energy, enthalpy
 - **1 tree species** — L-system parameters for procedural generation
 - **Configs** — atmosphere, fluid, planet, subdivision, universal constants

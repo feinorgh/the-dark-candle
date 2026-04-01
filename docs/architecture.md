@@ -25,15 +25,16 @@ This game strictly adheres to Bevy's ECS model.
 | `social` | `src/social/` | Relationships, factions, reputation, group behaviors |
 | `entities` | `src/entities/` | Creature and item spawning, procedural generation |
 | `procgen` | `src/procgen/` | Procedural tree generation, biome integration |
-| `lighting` | `src/lighting/` | Sun cycle, light maps, sky scattering, volumetric effects |
+| `lighting` | `src/lighting/` | Sun cycle, light maps, sky scattering, volumetric effects, atmospheric sky (Bevy Atmosphere component), distance fog with time-of-day sync |
 | `weather` | `src/weather/` | Cloud particles, wind upload, snow/rain accumulation |
 | `camera` | `src/camera/` | First-person camera, fly mode |
 | `data` | `src/data/` | RON asset loading, material/reaction registries |
-| `persistence` | `src/persistence/` | Save/load system |
+| `persistence` | `src/persistence/` | Save/load system (SAVE_VERSION=4) |
 | `diagnostics` | `src/diagnostics/` | ECS dump, screenshots, video encoding |
 | `simulation` | `src/simulation/` | Headless tick loop for testing |
 | `gpu` | `src/gpu/` | Headless wgpu compute, particle pipeline |
 | `planet` | `src/planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, globe renderer, map projections |
+| `map` | `src/map/` | In-game map overlay: local discovery map (biome colors, fog-of-war, zoom), global planet map (equirectangular projection, lat/lon marker), discovery persistence |
 
 ## 4. The Data-Driven Pipeline (YAML / RON)
 To ensure maximum flexibility, all game data is loaded at runtime via `bevy_common_assets`.
