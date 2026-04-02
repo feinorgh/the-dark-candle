@@ -339,8 +339,10 @@ pub fn update_chunks(
         pending.remove(&coord);
     }
 
-    // Collect coords that need generation, sorted closest-to-camera first.
+    // Collect coords that need generation, sorted by frustum visibility then
+    // distance — so chunks visible to the camera generate first.
     let cam_pos = cam_transform.translation;
+    let cam_forward = cam_transform.forward().as_vec3();
     let mut to_generate: Vec<ChunkCoord> = desired
         .iter()
         .filter(|c| !chunk_map.contains(c) && !pending.contains(c))
@@ -349,7 +351,15 @@ pub fn update_chunks(
     to_generate.sort_by(|a, b| {
         let da = a.world_center().distance_squared(cam_pos);
         let db = b.world_center().distance_squared(cam_pos);
-        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        // Frustum bias: chunks in front of camera sort before chunks behind.
+        let dot_a = (a.world_center() - cam_pos).normalize_or_zero().dot(cam_forward);
+        let dot_b = (b.world_center() - cam_pos).normalize_or_zero().dot(cam_forward);
+        // Primary: in-frustum first (dot > 0), secondary: distance
+        let vis_a = if dot_a > 0.0 { 0u8 } else { 1 };
+        let vis_b = if dot_b > 0.0 { 0u8 } else { 1 };
+        vis_a.cmp(&vis_b).then_with(|| {
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     // Dispatch async terrain generation for the closest chunks.
@@ -448,6 +458,13 @@ fn gpu_batch_surface_radii(
         .collect()
 }
 
+/// Maximum number of terrain results collected per frame. Prevents frame
+/// spikes when many async tasks complete simultaneously.
+const MAX_TERRAIN_COLLECTS_PER_FRAME: usize = 16;
+
+/// Maximum number of mesh results collected per frame.
+pub(crate) const MAX_MESH_COLLECTS_PER_FRAME: usize = 16;
+
 /// System: collects completed async terrain generation tasks and spawns the
 /// chunk entities with all required components.
 pub(crate) fn collect_terrain_results(
@@ -468,10 +485,15 @@ pub(crate) fn collect_terrain_results(
         [0, 0, -1],
     ];
 
+    let mut collected = 0usize;
     for (task_entity, mut gen_task) in task_q.iter_mut() {
+        if collected >= MAX_TERRAIN_COLLECTS_PER_FRAME {
+            break;
+        }
         let Some(result) = block_on(poll_once(&mut gen_task.0)) else {
             continue;
         };
+        collected += 1;
 
         // Task entity is just a carrier — despawn it.
         commands.entity(task_entity).despawn();

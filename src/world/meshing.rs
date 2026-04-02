@@ -883,11 +883,11 @@ pub(super) fn dispatch_mesh_tasks(
     let config = lod_config.as_deref().unwrap_or(&default_config);
     let thermal_vision = thermal_mode.as_ref().is_some_and(|m| m.0);
     let spherical = planet.is_spherical();
-    let camera_pos = camera_q
+    let (camera_pos, camera_forward) = camera_q
         .iter()
         .next()
-        .map(|t| t.translation)
-        .unwrap_or(Vec3::ZERO);
+        .map(|t| (t.translation, t.forward().as_vec3()))
+        .unwrap_or((Vec3::ZERO, Vec3::NEG_Z));
 
     // Phase 1: Arc-snapshot all loaded chunk voxels for neighbor lookups.
     // With Arc<Vec<Voxel>>, this is O(1) per chunk (ref-count bump, no memcpy).
@@ -904,6 +904,7 @@ pub(super) fn dispatch_mesh_tasks(
     struct MeshCandidate {
         entity: Entity,
         dist_sq: f32,
+        in_frustum: bool,
         new_level: LodLevel,
         lod_changed: bool,
         had_mesh: bool,
@@ -924,16 +925,24 @@ pub(super) fn dispatch_mesh_tasks(
             continue;
         }
 
-        let dist_sq = (coord.world_center() - camera_pos).length_squared();
+        let center = coord.world_center();
+        let dist_sq = (center - camera_pos).length_squared();
+        let dot = (center - camera_pos).normalize_or_zero().dot(camera_forward);
         candidates.push(MeshCandidate {
             entity,
             dist_sq,
+            in_frustum: dot > 0.0,
             new_level,
             lod_changed,
             had_mesh,
         });
     }
-    candidates.sort_unstable_by(|a, b| a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal));
+    // Sort: visible chunks first, then by distance.
+    candidates.sort_unstable_by(|a, b| {
+        b.in_frustum.cmp(&a.in_frustum).then_with(|| {
+            a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
 
     // Phase 2b: dispatch closest N chunks for meshing.
     let mut p0 = chunk_queries.p0();
@@ -1032,10 +1041,15 @@ pub(super) fn collect_mesh_results(
         ..default()
     });
 
+    let mut collected = 0usize;
     for (entity, mut mesh_task, activity) in task_q.iter_mut() {
+        if collected >= super::chunk_manager::MAX_MESH_COLLECTS_PER_FRAME {
+            break;
+        }
         let Some(result) = future::block_on(future::poll_once(&mut mesh_task.task)) else {
             continue;
         };
+        collected += 1;
 
         let new_level = LodLevel(result.lod_level);
         let lod_changed = mesh_task.lod_changed;
