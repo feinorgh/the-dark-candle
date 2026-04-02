@@ -146,6 +146,7 @@ fn apply_planet_config_from_asset(
     mut planet_config: ResMut<PlanetConfig>,
     mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
     mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
+    v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
     mut done: Local<bool>,
 ) {
     if *done {
@@ -169,6 +170,13 @@ fn apply_planet_config_from_asset(
 
     let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
     *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(shared_generator));
+
+    // Rebuild the V2 terrain generator if the V2 pipeline is active.
+    if let Some(mut v2) = v2_gen {
+        let tgen = terrain::SphericalTerrainGenerator::new(planet_config.clone());
+        v2.0 = Arc::new(tgen);
+        info!("V2 pipeline: rebuilt terrain generator from updated PlanetConfig");
+    }
 
     *done = true;
 }

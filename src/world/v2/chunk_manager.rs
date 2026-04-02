@@ -180,6 +180,7 @@ pub fn v2_update_chunks(
 }
 
 /// Collect completed V2 chunk tasks and spawn renderable entities.
+#[allow(clippy::too_many_arguments)]
 pub fn v2_collect_results(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -187,15 +188,18 @@ pub fn v2_collect_results(
     mut chunk_map: ResMut<V2ChunkMap>,
     mut pending: ResMut<V2PendingChunks>,
     planet: Res<PlanetConfig>,
+    mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
     mut task_q: Query<(Entity, &mut V2ChunkTask)>,
 ) {
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
     let cs_half = Vec3::splat(CHUNK_SIZE as f32 / 2.0);
 
-    let chunk_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        ..default()
-    });
+    let chunk_material = cached_mat.get_or_insert_with(|| {
+        materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            ..default()
+        })
+    }).clone();
 
     let mut collected = 0usize;
     for (task_entity, mut task) in &mut task_q {
@@ -263,12 +267,36 @@ impl Plugin for V2WorldPlugin {
                 (
                     v2_update_chunks,
                     v2_collect_results,
+                    v2_diagnostics,
                 )
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
             );
     }
+}
+
+/// Periodic diagnostic logging for the V2 pipeline.
+fn v2_diagnostics(
+    chunk_map: Res<V2ChunkMap>,
+    pending: Res<V2PendingChunks>,
+    mesh_q: Query<Entity, (With<V2ChunkMarker>, With<Mesh3d>)>,
+    mut timer: Local<f32>,
+    time: Res<Time>,
+) {
+    *timer += time.delta_secs();
+    if *timer < 5.0 {
+        return;
+    }
+    *timer = 0.0;
+
+    let mesh_count = mesh_q.iter().count();
+    info!(
+        "V2 pipeline: loaded={}, pending={}, meshed={}",
+        chunk_map.loaded.len(),
+        pending.pending.len(),
+        mesh_count,
+    );
 }
 
 /// Extract the spherical terrain generator from SharedTerrainGen and wrap it
@@ -342,5 +370,108 @@ mod tests {
             "Should have a reasonable number of chunks, got {}",
             desired.len()
         );
+    }
+
+    /// End-to-end lifecycle test: dispatch tasks, let them complete, collect
+    /// results, and verify chunk entities are spawned with correct components.
+    #[test]
+    fn integration_v2_lifecycle() {
+        use bevy::asset::AssetPlugin;
+        use bevy::image::Image;
+        use bevy::pbr::StandardMaterial;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(AssetPlugin::default());
+
+        // Register asset types that DefaultPlugins normally provides.
+        app.init_asset::<Mesh>();
+        app.init_asset::<Image>();
+        app.init_asset::<StandardMaterial>();
+
+        // Small smooth planet for fast terrain gen.
+        let mut planet = PlanetConfig::default();
+        planet.mean_radius = 200.0;
+        planet.sea_level_radius = 200.0;
+        planet.noise = None;
+        planet.height_scale = 0.0;
+        planet.cave_threshold = -999.0;
+
+        let tgen = Arc::new(SphericalTerrainGenerator::new(planet.clone()));
+        app.insert_resource(planet);
+        app.insert_resource(V2TerrainGen(tgen));
+        app.insert_resource(V2LoadRadius {
+            horizontal: 2,
+            vertical: 1,
+        });
+        app.init_resource::<V2ChunkMap>();
+        app.init_resource::<V2PendingChunks>();
+        app.insert_resource(MaterialColorMap::from_defaults());
+
+        // Spawn camera at the surface of the +X face.
+        app.world_mut().spawn((
+            FpsCamera::default(),
+            Transform::from_translation(Vec3::new(200.0, 0.0, 0.0)),
+        ));
+
+        // Register update systems (bypassing GameState gating for the test).
+        app.add_systems(Update, (v2_update_chunks, v2_collect_results).chain());
+
+        // Frame 1: dispatch tasks.
+        app.update();
+
+        let pending_count = app.world().resource::<V2PendingChunks>().pending.len();
+        assert!(
+            pending_count > 0,
+            "Should have dispatched pending chunks, got 0"
+        );
+
+        // Give async tasks time to complete, then run several frames to collect.
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            app.update();
+        }
+
+        let loaded_count = app.world().resource::<V2ChunkMap>().loaded.len();
+        assert!(
+            loaded_count > 0,
+            "Should have collected at least one chunk, got 0 loaded"
+        );
+
+        // Verify chunk entities have the expected components.
+        let mut marker_query = app
+            .world_mut()
+            .query_filtered::<(Entity, &V2ChunkCoord, &Transform), With<V2ChunkMarker>>();
+        let entity_count = marker_query.iter(app.world()).count();
+        assert!(
+            entity_count > 0,
+            "Should have spawned V2ChunkMarker entities, got 0"
+        );
+
+        // Check that at least some entities have meshes (non-empty chunks).
+        let mut mesh_query = app
+            .world_mut()
+            .query_filtered::<Entity, (With<V2ChunkMarker>, With<Mesh3d>)>();
+        let mesh_count = mesh_query.iter(app.world()).count();
+
+        // On a 200m-radius smooth planet with h=2,v=1 from the +X face,
+        // there should be some surface-layer chunks with visible geometry.
+        assert!(
+            mesh_count > 0,
+            "Should have spawned V2 chunks with meshes, got 0 \
+             (loaded={loaded_count}, entities={entity_count})"
+        );
+
+        // Verify transforms are near the planet surface.
+        for (_entity, coord, transform) in marker_query.iter(app.world()) {
+            let dist = transform.translation.length();
+            let expected_r = 200.0 + (coord.0.layer as f32) * CHUNK_SIZE as f32;
+            assert!(
+                (dist - expected_r).abs() < CHUNK_SIZE as f32 * 2.0,
+                "Chunk at {:?} has distance {dist:.1} from origin, \
+                 expected ~{expected_r:.1}",
+                coord.0,
+            );
+        }
     }
 }
