@@ -195,9 +195,11 @@ pub fn desired_chunks(world_pos: Vec3, radius: &ChunkLoadRadius) -> HashSet<Chun
 /// Compute the set of chunk coordinates for **spherical** shell-based loading.
 ///
 /// Loads chunks in a spherical shell around the camera, constrained to
-/// chunks whose centers fall within `[surface_radius - depth, surface_radius + height]`
-/// of the planet center.  Only chunks within `horizontal` chunk-units of the
-/// camera are considered (measured as Cartesian chunk-space distance).
+/// chunks whose centers fall within `[cam_r - depth, cam_r + height]`
+/// of the planet center, where `cam_r` is the camera's radial distance.
+/// This naturally tracks the local terrain surface regardless of where the
+/// camera is relative to `mean_radius`.  Only chunks within `horizontal`
+/// chunk-units of the camera are considered (Cartesian chunk-space distance).
 pub fn desired_chunks_spherical(
     world_pos: Vec3,
     radius: &ChunkLoadRadius,
@@ -211,8 +213,16 @@ pub fn desired_chunks_spherical(
     let h = radius.horizontal;
     let h_sq = (h * h) as f32;
 
-    let shell_min = (planet.mean_radius - radius.shell_depth) as f32;
-    let shell_max = (planet.mean_radius + radius.shell_height) as f32;
+    // Center the shell on the camera's current radial distance so the loaded
+    // region tracks the local terrain surface, not the mean radius.
+    let cam_r = world_pos.length() as f64;
+    // Use at least the configured depth/height, but widen if height_scale is
+    // large to ensure we capture nearby terrain variation.
+    let extra = planet.height_scale * 0.05; // 5% of height_scale as margin
+    let depth = radius.shell_depth.max(extra);
+    let height = radius.shell_height.max(extra);
+    let shell_min = (cam_r - depth) as f32;
+    let shell_max = (cam_r + height) as f32;
 
     let mut set = HashSet::new();
     for dz in -h..=h {

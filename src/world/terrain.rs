@@ -541,27 +541,43 @@ impl SphericalTerrainGenerator {
     }
 
     /// Fill a chunk with spherical terrain based on its world position.
+    ///
+    /// Surface-radius noise is cached per `(lx, lz)` column at a
+    /// representative Y level (chunk center).  Within a 32 m chunk at
+    /// r ≈ 32 km the angular span is ≈ 0.001 rad — far below the lowest
+    /// noise frequency — so reusing the column value for all Y levels
+    /// introduces negligible error while reducing noise calls 32×.
     pub fn generate_chunk(&self, chunk: &mut Chunk) {
         let origin = chunk.coord.world_origin();
 
-        for lz in 0..CHUNK_SIZE {
+        // Pre-compute surface radius for each (lx, lz) column using the
+        // chunk's vertical midpoint as the representative Y.
+        let mid_y = (origin.y + CHUNK_SIZE as i32 / 2) as f64;
+        let mut surface_cache = [[0.0_f64; CHUNK_SIZE]; CHUNK_SIZE];
+        for (lz, row) in surface_cache.iter_mut().enumerate() {
+            for (lx, cached) in row.iter_mut().enumerate() {
+                let wx = (origin.x + lx as i32) as f64;
+                let wz = (origin.z + lz as i32) as f64;
+                let pos = bevy::math::DVec3::new(wx, mid_y, wz);
+                let (lat, lon) = self.planet.lat_lon(pos);
+                *cached = self.sample_surface_radius(lat, lon);
+            }
+        }
+
+        for (lz, cache_row) in surface_cache.iter().enumerate() {
             for ly in 0..CHUNK_SIZE {
-                for lx in 0..CHUNK_SIZE {
+                for (lx, &surface_r) in cache_row.iter().enumerate() {
                     let world_x = (origin.x + lx as i32) as f64;
                     let world_y = (origin.y + ly as i32) as f64;
                     let world_z = (origin.z + lz as i32) as f64;
 
                     let pos = bevy::math::DVec3::new(world_x, world_y, world_z);
                     let r = self.planet.distance_from_center(pos);
-                    let (lat, lon) = self.planet.lat_lon(pos);
-                    let surface_r = self.sample_surface_radius(lat, lon);
 
                     let material = self.material_at_radius(r, surface_r, world_x, world_y, world_z);
 
                     chunk.set_material(lx, ly, lz, material);
 
-                    // Smooth density: depth below surface = surface_r - r.
-                    // For water voxels, use distance below sea level radius.
                     let density = if material == MaterialId::WATER {
                         terrain_density(self.planet.sea_level_radius - r)
                     } else {

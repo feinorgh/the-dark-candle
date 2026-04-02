@@ -271,5 +271,41 @@
     "related_commits": [],
     "resolution": "Added spherical:bool parameter through generate_mesh_generic \u2192 compute_normals. When spherical, degenerate fallback uses normalize(vertex_position) instead of [0,1,0]. Threaded from dispatch_mesh_tasks via PlanetConfig.",
     "notes": []
+  },
+  {
+    "id": "PERF-001",
+    "title": "Spherical terrain generation 125\u00d7 slower with NoiseStack \u2014 per-voxel noise sampling",
+    "category": "performance",
+    "severity": "critical",
+    "status": "resolved",
+    "reported": "2026-04-01",
+    "description": "SphericalTerrainGenerator::generate_chunk() called sample_surface_radius() for every voxel (32768\u00d7) instead of caching per angular column (1024\u00d7). With NoiseStack (15 Perlin calls per sample), chunk gen took 332ms vs 2.6ms legacy.",
+    "reproduction": "Run game with height_scale=4000 and noise: Some(...) in planet_config.ron.",
+    "suspected_files": [
+      "src/world/terrain.rs"
+    ],
+    "suspected_cause": "No column caching for surface_radius in spherical generate_chunk. Each voxel recomputes noise even though lat/lon varies <0.001 rad within a 32m chunk.",
+    "related_commits": [],
+    "resolution": "Pre-compute surface_radius for each (lx,lz) column at chunk mid-Y, reuse for all Y levels. Reduced noise calls 32\u00d7 (32768\u21921024 per chunk). Chunk gen: 332ms\u219290ms.",
+    "notes": [
+      "Remaining 90ms is mostly is_cave() 3D Perlin per voxel \u2014 acceptable since it runs on AsyncComputeTaskPool."
+    ]
+  },
+  {
+    "id": "PERF-002",
+    "title": "Shell loading centered on mean_radius \u2014 no chunks load when height_scale > shell_depth",
+    "category": "performance",
+    "severity": "critical",
+    "status": "resolved",
+    "reported": "2026-04-01",
+    "description": "desired_chunks_spherical() computed shell bounds as mean_radius\u00b1128m. With height_scale=4000, camera spawns at r\u224833265 (actual surface) \u2014 outside the shell. Zero chunks loaded, game unresponsive.",
+    "reproduction": "Set height_scale=4000 in planet_config.ron, run game. Camera spawns on surface but no terrain loads.",
+    "suspected_files": [
+      "src/world/chunk_manager.rs"
+    ],
+    "suspected_cause": "Shell centered on mean_radius instead of camera radial position.",
+    "related_commits": [],
+    "resolution": "Centered shell on camera's current radial distance (cam_r) with extra margin of 5% height_scale. Shell now tracks player position regardless of terrain height variation.",
+    "notes": []
   }
 ]
