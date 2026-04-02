@@ -376,5 +376,18 @@
     "reproduction": "Run game with --pipeline v2 (or default). Console floods with 'Resource does not exist' errors every frame.",
     "resolution": "Changed all non-optional Res<ChunkMap>/ResMut<ChunkMap> usages outside V1-internal modules to Option<>. Four systems fixed across commits 7973486 and 8c9e9cf.",
     "resolved_commit": "8c9e9cf"
+  },
+  {
+    "id": "TERRAIN-005",
+    "title": "Seed always 42 regardless of --seed CLI argument or preset selection",
+    "category": "terrain",
+    "severity": "high",
+    "status": "resolved",
+    "suspected_files": [
+      "src/world/mod.rs"
+    ],
+    "reproduction": "Run with --seed 999 --scene spherical_planet. Terrain is identical to --seed 42.",
+    "resolution": "Two bugs: (1) apply_planet_config_from_asset overwrote CLI config with planet_config.ron (seed=42). Now skips override when SkipWorldCreation present. (2) UI preset selection didn't rebuild terrain generators. Added rebuild_terrain_on_config_change with Bevy change detection.",
+    "resolved_commit": "0205028"
   }
 ]
