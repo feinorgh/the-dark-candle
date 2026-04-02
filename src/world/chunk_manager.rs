@@ -20,6 +20,7 @@ use super::refinement::{SubdivisionConfig, analyze_chunk, build_refined_octree};
 use super::terrain::UnifiedTerrainGenerator;
 use crate::camera::FpsCamera;
 use crate::chemistry::runtime::ChunkActivity;
+use crate::gpu::noise_compute::GpuNoiseCompute;
 
 /// How many chunks outward from the camera to load in each axis.
 #[derive(Resource)]
@@ -120,6 +121,14 @@ pub struct SharedTerrainGen(pub Arc<UnifiedTerrainGenerator>);
 /// Thread-safe handle to the subdivision config for async tasks.
 #[derive(Resource, Clone)]
 pub struct SharedSubdivConfig(pub Arc<SubdivisionConfig>);
+
+/// Optional GPU noise compute for terrain surface-radius evaluation.
+///
+/// When present, the chunk dispatch system batches column (lon, lat) pairs
+/// and evaluates them on the GPU, freeing the CPU thread pool for meshing,
+/// underground voxel fill, and physics.
+#[derive(Resource)]
+pub struct SharedGpuNoise(pub Option<GpuNoiseCompute>);
 
 /// Maps chunk coordinates to their ECS entity for O(1) lookup.
 #[derive(Resource, Default)]
@@ -263,6 +272,7 @@ pub fn update_chunks(
     radius: Res<ChunkLoadRadius>,
     shared_gen: Res<SharedTerrainGen>,
     shared_subdiv: Res<SharedSubdivConfig>,
+    gpu_noise: Res<SharedGpuNoise>,
     planet: Res<PlanetConfig>,
     camera_q: Query<&Transform, With<FpsCamera>>,
     chunk_props_q: Query<&crate::procgen::props::ChunkProps>,
@@ -335,16 +345,35 @@ pub fn update_chunks(
     // Dispatch async terrain generation for the closest chunks.
     let pool = AsyncComputeTaskPool::get();
 
-    for coord in to_generate
+    let batch: Vec<ChunkCoord> = to_generate
         .into_iter()
         .take(MAX_TERRAIN_DISPATCHES_PER_FRAME)
-    {
+        .collect();
+
+    // GPU batch: compute surface radii for all columns if GPU noise is available
+    // and we're in spherical mode.
+    let gpu_height_map: HashMap<ChunkCoord, Vec<f32>> = if let Some(ref gpu) = gpu_noise.0 {
+        if matches!(planet.mode, TerrainMode::Spherical) {
+            gpu_batch_surface_radii(gpu, &planet, &batch)
+        } else {
+            HashMap::new()
+        }
+    } else {
+        HashMap::new()
+    };
+
+    for coord in batch {
         let terrain_gen = shared_gen.0.clone();
         let subdiv = shared_subdiv.0.clone();
+        let heights = gpu_height_map.get(&coord).cloned();
 
         let task = pool.spawn(async move {
             let mut chunk = Chunk::new_empty(coord);
-            let biome_data = terrain_gen.generate_chunk(&mut chunk);
+            let biome_data = if let Some(h) = heights {
+                terrain_gen.generate_chunk_with_gpu_heights(&mut chunk, &h)
+            } else {
+                terrain_gen.generate_chunk(&mut chunk)
+            };
             let analysis = analyze_chunk(&chunk, &subdiv);
             let octree = build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis);
             TerrainGenResult {
@@ -358,6 +387,48 @@ pub fn update_chunks(
         commands.spawn(TerrainGenTask(task));
         pending.insert(coord);
     }
+}
+
+/// Batch-compute surface radii on the GPU for a set of chunks.
+///
+/// For each chunk, computes (lon, lat) for every column, dispatches a single
+/// GPU compute call, and splits the results back by chunk.
+fn gpu_batch_surface_radii(
+    gpu: &GpuNoiseCompute,
+    planet: &PlanetConfig,
+    chunks: &[ChunkCoord],
+) -> HashMap<ChunkCoord, Vec<f32>> {
+    if chunks.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut all_columns: Vec<[f32; 2]> = Vec::with_capacity(chunks.len() * CHUNK_SIZE * CHUNK_SIZE);
+    let mut chunk_ranges: Vec<(ChunkCoord, usize, usize)> = Vec::with_capacity(chunks.len());
+
+    for &coord in chunks {
+        let origin = coord.world_origin();
+        let mid_y = (origin.y + CHUNK_SIZE as i32 / 2) as f64;
+        let start = all_columns.len();
+
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                let wx = (origin.x + lx as i32) as f64;
+                let wz = (origin.z + lz as i32) as f64;
+                let pos = bevy::math::DVec3::new(wx, mid_y, wz);
+                let (lat, lon) = planet.lat_lon(pos);
+                all_columns.push([lon as f32, lat as f32]);
+            }
+        }
+
+        chunk_ranges.push((coord, start, all_columns.len()));
+    }
+
+    let all_heights = gpu.evaluate_batch(&all_columns);
+
+    chunk_ranges
+        .into_iter()
+        .map(|(coord, start, end)| (coord, all_heights[start..end].to_vec()))
+        .collect()
 }
 
 /// System: collects completed async terrain generation tasks and spawns the
@@ -498,6 +569,24 @@ impl Plugin for ChunkManagerPlugin {
             .cloned()
             .unwrap_or_default();
 
+        // Try to initialize GPU noise compute for spherical terrain.
+        let gpu_noise = if matches!(planet.mode, TerrainMode::Spherical) {
+            planet.noise.as_ref().and_then(|noise_cfg| {
+                crate::gpu::GpuContext::try_new().map(|ctx| {
+                    info!("GPU noise compute initialized — surface noise offloaded to GPU");
+                    GpuNoiseCompute::new(
+                        ctx,
+                        noise_cfg,
+                        planet.seed,
+                        planet.mean_radius,
+                        planet.height_scale,
+                    )
+                })
+            })
+        } else {
+            None
+        };
+
         app.init_resource::<ChunkMap>()
             .init_resource::<ChunkLoadRadius>()
             .init_resource::<ViewDistanceState>()
@@ -507,6 +596,7 @@ impl Plugin for ChunkManagerPlugin {
                 UnifiedTerrainGenerator::from_planet_config(&planet),
             )))
             .insert_resource(SharedSubdivConfig(Arc::new(subdiv)))
+            .insert_resource(SharedGpuNoise(gpu_noise))
             .add_systems(
                 Update,
                 (

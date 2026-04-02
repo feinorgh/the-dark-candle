@@ -369,7 +369,7 @@ mod tests {
 
     /// Attempt to create a GPU context; returns `None` if no GPU is available.
     fn try_gpu_context() -> Option<GpuContext> {
-        std::panic::catch_unwind(GpuContext::new).ok()
+        GpuContext::try_new()
     }
 
     fn default_params(count: u32) -> ParticleParams {

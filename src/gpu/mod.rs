@@ -6,10 +6,12 @@
 //! over the single-threaded CPU path.
 
 mod context;
+pub mod noise_compute;
 pub mod particles;
 mod renderer;
 pub mod terrain_projection;
 
 pub use context::GpuContext;
+pub use noise_compute::GpuNoiseCompute;
 pub use renderer::{GpuRenderParams, GpuRenderer};
 pub use terrain_projection::{GpuProjectionRenderer, render_animation_gpu, render_projection_gpu};

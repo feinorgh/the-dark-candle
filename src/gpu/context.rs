@@ -16,11 +16,26 @@ impl Default for GpuContext {
 
 impl GpuContext {
     /// Request a GPU device suitable for compute work (no surface needed).
+    ///
+    /// # Panics
+    ///
+    /// Panics if no GPU adapter is found or device creation fails.
     pub fn new() -> Self {
         pollster::block_on(Self::new_async())
     }
 
+    /// Try to create a GPU context, returning `None` if no GPU is available.
+    pub fn try_new() -> Option<Self> {
+        pollster::block_on(Self::try_new_async())
+    }
+
     async fn new_async() -> Self {
+        Self::try_new_async()
+            .await
+            .expect("No suitable GPU adapter found")
+    }
+
+    async fn try_new_async() -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
@@ -33,7 +48,7 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("No suitable GPU adapter found");
+            .ok()?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -51,9 +66,9 @@ impl GpuContext {
                 ..Default::default()
             })
             .await
-            .expect("Failed to create GPU device");
+            .ok()?;
 
-        Self { device, queue }
+        Some(Self { device, queue })
     }
 
     /// Create a storage buffer initialized with data.

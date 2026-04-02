@@ -639,6 +639,40 @@ impl SphericalTerrainGenerator {
             }
         }
 
+        self.fill_chunk_from_surface_cache(chunk, &surface_cache);
+    }
+
+    /// Fill a chunk using GPU-precomputed surface radii.
+    ///
+    /// `gpu_heights` must contain exactly `CHUNK_SIZE × CHUNK_SIZE` values
+    /// (1024 for 32×32), laid out row-major as `[lz * CHUNK_SIZE + lx]`.
+    /// Each value is a surface radius in meters (f32 from GPU, upcast to f64).
+    pub fn generate_chunk_with_gpu_heights(&self, chunk: &mut Chunk, gpu_heights: &[f32]) {
+        debug_assert_eq!(
+            gpu_heights.len(),
+            CHUNK_SIZE * CHUNK_SIZE,
+            "gpu_heights must have CHUNK_SIZE² entries"
+        );
+
+        let mut surface_cache = [[0.0_f64; CHUNK_SIZE]; CHUNK_SIZE];
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                surface_cache[lz][lx] = gpu_heights[lz * CHUNK_SIZE + lx] as f64;
+            }
+        }
+
+        self.fill_chunk_from_surface_cache(chunk, &surface_cache);
+    }
+
+    /// Shared voxel-fill logic: given a precomputed surface_cache, classify
+    /// every voxel and assign material + density.
+    fn fill_chunk_from_surface_cache(
+        &self,
+        chunk: &mut Chunk,
+        surface_cache: &[[f64; CHUNK_SIZE]; CHUNK_SIZE],
+    ) {
+        let origin = chunk.coord.world_origin();
+
         for (lz, cache_row) in surface_cache.iter().enumerate() {
             for ly in 0..CHUNK_SIZE {
                 for (lx, &surface_r) in cache_row.iter().enumerate() {
@@ -834,6 +868,23 @@ impl UnifiedTerrainGenerator {
                 let biome = g.generate_chunk(chunk);
                 Some(biome)
             }
+        }
+    }
+
+    /// Fill a chunk using GPU-precomputed surface radii (spherical mode only).
+    ///
+    /// For non-spherical modes, falls back to the standard CPU path.
+    pub fn generate_chunk_with_gpu_heights(
+        &self,
+        chunk: &mut Chunk,
+        gpu_heights: &[f32],
+    ) -> Option<super::planetary_sampler::ChunkBiomeData> {
+        match self {
+            Self::Spherical(g) => {
+                g.generate_chunk_with_gpu_heights(chunk, gpu_heights);
+                None
+            }
+            _ => self.generate_chunk(chunk),
         }
     }
 

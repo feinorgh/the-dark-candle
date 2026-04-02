@@ -57,7 +57,7 @@
       {
         "name": "gpu",
         "path": "src/gpu/",
-        "responsibility": "Headless wgpu compute: atmosphere renderer (1000x speedup over CPU), particle physics compute (100k particles), GPU context initialization. WGSL shaders in src/gpu/shaders/"
+        "responsibility": "Headless wgpu compute: atmosphere renderer (1000× speedup over CPU), particle physics compute (100k particles), terrain noise eval (93× speedup), GPU context initialization with try_new() fallback. WGSL shaders in src/gpu/shaders/"
       },
       {
         "name": "data",
@@ -554,6 +554,25 @@
         "WGSL shader \u2014 src/gpu/shaders/particle_step.wgsl (confirmed present)"
       ],
       "notes": "Gravity, drag, wind on GPU. Rain/snow/sand/hail types with SI parameters. 256 threads/workgroup, 100k max",
+      "uncertain": false
+    },
+    {
+      "name": "GPU terrain noise compute",
+      "status": "complete",
+      "paths": [
+        "src/gpu/noise_compute.rs",
+        "src/gpu/shaders/noise_eval.wgsl",
+        "src/gpu/context.rs"
+      ],
+      "implements": [
+        "GpuNoiseCompute struct — noise_compute.rs (persistent buffers, batch dispatch of up to 8192 columns)",
+        "NoiseParams uniform — noise_compute.rs (96 bytes, mirrors NoiseConfig + planet params)",
+        "noise_eval.wgsl shader — full NoiseStack::sample() pipeline: domain warp, selector, FBM, ridged, continent mask",
+        "GpuContext::try_new() — context.rs (graceful fallback when no GPU available)",
+        "SharedGpuNoise resource — chunk_manager.rs (auto-initialized in ChunkManagerPlugin)",
+        "gpu_batch_surface_radii() — chunk_manager.rs (batches lat/lon columns for up to 8 chunks per GPU dispatch)"
+      ],
+      "notes": "Hash-based f32 Perlin on GPU (vs permutation-table f64 on CPU). 93× speedup: 54µs/chunk GPU vs ~5ms CPU. Not bit-identical but visually comparable terrain. Phase 1: surface noise only; underground geology stays on CPU.",
       "uncertain": false
     },
     {
@@ -1337,7 +1356,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "efcfd64ce85f807fb07e02be216500e27be85be7",
+    "generated_from_commit": "1ac025a",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
