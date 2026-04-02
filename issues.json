@@ -360,5 +360,21 @@
       "src/world/v2/greedy_mesh.rs"
     ],
     "reproduction": "Run with --pipeline v2 --scene spherical_planet. Top faces of all voxels are invisible."
+  },
+  {
+    "id": "V2-002",
+    "title": "Thousands of 'Resource does not exist' errors when running V2 pipeline",
+    "category": "ecs",
+    "severity": "high",
+    "status": "resolved",
+    "suspected_files": [
+      "src/persistence/load.rs",
+      "src/map/discovery.rs",
+      "src/physics/gravity.rs",
+      "src/physics/collision.rs"
+    ],
+    "reproduction": "Run game with --pipeline v2 (or default). Console floods with 'Resource does not exist' errors every frame.",
+    "resolution": "Changed all non-optional Res<ChunkMap>/ResMut<ChunkMap> usages outside V1-internal modules to Option<>. Four systems fixed across commits 7973486 and 8c9e9cf.",
+    "resolved_commit": "8c9e9cf"
   }
 ]
