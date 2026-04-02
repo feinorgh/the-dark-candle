@@ -1306,6 +1306,14 @@
         "src/world/v2/terrain_gen.rs",
         "src/world/v2/chunk_manager.rs"
       ]
+    },
+    {
+      "name": "V2 Cubed-Sphere Pipeline",
+      "status": "complete",
+      "files": [
+        "src/world/v2/"
+      ],
+      "notes": "Default pipeline. Greedy mesh + terrain-gen ground collision."
     }
   ],
   "tech_debt": [
@@ -1368,7 +1376,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "b0a37ce",
+    "generated_from_commit": "fca6dcd",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
