@@ -91,10 +91,13 @@ pub fn aabb_intersects_terrain(
 /// This prevents entities from passing through terrain while allowing
 /// sliding along surfaces.
 pub fn resolve_collisions(
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     mut bodies: Query<(&Collider, &mut super::gravity::PhysicsBody, &mut Transform)>,
 ) {
+    let Some(chunk_map) = chunk_map else {
+        return;
+    };
     for (collider, mut body, mut transform) in &mut bodies {
         let pos = transform.translation;
 

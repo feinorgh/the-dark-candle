@@ -30,11 +30,14 @@ pub struct DiscoveredColumns {
 /// Runs a full scan on the first invocation (catching chunks generated during
 /// the Loading state), then only rescans when `ChunkMap` changes.
 pub fn track_discoveries(
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Option<Res<ChunkMap>>,
     biome_q: Query<(&ChunkCoord, Option<&ChunkBiomeData>)>,
     mut discovered: ResMut<DiscoveredColumns>,
     mut initial_scan_done: Local<bool>,
 ) {
+    let Some(chunk_map) = chunk_map else {
+        return;
+    };
     if *initial_scan_done && !chunk_map.is_changed() {
         return;
     }

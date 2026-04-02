@@ -163,7 +163,7 @@ const DEFAULT_GROUND_FRICTION: f32 = 0.6;
 #[allow(clippy::type_complexity)]
 pub fn apply_forces(
     time: Res<Time>,
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     planet: Res<PlanetConfig>,
     mut bodies: Query<(
@@ -281,43 +281,46 @@ pub fn apply_forces(
         // Integrate velocity
         transform.translation += body.velocity * dt;
 
-        // Ground collision
-        if is_spherical {
-            if let Some(ground_r) = ground_height_radial(transform.translation, &chunk_map, &chunks)
-            {
-                let entity_r = transform.translation.length();
-                let feet_r = entity_r - body.foot_offset;
-                if feet_r <= ground_r {
-                    // Push entity outward to stand on surface
-                    let surface_normal = local_up;
-                    let correction = ground_r + body.foot_offset - entity_r;
-                    transform.translation += surface_normal * correction;
+        // Ground collision (requires V1 chunk data)
+        if let Some(ref chunk_map) = chunk_map {
+            if is_spherical {
+                if let Some(ground_r) =
+                    ground_height_radial(transform.translation, chunk_map, &chunks)
+                {
+                    let entity_r = transform.translation.length();
+                    let feet_r = entity_r - body.foot_offset;
+                    if feet_r <= ground_r {
+                        // Push entity outward to stand on surface
+                        let surface_normal = local_up;
+                        let correction = ground_r + body.foot_offset - entity_r;
+                        transform.translation += surface_normal * correction;
 
-                    // Zero the velocity component toward the surface
-                    let v_toward_ground = body.velocity.dot(local_down);
-                    if v_toward_ground > 0.0 {
-                        body.velocity -= local_down * v_toward_ground;
+                        // Zero the velocity component toward the surface
+                        let v_toward_ground = body.velocity.dot(local_down);
+                        if v_toward_ground > 0.0 {
+                            body.velocity -= local_down * v_toward_ground;
+                        }
+                        body.grounded = true;
+                    } else {
+                        body.grounded = false;
+                    }
+                }
+            } else if let Some(ground_y) = ground_height_at(
+                transform.translation.x,
+                transform.translation.z,
+                chunk_map,
+                &chunks,
+            ) {
+                let feet_y = transform.translation.y - body.foot_offset;
+                if feet_y <= ground_y {
+                    transform.translation.y = ground_y + body.foot_offset;
+                    if body.velocity.y < 0.0 {
+                        body.velocity.y = 0.0;
                     }
                     body.grounded = true;
                 } else {
                     body.grounded = false;
                 }
-            }
-        } else if let Some(ground_y) = ground_height_at(
-            transform.translation.x,
-            transform.translation.z,
-            &chunk_map,
-            &chunks,
-        ) {
-            let feet_y = transform.translation.y - body.foot_offset;
-            if feet_y <= ground_y {
-                transform.translation.y = ground_y + body.foot_offset;
-                if body.velocity.y < 0.0 {
-                    body.velocity.y = 0.0;
-                }
-                body.grounded = true;
-            } else {
-                body.grounded = false;
             }
         }
     }
