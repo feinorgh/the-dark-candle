@@ -57,7 +57,7 @@
       {
         "name": "gpu",
         "path": "src/gpu/",
-        "responsibility": "Headless wgpu compute: atmosphere renderer (1000× speedup over CPU), particle physics compute (100k particles), terrain noise eval (93× speedup), GPU context initialization with try_new() fallback. WGSL shaders in src/gpu/shaders/"
+        "responsibility": "Headless wgpu compute: atmosphere renderer (1000\u00d7 speedup over CPU), particle physics compute (100k particles), terrain noise eval (93\u00d7 speedup), GPU context initialization with try_new() fallback. WGSL shaders in src/gpu/shaders/"
       },
       {
         "name": "data",
@@ -565,14 +565,14 @@
         "src/gpu/context.rs"
       ],
       "implements": [
-        "GpuNoiseCompute struct — noise_compute.rs (persistent buffers, batch dispatch of up to 8192 columns)",
-        "NoiseParams uniform — noise_compute.rs (96 bytes, mirrors NoiseConfig + planet params)",
-        "noise_eval.wgsl shader — full NoiseStack::sample() pipeline: domain warp, selector, FBM, ridged, continent mask",
-        "GpuContext::try_new() — context.rs (graceful fallback when no GPU available)",
-        "SharedGpuNoise resource — chunk_manager.rs (auto-initialized in ChunkManagerPlugin)",
-        "gpu_batch_surface_radii() — chunk_manager.rs (batches lat/lon columns for up to 8 chunks per GPU dispatch)"
+        "GpuNoiseCompute struct \u2014 noise_compute.rs (persistent buffers, batch dispatch of up to 8192 columns)",
+        "NoiseParams uniform \u2014 noise_compute.rs (96 bytes, mirrors NoiseConfig + planet params)",
+        "noise_eval.wgsl shader \u2014 full NoiseStack::sample() pipeline: domain warp, selector, FBM, ridged, continent mask",
+        "GpuContext::try_new() \u2014 context.rs (graceful fallback when no GPU available)",
+        "SharedGpuNoise resource \u2014 chunk_manager.rs (auto-initialized in ChunkManagerPlugin)",
+        "gpu_batch_surface_radii() \u2014 chunk_manager.rs (batches lat/lon columns for up to 8 chunks per GPU dispatch)"
       ],
-      "notes": "Hash-based f32 Perlin on GPU (vs permutation-table f64 on CPU). 93× speedup: 54µs/chunk GPU vs ~5ms CPU. Not bit-identical but visually comparable terrain. Phase 1: surface noise only; underground geology stays on CPU.",
+      "notes": "Hash-based f32 Perlin on GPU (vs permutation-table f64 on CPU). 93\u00d7 speedup: 54\u00b5s/chunk GPU vs ~5ms CPU. Not bit-identical but visually comparable terrain. Phase 1: surface noise only; underground geology stays on CPU.",
       "uncertain": false
     },
     {
@@ -1356,7 +1356,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "1ac025a",
+    "generated_from_commit": "9455783",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

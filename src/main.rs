@@ -73,6 +73,18 @@ struct Cli {
     /// Hydraulic erosion: off, light, moderate, heavy.
     #[arg(long)]
     hydraulic_erosion: Option<String>,
+
+    /// Disable all terrain noise, producing a perfectly smooth surface.
+    /// Useful for debugging rendering, camera, and chunk logic without
+    /// waiting for terrain generation.
+    #[arg(long)]
+    no_noise: bool,
+
+    /// Planet radius in meters.  Sets both mean_radius and sea_level_radius.
+    /// Default for spherical_planet preset: 32000 (32 km).
+    /// Smaller values (e.g. 1000) produce fewer chunks and faster startup.
+    #[arg(long)]
+    radius: Option<f64>,
 }
 
 fn main() {
@@ -205,7 +217,9 @@ fn apply_cli_overrides(cli: &Cli, app: &mut App) {
             || cli.height_scale.is_some()
             || cli.caves.is_some()
             || cli.erosion.is_some()
-            || cli.hydraulic_erosion.is_some();
+            || cli.hydraulic_erosion.is_some()
+            || cli.no_noise
+            || cli.radius.is_some();
         if has_overrides {
             // Insert a default config so overrides can apply.
             app.insert_resource(PlanetConfig::default());
@@ -222,6 +236,19 @@ fn apply_cli_overrides(cli: &Cli, app: &mut App) {
 
     if let Some(hs) = cli.height_scale {
         config.height_scale = hs;
+    }
+
+    if let Some(r) = cli.radius {
+        config.mean_radius = r;
+        config.sea_level_radius = r;
+    }
+
+    if cli.no_noise {
+        config.noise = None;
+        config.height_scale = 0.0;
+        config.erosion = None;
+        config.hydraulic_erosion = None;
+        info!("Noise disabled: terrain will be a smooth surface at mean_radius");
     }
 
     // Terrain detail: adjust FBM/ridged octaves.

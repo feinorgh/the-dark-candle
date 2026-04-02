@@ -130,6 +130,15 @@ pub struct SharedSubdivConfig(pub Arc<SubdivisionConfig>);
 #[derive(Resource)]
 pub struct SharedGpuNoise(pub Option<GpuNoiseCompute>);
 
+/// Tracks terrain generation progress for user-visible logging.
+#[derive(Resource, Default)]
+pub(crate) struct ChunkGenProgress {
+    /// Total chunks generated since startup.
+    completed: usize,
+    /// Last completed count at which we logged.
+    last_logged: usize,
+}
+
 /// Maps chunk coordinates to their ECS entity for O(1) lookup.
 #[derive(Resource, Default)]
 pub struct ChunkMap {
@@ -433,10 +442,11 @@ fn gpu_batch_surface_radii(
 
 /// System: collects completed async terrain generation tasks and spawns the
 /// chunk entities with all required components.
-pub fn collect_terrain_results(
+pub(crate) fn collect_terrain_results(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
     mut pending: ResMut<PendingChunks>,
+    mut progress: ResMut<ChunkGenProgress>,
     mut task_q: Query<(Entity, &mut TerrainGenTask)>,
     mut chunk_q: Query<&mut Chunk>,
 ) {
@@ -499,6 +509,20 @@ pub fn collect_terrain_results(
         }
         let entity = entity_cmds.id();
         chunk_map.insert(result.coord, entity);
+        progress.completed += 1;
+    }
+
+    // Log progress periodically so the user can see terrain generation isn't stuck.
+    const LOG_INTERVAL: usize = 20;
+    let pending_count = pending.len();
+    if progress.completed > progress.last_logged
+        && (progress.completed - progress.last_logged >= LOG_INTERVAL || pending_count == 0)
+    {
+        info!(
+            "Terrain: {} chunks generated ({} pending)",
+            progress.completed, pending_count,
+        );
+        progress.last_logged = progress.completed;
     }
 }
 
@@ -563,6 +587,19 @@ impl Plugin for ChunkManagerPlugin {
             .cloned()
             .unwrap_or_default();
         let generator = UnifiedTerrainGenerator::from_planet_config(&planet);
+
+        info!(
+            "Terrain config: mode={:?}, radius={:.0}m, height_scale={:.1}, noise={}, seed={}",
+            planet.mode,
+            planet.mean_radius,
+            planet.height_scale,
+            if planet.noise.is_some() {
+                "advanced"
+            } else {
+                "legacy"
+            },
+            planet.seed,
+        );
         let subdiv = app
             .world()
             .get_resource::<SubdivisionConfig>()
@@ -597,6 +634,7 @@ impl Plugin for ChunkManagerPlugin {
             )))
             .insert_resource(SharedSubdivConfig(Arc::new(subdiv)))
             .insert_resource(SharedGpuNoise(gpu_noise))
+            .init_resource::<ChunkGenProgress>()
             .add_systems(
                 Update,
                 (
