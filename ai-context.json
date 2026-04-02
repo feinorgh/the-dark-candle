@@ -1294,6 +1294,18 @@
         "assets/data/planet_config.ron"
       ],
       "notes": "PlanetConfigHandle loads planet_config.ron via AssetServer. apply_planet_config_from_asset() replaces the resource and rebuilds SharedTerrainGen when loaded. Default RON specifies Spherical mode."
+    },
+    {
+      "name": "V2 cubed-sphere rendering pipeline",
+      "status": "in_progress",
+      "description": "New rendering pipeline using cubed-sphere coordinates, local tangent plane chunks, and greedy meshing. Switchable via --pipeline v2 CLI flag.",
+      "paths": [
+        "src/world/v2/mod.rs",
+        "src/world/v2/cubed_sphere.rs",
+        "src/world/v2/greedy_mesh.rs",
+        "src/world/v2/terrain_gen.rs",
+        "src/world/v2/chunk_manager.rs"
+      ]
     }
   ],
   "tech_debt": [
@@ -1356,7 +1368,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "7b9ff49",
+    "generated_from_commit": "edd9265",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
