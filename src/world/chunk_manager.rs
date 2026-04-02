@@ -18,6 +18,7 @@ use super::chunk::{CHUNK_SIZE, Chunk, ChunkCoord, ChunkOctree};
 use super::planet::{PlanetConfig, TerrainMode};
 use super::refinement::{SubdivisionConfig, analyze_chunk, build_refined_octree};
 use super::terrain::UnifiedTerrainGenerator;
+use super::voxel_access::flat_to_octree;
 use crate::camera::FpsCamera;
 use crate::chemistry::runtime::ChunkActivity;
 use crate::gpu::noise_compute::GpuNoiseCompute;
@@ -62,7 +63,7 @@ const SHRINK_THRESHOLD: f32 = -0.05;
 const GROW_THRESHOLD: f32 = 0.30;
 
 /// Maximum number of terrain generation tasks dispatched per frame.
-const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 8;
+const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 32;
 
 /// Tracks consecutive frames for hysteresis-based view distance adaptation.
 #[derive(Resource, Debug, Default)]
@@ -383,8 +384,15 @@ pub fn update_chunks(
             } else {
                 terrain_gen.generate_chunk(&mut chunk)
             };
-            let analysis = analyze_chunk(&chunk, &subdiv);
-            let octree = build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis);
+
+            // Skip expensive refinement analysis for uniform chunks (all air
+            // or all solid with one material) — the octree collapses trivially.
+            let octree = if chunk.is_empty() || chunk.is_uniform() {
+                flat_to_octree(chunk.voxels(), CHUNK_SIZE)
+            } else {
+                let analysis = analyze_chunk(&chunk, &subdiv);
+                build_refined_octree(chunk.voxels(), CHUNK_SIZE, &analysis)
+            };
             TerrainGenResult {
                 coord,
                 chunk,

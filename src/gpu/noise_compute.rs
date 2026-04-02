@@ -16,8 +16,8 @@ use crate::world::noise::NoiseConfig;
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-/// Maximum columns per GPU dispatch (8 chunks × 32 × 32).
-pub const MAX_COLUMNS: usize = 8192;
+/// Maximum columns per GPU dispatch (32 chunks × 32 × 32).
+pub const MAX_COLUMNS: usize = 32_768;
 
 /// Bytes per column input (vec2<f32> = 8 bytes).
 const COLUMN_SIZE: usize = 8;

@@ -184,6 +184,12 @@ impl Chunk {
         self.voxels.iter().all(|v| v.is_solid())
     }
 
+    /// Check if all voxels share the same material (air or otherwise).
+    pub fn is_uniform(&self) -> bool {
+        let first = self.voxels[0].material;
+        self.voxels.iter().all(|v| v.material == first)
+    }
+
     /// Fill the entire chunk with a material.
     pub fn fill(&mut self, material: MaterialId) {
         self.dirty = true;

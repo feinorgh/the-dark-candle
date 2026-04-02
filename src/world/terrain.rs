@@ -587,6 +587,11 @@ impl SphericalTerrainGenerator {
     /// Returns the radial distance from planet center to the terrain surface
     /// at that angular position.
     pub fn sample_surface_radius(&self, lat: f64, lon: f64) -> f64 {
+        // Fast path: no displacement when height_scale is zero.
+        if self.planet.height_scale == 0.0 {
+            return self.planet.mean_radius;
+        }
+
         let combined = if let Some(ref stack) = self.noise_stack {
             stack.sample(lon, lat)
         } else {
@@ -672,6 +677,53 @@ impl SphericalTerrainGenerator {
         surface_cache: &[[f64; CHUNK_SIZE]; CHUNK_SIZE],
     ) {
         let origin = chunk.coord.world_origin();
+
+        // Chunk-level early exit: if the entire chunk is above or below all
+        // surface radii, we can skip per-voxel work entirely.
+        let half = CHUNK_SIZE as f64 / 2.0;
+        let center = bevy::math::DVec3::new(
+            origin.x as f64 + half,
+            origin.y as f64 + half,
+            origin.z as f64 + half,
+        );
+        let center_r = center.length();
+        // Half-diagonal of the cube: sqrt(3) * half ≈ 27.7 m for CHUNK_SIZE=32
+        let half_diag = half * 3.0_f64.sqrt();
+
+        let chunk_min_r = (center_r - half_diag).max(0.0);
+        let chunk_max_r = center_r + half_diag;
+
+        // Find the extremes across all cached surface radii.
+        let mut min_surface = f64::MAX;
+        let mut max_surface = f64::MIN;
+        for row in surface_cache {
+            for &sr in row {
+                if sr < min_surface {
+                    min_surface = sr;
+                }
+                if sr > max_surface {
+                    max_surface = sr;
+                }
+            }
+        }
+        let sea = self.planet.sea_level_radius;
+
+        // Entirely above terrain AND above sea level → all air.
+        if chunk_min_r > max_surface && chunk_min_r > sea {
+            // Chunk already starts as all-air from new_empty(); nothing to do.
+            return;
+        }
+
+        // Entirely below terrain surface → simplified solid fill (no caves
+        // check needed if also below the cave crust cutoff).
+        let cave_floor = self.planet.mean_radius - 4000.0;
+        if chunk_max_r < min_surface && chunk_max_r < cave_floor {
+            chunk.fill(MaterialId::STONE);
+            for v in chunk.voxels_mut() {
+                v.density = 1.0;
+            }
+            return;
+        }
 
         for (lz, cache_row) in surface_cache.iter().enumerate() {
             for ly in 0..CHUNK_SIZE {
