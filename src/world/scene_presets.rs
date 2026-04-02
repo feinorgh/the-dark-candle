@@ -184,7 +184,18 @@ fn spherical_planet_preset() -> PlanetConfig {
         cave_freq: 0.03,
         cave_threshold: -0.35,
         soil_depth: 4.0,
-        noise: None,
+        noise: Some(NoiseConfig {
+            fbm_octaves: 6,
+            fbm_base_freq: 0.005,
+            ridged_octaves: 5,
+            ridged_base_freq: 0.008,
+            selector_freq: 0.002,
+            selector_thresholds: (-0.3, 0.2),
+            warp_strength: 60.0,
+            micro_freq: 0.15,
+            micro_amplitude: 3.0,
+            ..Default::default()
+        }),
         erosion: None,
         hydraulic_erosion: None,
     }

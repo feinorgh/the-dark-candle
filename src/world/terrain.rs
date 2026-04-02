@@ -715,9 +715,9 @@ impl SphericalTerrainGenerator {
         }
 
         // Entirely below terrain surface → simplified solid fill (no caves
-        // check needed if also below the cave crust cutoff).
-        let cave_floor = self.planet.mean_radius - 4000.0;
-        if chunk_max_r < min_surface && chunk_max_r < cave_floor {
+        // check needed if also below the cave depth cutoff, 200 m).
+        let cave_floor_r = min_surface - 200.0;
+        if chunk_max_r < min_surface && chunk_max_r < cave_floor_r {
             chunk.fill(MaterialId::STONE);
             for v in chunk.voxels_mut() {
                 v.density = 1.0;
@@ -805,8 +805,12 @@ impl SphericalTerrainGenerator {
                 .unwrap_or(MaterialId::STONE)
         };
 
-        // Cave carving (only within crust, not too close to surface)
-        if depth_below_surface > 2.0 && r > self.planet.mean_radius - 4000.0 {
+        // Cave carving (within the crust, not too close to surface).
+        // Limit cave evaluation to 200 m below the local surface — deeper
+        // voxels are unreachable from the loading sphere and don't need the
+        // expensive 3D Perlin checks.
+        let cave_max_depth = 200.0;
+        if depth_below_surface > 2.0 && depth_below_surface < cave_max_depth {
             let is_cave = if use_advanced {
                 is_multi_scale_cave(
                     &self.geo_perlin,

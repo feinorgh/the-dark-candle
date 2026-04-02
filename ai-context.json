@@ -1356,7 +1356,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "4d189af",
+    "generated_from_commit": "7b9ff49",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1384,7 +1384,8 @@
       "Atmospheric sky rendering connected to in-game camera via Bevy 0.18 Atmosphere component. Distance fog with time-of-day color. AmbientLight reduced since atmosphere provides IBL.",
       "In-game map system: local discovery map + global planet map. M key toggle. Discovery persisted in saves (SAVE_VERSION bumped to 4).",
       "issues.json added: structured issue tracker for AI agents. Check at session start, update status as you work, add new issues you discover.",
-      "LOD mesh vertex scaling fix: generate_mesh_generic now takes a scale parameter so LOD meshes span full CHUNK_SIZE instead of effective_size."
+      "LOD mesh vertex scaling fix: generate_mesh_generic now takes a scale parameter so LOD meshes span full CHUNK_SIZE instead of effective_size.",
+      "Chunk performance overhaul: shell hysteresis (snap to chunk center), shell cap at load radius, pending cap (64), collection rate balanced (32/frame), GPU noise enabled for spherical planet, cave depth capped at 200m."
     ],
     "known_issues_file": "issues.json"
   }

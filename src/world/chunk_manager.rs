@@ -65,6 +65,10 @@ const GROW_THRESHOLD: f32 = 0.30;
 /// Maximum number of terrain generation tasks dispatched per frame.
 const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 32;
 
+/// Maximum number of chunks allowed in the pending queue at once.
+/// Limits thread-pool saturation when many chunks enter the desired set.
+const MAX_PENDING_CHUNKS: usize = 64;
+
 /// Tracks consecutive frames for hysteresis-based view distance adaptation.
 #[derive(Resource, Debug, Default)]
 pub struct ViewDistanceState {
@@ -232,12 +236,18 @@ pub fn desired_chunks_spherical(
     let h = radius.horizontal;
     let h_sq = (h * h) as f32;
 
-    // Center the shell on the camera's current radial distance so the loaded
-    // region tracks the local terrain surface, not the mean radius.
-    let cam_r = world_pos.length() as f64;
-    // Use at least the configured depth/height, but widen if height_scale is
-    // large to ensure we capture nearby terrain variation.
-    let extra = planet.height_scale * 0.05; // 5% of height_scale as margin
+    // Snap the shell center to the camera's chunk center so the desired set
+    // only changes when crossing a chunk boundary (prevents per-meter churn).
+    let cam_chunk_center = Vec3::new(
+        (center_cx as f32 + 0.5) * cs,
+        (center_cy as f32 + 0.5) * cs,
+        (center_cz as f32 + 0.5) * cs,
+    );
+    let cam_r = cam_chunk_center.length() as f64;
+    // Cap the height_scale margin at the loading sphere extent so the shell
+    // never grows wider than the sphere (which would make filtering useless).
+    let max_extra = (h as f64) * (CHUNK_SIZE as f64);
+    let extra = (planet.height_scale * 0.05).min(max_extra);
     let depth = radius.shell_depth.max(extra);
     let height = radius.shell_height.max(extra);
     let shell_min = (cam_r - depth) as f32;
@@ -363,11 +373,14 @@ pub fn update_chunks(
     });
 
     // Dispatch async terrain generation for the closest chunks.
+    // Respect both per-frame dispatch limit and global pending cap.
     let pool = AsyncComputeTaskPool::get();
+    let pending_budget = MAX_PENDING_CHUNKS.saturating_sub(pending.len());
+    let dispatch_limit = MAX_TERRAIN_DISPATCHES_PER_FRAME.min(pending_budget);
 
     let batch: Vec<ChunkCoord> = to_generate
         .into_iter()
-        .take(MAX_TERRAIN_DISPATCHES_PER_FRAME)
+        .take(dispatch_limit)
         .collect();
 
     // GPU batch: compute surface radii for all columns if GPU noise is available
@@ -460,10 +473,10 @@ fn gpu_batch_surface_radii(
 
 /// Maximum number of terrain results collected per frame. Prevents frame
 /// spikes when many async tasks complete simultaneously.
-const MAX_TERRAIN_COLLECTS_PER_FRAME: usize = 16;
+const MAX_TERRAIN_COLLECTS_PER_FRAME: usize = 32;
 
 /// Maximum number of mesh results collected per frame.
-pub(crate) const MAX_MESH_COLLECTS_PER_FRAME: usize = 16;
+pub(crate) const MAX_MESH_COLLECTS_PER_FRAME: usize = 32;
 
 /// System: collects completed async terrain generation tasks and spawns the
 /// chunk entities with all required components.
