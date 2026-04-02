@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
 use super::chunk_manager::ChunkMap;
@@ -192,12 +193,12 @@ fn sample(chunk: &Chunk, x: i32, y: i32, z: i32) -> (f32, MaterialId, f32) {
 /// chunks at the edge of the loaded region.
 #[derive(Default, Clone)]
 pub struct NeighborVoxels {
-    pub px: Option<Vec<Voxel>>, // +X neighbor
-    pub nx: Option<Vec<Voxel>>, // −X neighbor
-    pub py: Option<Vec<Voxel>>, // +Y neighbor
-    pub ny: Option<Vec<Voxel>>, // −Y neighbor
-    pub pz: Option<Vec<Voxel>>, // +Z neighbor
-    pub nz: Option<Vec<Voxel>>, // −Z neighbor
+    pub px: Option<Arc<Vec<Voxel>>>, // +X neighbor
+    pub nx: Option<Arc<Vec<Voxel>>>, // −X neighbor
+    pub py: Option<Arc<Vec<Voxel>>>, // +Y neighbor
+    pub ny: Option<Arc<Vec<Voxel>>>, // −Y neighbor
+    pub pz: Option<Arc<Vec<Voxel>>>, // +Z neighbor
+    pub nz: Option<Arc<Vec<Voxel>>>, // −Z neighbor
 }
 
 impl NeighborVoxels {
@@ -759,7 +760,7 @@ const LOD_TRANSITION_DURATION: f32 = 0.4;
 
 /// Maximum number of mesh tasks dispatched in a single frame to limit
 /// the cost of snapshotting voxel data on the main thread.
-const MAX_MESH_DISPATCHES_PER_FRAME: usize = 8;
+const MAX_MESH_DISPATCHES_PER_FRAME: usize = 32;
 
 /// Result from an async mesh computation.
 struct ChunkMeshResult {
@@ -888,25 +889,29 @@ pub(super) fn dispatch_mesh_tasks(
         .map(|t| t.translation)
         .unwrap_or(Vec3::ZERO);
 
-    // Phase 1: snapshot all loaded chunk voxels for neighbor lookups.
-    // Must be done before borrowing p0 mutably.
-    let neighbor_snapshots: HashMap<super::chunk::ChunkCoord, Vec<Voxel>> = chunk_queries
+    // Phase 1: Arc-snapshot all loaded chunk voxels for neighbor lookups.
+    // With Arc<Vec<Voxel>>, this is O(1) per chunk (ref-count bump, no memcpy).
+    let neighbor_snapshots: HashMap<super::chunk::ChunkCoord, Arc<Vec<Voxel>>> = chunk_queries
         .p1()
         .iter()
         .map(|(coord, chunk)| (*coord, chunk.flat_snapshot()))
         .collect();
 
     let pool = AsyncComputeTaskPool::get();
-    let mut dispatched = 0usize;
 
-    // Phase 2: iterate dirty chunks, build neighbor slices, dispatch tasks.
-    for (entity, mut chunk, coord, octree, current_lod, light_map, had_mesh) in
-        chunk_queries.p0().iter_mut()
+    // Phase 2a: collect dirty/LOD-changed chunks and sort by distance to camera
+    // so the closest chunks get meshed first (faster visible terrain).
+    struct MeshCandidate {
+        entity: Entity,
+        dist_sq: f32,
+        new_level: LodLevel,
+        lod_changed: bool,
+        had_mesh: bool,
+    }
+    let mut candidates: Vec<MeshCandidate> = Vec::new();
+    for (entity, chunk, coord, _octree, current_lod, _light_map, had_mesh) in
+        chunk_queries.p0().iter()
     {
-        if dispatched >= MAX_MESH_DISPATCHES_PER_FRAME {
-            break;
-        }
-
         let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
         let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
         let lod_changed = if had_mesh {
@@ -919,15 +924,35 @@ pub(super) fn dispatch_mesh_tasks(
             continue;
         }
 
-        let step = lod_step(new_level);
+        let dist_sq = (coord.world_center() - camera_pos).length_squared();
+        candidates.push(MeshCandidate {
+            entity,
+            dist_sq,
+            new_level,
+            lod_changed,
+            had_mesh,
+        });
+    }
+    candidates.sort_unstable_by(|a, b| a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Snapshot all data the async task needs (owned copies).
+    // Phase 2b: dispatch closest N chunks for meshing.
+    let mut p0 = chunk_queries.p0();
+    for c in candidates.into_iter().take(MAX_MESH_DISPATCHES_PER_FRAME) {
+        let Ok((_, mut chunk, coord, octree, _current_lod, light_map, _had_mesh)) =
+            p0.get_mut(c.entity)
+        else {
+            continue;
+        };
+
+        let step = lod_step(c.new_level);
+
+        // Arc-clone: O(1), shares backing allocation with the world chunk.
         let voxel_snapshot = chunk.flat_snapshot();
         let chunk_coord = chunk.coord;
         let octree_snapshot = octree.map(|o| ChunkOctree(o.0.clone()));
         let color_map_clone = color_map.as_deref().cloned();
         let light_map_clone = light_map.cloned();
-        let lod_level = new_level.0;
+        let lod_level = c.new_level.0;
 
         // Collect the 6 face-neighbor snapshots to eliminate boundary seams.
         // If a neighbor is registered in ChunkMap but has no snapshot (still
@@ -935,10 +960,10 @@ pub(super) fn dispatch_mesh_tasks(
         // neighbor arrives via collect_terrain_results().
         let mut has_incomplete_neighbor = false;
         let neighbors = {
-            let snap = |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Vec<Voxel>> {
+            let snap = |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Arc<Vec<Voxel>>> {
                 let nc = super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
                 if let Some(data) = neighbor_snapshots.get(&nc) {
-                    return Some(data.clone());
+                    return Some(Arc::clone(data));
                 }
                 // Neighbor in ChunkMap but no snapshot yet → still generating.
                 if chunk_map.contains(&nc) {
@@ -981,13 +1006,12 @@ pub(super) fn dispatch_mesh_tasks(
             ChunkMeshResult { mesh, lod_level }
         });
 
-        commands.entity(entity).insert(MeshTask {
+        commands.entity(c.entity).insert(MeshTask {
             task,
-            previous_level: current_level,
-            lod_changed,
-            had_mesh,
+            previous_level: c.new_level,
+            lod_changed: c.lod_changed,
+            had_mesh: c.had_mesh,
         });
-        dispatched += 1;
     }
 }
 

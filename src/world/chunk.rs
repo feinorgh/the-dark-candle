@@ -5,6 +5,8 @@
 // chunk tracks whether its voxel data has been modified (dirty flag) so that
 // dependent systems (meshing, physics) only reprocess changed regions.
 
+use std::sync::Arc;
+
 use bevy::prelude::*;
 
 use super::octree::OctreeNode;
@@ -75,12 +77,17 @@ impl ChunkCoord {
 /// Voxels are stored in a flat array indexed as `z * CHUNK_SIZE² + y * CHUNK_SIZE + x`.
 /// The dirty flag is set whenever voxel data is modified, allowing downstream systems
 /// (meshing, simulation) to skip unchanged chunks.
+///
+/// The voxel buffer uses `Arc` for copy-on-write semantics: read-only snapshots
+/// (for meshing / physics) are O(1) reference-count bumps instead of 768 KB
+/// memcpys.  Mutations (`set`, `get_mut`, `fill`, etc.) transparently clone the
+/// buffer only when other references exist.
 #[derive(Component)]
 pub struct Chunk {
     /// The chunk's position in chunk-space coordinates.
     pub coord: ChunkCoord,
-    /// Flat array of voxels, length CHUNK_VOLUME.
-    voxels: Vec<Voxel>,
+    /// Arc-wrapped flat array of voxels, length CHUNK_VOLUME.
+    voxels: Arc<Vec<Voxel>>,
     /// Set to true when voxel data changes; consumers clear it after processing.
     dirty: bool,
 }
@@ -90,7 +97,7 @@ impl Chunk {
     pub fn new_filled(coord: ChunkCoord, material: MaterialId) -> Self {
         Self {
             coord,
-            voxels: vec![Voxel::new(material); CHUNK_VOLUME],
+            voxels: Arc::new(vec![Voxel::new(material); CHUNK_VOLUME]),
             dirty: true,
         }
     }
@@ -118,14 +125,14 @@ impl Chunk {
     #[inline]
     pub fn get_mut(&mut self, x: usize, y: usize, z: usize) -> &mut Voxel {
         self.dirty = true;
-        &mut self.voxels[Self::index(x, y, z)]
+        &mut Arc::make_mut(&mut self.voxels)[Self::index(x, y, z)]
     }
 
     /// Set a voxel at local coordinates.
     #[inline]
     pub fn set(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
         self.dirty = true;
-        self.voxels[Self::index(x, y, z)] = voxel;
+        Arc::make_mut(&mut self.voxels)[Self::index(x, y, z)] = voxel;
     }
 
     /// Set only the material at a position, preserving other voxel state.
@@ -133,7 +140,7 @@ impl Chunk {
     #[inline]
     pub fn set_material(&mut self, x: usize, y: usize, z: usize, material: MaterialId) {
         self.dirty = true;
-        let v = &mut self.voxels[Self::index(x, y, z)];
+        let v = &mut Arc::make_mut(&mut self.voxels)[Self::index(x, y, z)];
         v.material = material;
         v.density = if material.is_air() { 0.0 } else { 1.0 };
     }
@@ -166,7 +173,7 @@ impl Chunk {
     /// Mutable access to the raw voxel slice. Marks chunk as dirty.
     pub fn voxels_mut(&mut self) -> &mut [Voxel] {
         self.dirty = true;
-        &mut self.voxels
+        Arc::make_mut(&mut self.voxels).as_mut_slice()
     }
 
     /// Count non-air voxels.
@@ -193,7 +200,7 @@ impl Chunk {
     /// Fill the entire chunk with a material.
     pub fn fill(&mut self, material: MaterialId) {
         self.dirty = true;
-        for v in &mut self.voxels {
+        for v in Arc::make_mut(&mut self.voxels).iter_mut() {
             v.material = material;
         }
     }
@@ -220,22 +227,26 @@ impl Chunk {
     /// Replace the chunk's voxel data from an octree, expanding it to the
     /// flat array representation. Marks the chunk as dirty.
     pub fn load_from_octree(&mut self, octree: &OctreeNode<Voxel>) {
-        self.voxels = octree_to_flat(octree, CHUNK_SIZE);
+        self.voxels = Arc::new(octree_to_flat(octree, CHUNK_SIZE));
         self.dirty = true;
     }
 
-    /// Clone the flat voxel array. Useful for passing to physics systems
-    /// that expect `Vec<Voxel>` without borrowing the chunk.
-    pub fn flat_snapshot(&self) -> Vec<Voxel> {
-        self.voxels.clone()
+    /// Clone the voxel buffer via `Arc::clone` (O(1) reference-count bump).
+    ///
+    /// Downstream consumers (meshing, physics) receive a shared reference to the
+    /// same backing allocation.  Because all mutation paths go through
+    /// `Arc::make_mut`, the snapshot remains valid even if the chunk is later
+    /// modified (copy-on-write).
+    pub fn flat_snapshot(&self) -> Arc<Vec<Voxel>> {
+        Arc::clone(&self.voxels)
     }
 
-    /// Reconstruct a chunk from a previously-snapshotted voxel array.
+    /// Reconstruct a chunk from a previously-snapshotted voxel buffer.
     ///
     /// Used by async mesh tasks that receive owned voxel data and need a
     /// `Chunk` to pass to the meshing functions.  The dirty flag is `false`
     /// because this is a read-only copy, not an authoritative chunk.
-    pub fn from_snapshot(coord: ChunkCoord, voxels: Vec<Voxel>) -> Self {
+    pub fn from_snapshot(coord: ChunkCoord, voxels: Arc<Vec<Voxel>>) -> Self {
         debug_assert_eq!(voxels.len(), CHUNK_VOLUME);
         Self {
             coord,
