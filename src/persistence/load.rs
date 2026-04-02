@@ -109,7 +109,7 @@ pub fn load_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     load_request: Option<Res<LoadRequest>>,
-    mut chunk_map: ResMut<ChunkMap>,
+    mut chunk_map: Option<ResMut<ChunkMap>>,
     mut terrain_gen: ResMut<TerrainGeneratorRes>,
     mut faction_registry: ResMut<FactionRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -186,7 +186,9 @@ pub fn load_game(
     for e in &enemy_query {
         commands.entity(e).despawn();
     }
-    chunk_map.clear();
+    if let Some(ref mut cm) = chunk_map {
+        cm.clear();
+    }
     *faction_registry = FactionRegistry::default();
 
     // --- Restore terrain generator ---------------------------------------
@@ -203,27 +205,29 @@ pub fn load_game(
         ..Default::default()
     })));
 
-    // --- Restore chunks --------------------------------------------------
-    for cs in &save.chunks {
-        let coord = ChunkCoord::new(cs.coord[0], cs.coord[1], cs.coord[2]);
-        let voxels = decode_rle(&cs.runs);
+    // --- Restore chunks (only when V1 ChunkMap is present) ----------------
+    if let Some(ref mut cm) = chunk_map {
+        for cs in &save.chunks {
+            let coord = ChunkCoord::new(cs.coord[0], cs.coord[1], cs.coord[2]);
+            let voxels = decode_rle(&cs.runs);
 
-        let mut chunk = Chunk::new_empty(coord);
-        {
-            let dst = chunk.voxels_mut();
-            let len = dst.len().min(voxels.len());
-            dst[..len].copy_from_slice(&voxels[..len]);
+            let mut chunk = Chunk::new_empty(coord);
+            {
+                let dst = chunk.voxels_mut();
+                let len = dst.len().min(voxels.len());
+                dst[..len].copy_from_slice(&voxels[..len]);
+            }
+
+            let origin = coord.world_origin();
+            let entity = commands
+                .spawn((
+                    chunk,
+                    coord,
+                    Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
+                ))
+                .id();
+            cm.insert(coord, entity);
         }
-
-        let origin = coord.world_origin();
-        let entity = commands
-            .spawn((
-                chunk,
-                coord,
-                Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
-            ))
-            .id();
-        chunk_map.insert(coord, entity);
     }
 
     // --- Restore creatures (phase 1: spawn, record SaveId → Entity) ------
