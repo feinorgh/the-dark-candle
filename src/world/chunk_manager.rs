@@ -362,14 +362,18 @@ pub fn update_chunks(
         let da = a.world_center().distance_squared(cam_pos);
         let db = b.world_center().distance_squared(cam_pos);
         // Frustum bias: chunks in front of camera sort before chunks behind.
-        let dot_a = (a.world_center() - cam_pos).normalize_or_zero().dot(cam_forward);
-        let dot_b = (b.world_center() - cam_pos).normalize_or_zero().dot(cam_forward);
+        let dot_a = (a.world_center() - cam_pos)
+            .normalize_or_zero()
+            .dot(cam_forward);
+        let dot_b = (b.world_center() - cam_pos)
+            .normalize_or_zero()
+            .dot(cam_forward);
         // Primary: in-frustum first (dot > 0), secondary: distance
         let vis_a = if dot_a > 0.0 { 0u8 } else { 1 };
         let vis_b = if dot_b > 0.0 { 0u8 } else { 1 };
-        vis_a.cmp(&vis_b).then_with(|| {
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })
+        vis_a
+            .cmp(&vis_b)
+            .then_with(|| da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal))
     });
 
     // Dispatch async terrain generation for the closest chunks.
@@ -378,10 +382,7 @@ pub fn update_chunks(
     let pending_budget = MAX_PENDING_CHUNKS.saturating_sub(pending.len());
     let dispatch_limit = MAX_TERRAIN_DISPATCHES_PER_FRAME.min(pending_budget);
 
-    let batch: Vec<ChunkCoord> = to_generate
-        .into_iter()
-        .take(dispatch_limit)
-        .collect();
+    let batch: Vec<ChunkCoord> = to_generate.into_iter().take(dispatch_limit).collect();
 
     // GPU batch: compute surface radii for all columns if GPU noise is available
     // and we're in spherical mode.

@@ -98,8 +98,7 @@ pub fn generate_v2_chunk(
                 let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
                 let r = wpos.length();
 
-                let material =
-                    tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
+                let material = tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
 
                 let idx = lz * cs * cs + ly * cs + lx;
                 voxels[idx].material = material;
@@ -124,12 +123,14 @@ mod tests {
     use crate::world::v2::cubed_sphere::CubeFace;
 
     fn small_planet_gen() -> (SphericalTerrainGenerator, PlanetConfig) {
-        let mut cfg = PlanetConfig::default();
-        cfg.mean_radius = 200.0;
-        cfg.sea_level_radius = 190.0;
-        cfg.height_scale = 0.0; // Flat surface at mean_radius for predictable tests
-        cfg.soil_depth = 2.0;
-        cfg.cave_threshold = -999.0; // Disable caves (noise never < -999)
+        let cfg = PlanetConfig {
+            mean_radius: 200.0,
+            sea_level_radius: 190.0,
+            height_scale: 0.0,
+            soil_depth: 2.0,
+            cave_threshold: -999.0,
+            ..Default::default()
+        };
         let tgen = SphericalTerrainGenerator::new(cfg.clone());
         (tgen, cfg)
     }
@@ -221,5 +222,3 @@ mod tests {
         assert_eq!(data.voxels.len(), CHUNK_VOLUME);
     }
 }
-
-

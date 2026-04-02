@@ -927,7 +927,9 @@ pub(super) fn dispatch_mesh_tasks(
 
         let center = coord.world_center();
         let dist_sq = (center - camera_pos).length_squared();
-        let dot = (center - camera_pos).normalize_or_zero().dot(camera_forward);
+        let dot = (center - camera_pos)
+            .normalize_or_zero()
+            .dot(camera_forward);
         candidates.push(MeshCandidate {
             entity,
             dist_sq,
@@ -940,7 +942,9 @@ pub(super) fn dispatch_mesh_tasks(
     // Sort: visible chunks first, then by distance.
     candidates.sort_unstable_by(|a, b| {
         b.in_frustum.cmp(&a.in_frustum).then_with(|| {
-            a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal)
+            a.dist_sq
+                .partial_cmp(&b.dist_sq)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     });
 
@@ -969,18 +973,20 @@ pub(super) fn dispatch_mesh_tasks(
         // neighbor arrives via collect_terrain_results().
         let mut has_incomplete_neighbor = false;
         let neighbors = {
-            let snap = |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Arc<Vec<Voxel>>> {
-                let nc = super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
-                if let Some(data) = neighbor_snapshots.get(&nc) {
-                    return Some(Arc::clone(data));
-                }
-                // Neighbor in ChunkMap but no snapshot yet → still generating.
-                if chunk_map.contains(&nc) {
-                    *incomplete = true;
-                }
-                // Not in ChunkMap at all → world edge, AIR is correct.
-                None
-            };
+            let snap =
+                |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Arc<Vec<Voxel>>> {
+                    let nc =
+                        super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
+                    if let Some(data) = neighbor_snapshots.get(&nc) {
+                        return Some(Arc::clone(data));
+                    }
+                    // Neighbor in ChunkMap but no snapshot yet → still generating.
+                    if chunk_map.contains(&nc) {
+                        *incomplete = true;
+                    }
+                    // Not in ChunkMap at all → world edge, AIR is correct.
+                    None
+                };
             NeighborVoxels {
                 px: snap(1, 0, 0, &mut has_incomplete_neighbor),
                 nx: snap(-1, 0, 0, &mut has_incomplete_neighbor),

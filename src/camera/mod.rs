@@ -10,8 +10,11 @@ use crate::hud::{FallTracker, Player};
 use crate::physics::constants;
 use crate::world::chunk::Chunk;
 use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
-use crate::world::collision::{ground_height_at, ground_height_radial};
+use crate::world::collision::{
+    ground_height_at, ground_height_from_terrain_gen, ground_height_radial,
+};
 use crate::world::planet::PlanetConfig;
+use crate::world::v2::chunk_manager::V2TerrainGen;
 
 pub struct CameraPlugin;
 
@@ -370,11 +373,14 @@ fn camera_move(
 /// Flat mode:  gravity is -Y, ground check scans vertical voxel columns.
 /// Spherical mode: gravity is radial (toward planet center), ground check
 ///   uses `ground_height_radial` which scans along the radial direction.
+///   In V2 pipeline mode, falls back to terrain-gen sampling when V1 chunks
+///   are unavailable.
 fn camera_gravity(
     time: Res<Time>,
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     planet: Res<PlanetConfig>,
+    v2_gen: Option<Res<V2TerrainGen>>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
 ) {
     let Ok((mut cam, mut transform)) = cam_q.single_mut() else {
@@ -398,8 +404,17 @@ fn camera_gravity(
         // Move along the radial direction (positive = outward = up).
         transform.translation += local_up * cam.vertical_velocity * dt;
 
-        // Radial ground collision.
-        if let Some(ground_r) = ground_height_radial(pos, &chunk_map, &chunks) {
+        // Radial ground collision — try V1 chunks first, fall back to terrain gen.
+        let ground_r = chunk_map
+            .as_ref()
+            .and_then(|cm| ground_height_radial(pos, cm, &chunks))
+            .or_else(|| {
+                v2_gen
+                    .as_ref()
+                    .map(|tg| ground_height_from_terrain_gen(pos, &tg.0))
+            });
+
+        if let Some(ground_r) = ground_r {
             let feet_r = transform.translation.length() - EYE_HEIGHT;
             if feet_r <= ground_r {
                 // Place player on the surface at the correct radial distance.
@@ -419,8 +434,11 @@ fn camera_gravity(
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
         transform.translation.y += cam.vertical_velocity * dt;
 
-        // Flat ground collision.
-        if let Some(ground_y) = ground_height_at(pos.x, pos.z, &chunk_map, &chunks) {
+        // Flat ground collision (V1 chunks only — V2 is always spherical).
+        let ground_y = chunk_map
+            .as_ref()
+            .and_then(|cm| ground_height_at(pos.x, pos.z, cm, &chunks));
+        if let Some(ground_y) = ground_y {
             let feet_y = transform.translation.y - EYE_HEIGHT;
             if feet_y <= ground_y {
                 transform.translation.y = ground_y + EYE_HEIGHT;

@@ -87,7 +87,7 @@ struct Cli {
     radius: Option<f64>,
 
     /// Rendering pipeline: v1 (Surface Nets) or v2 (cubed-sphere greedy mesh).
-    #[arg(long, default_value = "v1")]
+    #[arg(long, default_value = "v2")]
     pipeline: String,
 }
 

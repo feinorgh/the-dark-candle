@@ -22,9 +22,9 @@ use crate::world::v2::terrain_gen::generate_v2_chunk;
 
 // ── Limits ────────────────────────────────────────────────────────────────
 
-const MAX_DISPATCHES_PER_FRAME: usize = 16;
-const MAX_PENDING: usize = 48;
-const MAX_COLLECTS_PER_FRAME: usize = 16;
+const MAX_DISPATCHES_PER_FRAME: usize = 32;
+const MAX_PENDING: usize = 128;
+const MAX_COLLECTS_PER_FRAME: usize = 32;
 
 // ── Resources ─────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ pub struct V2LoadRadius {
 impl Default for V2LoadRadius {
     fn default() -> Self {
         Self {
-            horizontal: 4,
+            horizontal: 12,
             vertical: 2,
         }
     }
@@ -194,12 +194,14 @@ pub fn v2_collect_results(
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
     let cs_half = Vec3::splat(CHUNK_SIZE as f32 / 2.0);
 
-    let chunk_material = cached_mat.get_or_insert_with(|| {
-        materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            ..default()
+    let chunk_material = cached_mat
+        .get_or_insert_with(|| {
+            materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                ..default()
+            })
         })
-    }).clone();
+        .clone();
 
     let mut collected = 0usize;
     for (task_entity, mut task) in &mut task_q {
@@ -264,11 +266,7 @@ impl Plugin for V2WorldPlugin {
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
-                (
-                    v2_update_chunks,
-                    v2_collect_results,
-                    v2_diagnostics,
-                )
+                (v2_update_chunks, v2_collect_results, v2_diagnostics)
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
@@ -327,12 +325,12 @@ mod tests {
 
     #[test]
     fn desired_chunks_contains_camera_position() {
-        let mut cfg = PlanetConfig::default();
-        cfg.mean_radius = 32000.0;
+        let cfg = PlanetConfig {
+            mean_radius: 32000.0,
+            ..Default::default()
+        };
         let radius = V2LoadRadius::default();
         let fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
-
-        // Camera at the PosX face center, at the surface
         let cam_pos = Vec3::new(cfg.mean_radius as f32, 0.0, 0.0);
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
 
@@ -348,8 +346,10 @@ mod tests {
 
     #[test]
     fn desired_chunks_count_matches_radius() {
-        let mut cfg = PlanetConfig::default();
-        cfg.mean_radius = 32000.0;
+        let cfg = PlanetConfig {
+            mean_radius: 32000.0,
+            ..Default::default()
+        };
         let radius = V2LoadRadius {
             horizontal: 2,
             vertical: 1,
@@ -390,12 +390,14 @@ mod tests {
         app.init_asset::<StandardMaterial>();
 
         // Small smooth planet for fast terrain gen.
-        let mut planet = PlanetConfig::default();
-        planet.mean_radius = 200.0;
-        planet.sea_level_radius = 200.0;
-        planet.noise = None;
-        planet.height_scale = 0.0;
-        planet.cave_threshold = -999.0;
+        let planet = PlanetConfig {
+            mean_radius: 200.0,
+            sea_level_radius: 200.0,
+            noise: None,
+            height_scale: 0.0,
+            cave_threshold: -999.0,
+            ..Default::default()
+        };
 
         let tgen = Arc::new(SphericalTerrainGenerator::new(planet.clone()));
         app.insert_resource(planet);

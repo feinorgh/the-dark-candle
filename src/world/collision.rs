@@ -8,6 +8,7 @@
 
 use super::chunk::{CHUNK_SIZE, ChunkCoord};
 use super::chunk_manager::ChunkMap;
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use super::chunk::Chunk;
@@ -117,6 +118,23 @@ pub fn terrain_spawn_height(
     height as f32 + 1.0 // +1 to stand on top
 }
 
+/// Find the radial surface height at a world position using the spherical
+/// terrain generator directly. Converts the position to (lat, lon) and samples
+/// `sample_surface_radius`.
+///
+/// Returns the radial distance from planet center to the terrain surface,
+/// plus 1 m to stand on top. This is the V2-pipeline equivalent of
+/// `ground_height_radial` — it works without loaded chunks.
+pub fn ground_height_from_terrain_gen(
+    world_pos: Vec3,
+    terrain_gen: &super::terrain::SphericalTerrainGenerator,
+) -> f32 {
+    let pos = DVec3::new(world_pos.x as f64, world_pos.y as f64, world_pos.z as f64);
+    let (lat, lon) = terrain_gen.planet().lat_lon(pos);
+    let surface_r = terrain_gen.sample_surface_radius(lat, lon);
+    surface_r as f32 + 1.0 // +1 to stand on top of the voxel
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::terrain::{TerrainConfig, TerrainGenerator};
@@ -141,6 +159,43 @@ mod tests {
         let generator = TerrainGenerator::new(TerrainConfig::default());
         let h1 = terrain_spawn_height(50.0, 50.0, &generator);
         let h2 = terrain_spawn_height(50.0, 50.0, &generator);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn ground_height_from_terrain_gen_near_surface() {
+        use super::super::planet::PlanetConfig;
+        use super::super::terrain::SphericalTerrainGenerator;
+
+        let planet = PlanetConfig {
+            mean_radius: 32000.0,
+            noise: None,
+            height_scale: 0.0,
+            ..Default::default()
+        };
+
+        let tgen = SphericalTerrainGenerator::new(planet);
+        // Position on +X axis at the surface
+        let pos = Vec3::new(32000.0, 0.0, 0.0);
+        let h = ground_height_from_terrain_gen(pos, &tgen);
+        // With no noise, surface is exactly at mean_radius. +1 for standing.
+        assert!((h - 32001.0).abs() < 1.0, "Expected ~32001, got {h}");
+    }
+
+    #[test]
+    fn ground_height_from_terrain_gen_is_deterministic() {
+        use super::super::planet::PlanetConfig;
+        use super::super::terrain::SphericalTerrainGenerator;
+
+        let planet = PlanetConfig {
+            mean_radius: 32000.0,
+            ..Default::default()
+        };
+        let tgen = SphericalTerrainGenerator::new(planet);
+
+        let pos = Vec3::new(20000.0, 15000.0, 10000.0);
+        let h1 = ground_height_from_terrain_gen(pos, &tgen);
+        let h2 = ground_height_from_terrain_gen(pos, &tgen);
         assert_eq!(h1, h2);
     }
 }

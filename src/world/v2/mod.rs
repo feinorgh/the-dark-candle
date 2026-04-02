@@ -5,7 +5,7 @@
 // radially outward. Greedy meshing produces blocky Minecraft-style geometry
 // with far fewer triangles than the Surface Nets pipeline in v1.
 
+pub mod chunk_manager;
 pub mod cubed_sphere;
 pub mod greedy_mesh;
 pub mod terrain_gen;
-pub mod chunk_manager;

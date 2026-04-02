@@ -96,7 +96,7 @@ impl Plugin for WorldPlugin {
             .world()
             .get_resource::<PipelineVersion>()
             .copied()
-            .unwrap_or(PipelineVersion::V1);
+            .unwrap_or(PipelineVersion::V2);
 
         app.insert_resource(lod::LodConfig::default())
             .insert_resource(lod::MaterialColorMap::from_defaults());
@@ -115,14 +115,11 @@ impl Plugin for WorldPlugin {
                     .get_resource::<PlanetConfig>()
                     .cloned()
                     .unwrap_or_default();
-                let generator =
-                    terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+                let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
                 let shared_generator =
                     terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
                 app.insert_resource(chunk_manager::TerrainGeneratorRes(generator))
-                    .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(
-                        shared_generator,
-                    )))
+                    .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(shared_generator)))
                     .add_plugins(v2::chunk_manager::V2WorldPlugin);
             }
         }

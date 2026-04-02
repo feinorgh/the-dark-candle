@@ -75,9 +75,17 @@ impl CubeFace {
         let ay = dir.y.abs();
         let az = dir.z.abs();
         if ax >= ay && ax >= az {
-            if dir.x > 0.0 { CubeFace::PosX } else { CubeFace::NegX }
+            if dir.x > 0.0 {
+                CubeFace::PosX
+            } else {
+                CubeFace::NegX
+            }
         } else if ay >= ax && ay >= az {
-            if dir.y > 0.0 { CubeFace::PosY } else { CubeFace::NegY }
+            if dir.y > 0.0 {
+                CubeFace::PosY
+            } else {
+                CubeFace::NegY
+            }
         } else if dir.z > 0.0 {
             CubeFace::PosZ
         } else {
@@ -142,11 +150,7 @@ impl CubeSphereCoord {
     ///
     /// `mean_radius` is the planet's mean surface radius in meters.
     /// `face_chunks_per_edge` is how many chunks span one face edge.
-    pub fn world_transform(
-        &self,
-        mean_radius: f64,
-        face_chunks_per_edge: f64,
-    ) -> (Vec3, Quat) {
+    pub fn world_transform(&self, mean_radius: f64, face_chunks_per_edge: f64) -> (Vec3, Quat) {
         let dir = self.unit_sphere_dir(face_chunks_per_edge);
         let cs = CHUNK_SIZE as f64;
 

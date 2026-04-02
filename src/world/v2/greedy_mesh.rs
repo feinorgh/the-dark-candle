@@ -41,7 +41,13 @@ fn sample_material(
     y: i32,
     z: i32,
 ) -> MaterialId {
-    if x >= 0 && x < CHUNK_SIZE as i32 && y >= 0 && y < CHUNK_SIZE as i32 && z >= 0 && z < CHUNK_SIZE as i32 {
+    if x >= 0
+        && x < CHUNK_SIZE as i32
+        && y >= 0
+        && y < CHUNK_SIZE as i32
+        && z >= 0
+        && z < CHUNK_SIZE as i32
+    {
         return voxels[voxel_index(x as usize, y as usize, z as usize)].material;
     }
     // Out of bounds: check neighbor chunks
@@ -73,8 +79,11 @@ fn sample_material(
 /// Whether a material is transparent (air, steam, glass, gases).
 #[inline]
 fn is_transparent(mat: MaterialId) -> bool {
-    mat.is_air() || mat == MaterialId::STEAM || mat == MaterialId::GLASS
-        || mat == MaterialId::OXYGEN || mat == MaterialId::HYDROGEN
+    mat.is_air()
+        || mat == MaterialId::STEAM
+        || mat == MaterialId::GLASS
+        || mat == MaterialId::OXYGEN
+        || mat == MaterialId::HYDROGEN
 }
 
 /// Generate a greedy mesh from voxel data in chunk-local coordinates.
@@ -227,19 +236,8 @@ fn greedy_merge(
             let face_d = if dir > 0 { d + 1 } else { d };
 
             emit_quad(
-                axis,
-                face_d,
-                su as i32,
-                sv as i32,
-                w as i32,
-                h as i32,
-                dir,
-                normal,
-                color,
-                positions,
-                normals,
-                colors,
-                indices,
+                axis, face_d, su as i32, sv as i32, w as i32, h as i32, dir, normal, color,
+                positions, normals, colors, indices,
             );
 
             su += w;
@@ -267,12 +265,7 @@ fn emit_quad(
     let base = positions.len() as u32;
 
     // Four corners of the rectangle in (d, u, v) space.
-    let corners = [
-        (d, u, v),
-        (d, u + w, v),
-        (d, u + w, v + h),
-        (d, u, v + h),
-    ];
+    let corners = [(d, u, v), (d, u + w, v), (d, u + w, v + h), (d, u, v + h)];
 
     for &(cd, cu, cv) in &corners {
         let (x, y, z) = axis_to_xyz(axis, cd, cu, cv);
@@ -305,8 +298,10 @@ mod tests {
     }
 
     fn make_solid_chunk(mat: MaterialId) -> Vec<Voxel> {
-        let mut v = Voxel::default();
-        v.material = mat;
+        let v = Voxel {
+            material: mat,
+            ..Default::default()
+        };
         vec![v; CHUNK_VOLUME]
     }
 
@@ -330,7 +325,11 @@ mod tests {
 
         // 6 faces, each a single merged quad = 6 quads = 12 triangles = 36 indices
         assert_eq!(mesh.indices.len(), 36, "Expected 6 quads (36 indices)");
-        assert_eq!(mesh.positions.len(), 24, "Expected 24 vertices (4 per quad)");
+        assert_eq!(
+            mesh.positions.len(),
+            24,
+            "Expected 24 vertices (4 per quad)"
+        );
     }
 
     #[test]
@@ -380,7 +379,10 @@ mod tests {
         // + 4 side faces (each 32×16 = 1 quad each)
         // Total: 6 quads = 12 triangles
         let quad_count = mesh.indices.len() / 6;
-        assert_eq!(quad_count, 6, "Half-solid chunk should produce 6 quads, got {quad_count}");
+        assert_eq!(
+            quad_count, 6,
+            "Half-solid chunk should produce 6 quads, got {quad_count}"
+        );
     }
 
     #[test]
@@ -398,7 +400,7 @@ mod tests {
         // But with different materials, the merged faces can't combine, so we get more quads.
         let quad_count = mesh.indices.len() / 6;
         assert!(
-            quad_count >= 6 && quad_count <= 12,
+            (6..=12).contains(&quad_count),
             "Expected 6-12 quads for two different-material blocks, got {quad_count}"
         );
     }
@@ -413,15 +415,18 @@ mod tests {
         for pos in &mesh.positions {
             assert!(
                 pos[0] >= 0.0 && pos[0] <= CHUNK_SIZE as f32,
-                "X out of range: {}", pos[0]
+                "X out of range: {}",
+                pos[0]
             );
             assert!(
                 pos[1] >= 0.0 && pos[1] <= CHUNK_SIZE as f32,
-                "Y out of range: {}", pos[1]
+                "Y out of range: {}",
+                pos[1]
             );
             assert!(
                 pos[2] >= 0.0 && pos[2] <= CHUNK_SIZE as f32,
-                "Z out of range: {}", pos[2]
+                "Z out of range: {}",
+                pos[2]
             );
         }
     }
