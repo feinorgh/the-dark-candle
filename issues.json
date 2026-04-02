@@ -288,7 +288,7 @@
     "related_commits": [],
     "resolution": "Pre-compute surface_radius for each (lx,lz) column at chunk mid-Y, reuse for all Y levels. Reduced noise calls 32\u00d7 (32768\u21921024 per chunk). Chunk gen: 332ms\u219290ms.",
     "notes": [
-      "Remaining 90ms is mostly is_cave() 3D Perlin per voxel \u2014 acceptable since it runs on AsyncComputeTaskPool."
+      "Remaining time after column caching was dominated by Perlin::new() inside all noise functions — fixed in PERF-003."
     ]
   },
   {
@@ -306,6 +306,24 @@
     "suspected_cause": "Shell centered on mean_radius instead of camera radial position.",
     "related_commits": [],
     "resolution": "Centered shell on camera's current radial distance (cam_r) with extra margin of 5% height_scale. Shell now tracks player position regardless of terrain height variation.",
+    "notes": []
+  },
+  {
+    "id": "PERF-003",
+    "title": "Perlin::new() called ~340K times per chunk — permutation table rebuilt on every noise evaluation",
+    "category": "performance",
+    "severity": "critical",
+    "status": "resolved",
+    "reported": "2026-04-01",
+    "description": "NoiseStack methods (fbm, ridged, selector, warp, micro, continent) and terrain helper functions (ore_material, strata_material, is_multi_scale_cave, is_crystal_deposit) all created fresh Perlin objects inside their hot loops. With ~15 Perlin creations per NoiseStack::sample() × 1024 columns + ~10 per underground voxel, each chunk built ~340,000 Perlin objects. Each Perlin::new() initializes a permutation table from the seed.",
+    "reproduction": "Run game with NoiseStack enabled in planet_config.ron. Game freezes on startup due to chunk generation consuming all CPU time.",
+    "suspected_files": [
+      "src/world/noise.rs",
+      "src/world/terrain.rs"
+    ],
+    "suspected_cause": "Perlin objects created inside evaluation loops instead of being cached at construction time.",
+    "related_commits": [],
+    "resolution": "Cached all Perlin objects at construction time: NoiseStack stores 14 Perlin fields (fbm×8, ridged×8, selector, warp×2, micro, continent, ocean_floor), CachedGeologyPerlin stores 10 (strata, ore×4, cave×4, crystal). Both TerrainGenerator and SphericalTerrainGenerator hold a CachedGeologyPerlin. Chunk gen: 90ms → 5ms (18× speedup).",
     "notes": []
   }
 ]

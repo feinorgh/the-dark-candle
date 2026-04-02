@@ -192,13 +192,36 @@ impl Default for NoiseConfig {
 /// high-frequency, low-amplitude variation at the surface.
 pub struct NoiseStack {
     config: NoiseConfig,
-    /// Seed offsets for deterministic sub-noise generation.
-    seed: u32,
+    // ── Cached Perlin objects ───────────────────────────────────────────
+    fbm_perlin: Vec<Perlin>,
+    ridged_perlin: Vec<Perlin>,
+    selector_perlin: Perlin,
+    warp_x_perlin: Perlin,
+    warp_z_perlin: Perlin,
+    micro_perlin: Perlin,
+    continent_perlin: Perlin,
+    ocean_floor_perlin: Perlin,
 }
 
 impl NoiseStack {
     pub fn new(seed: u32, config: NoiseConfig) -> Self {
-        Self { config, seed }
+        let fbm_perlin = (0..config.fbm_octaves)
+            .map(|i| Perlin::new(seed.wrapping_add(i)))
+            .collect();
+        let ridged_perlin = (0..config.ridged_octaves)
+            .map(|i| Perlin::new(seed.wrapping_add(50 + i)))
+            .collect();
+        Self {
+            fbm_perlin,
+            ridged_perlin,
+            selector_perlin: Perlin::new(seed.wrapping_add(100)),
+            warp_x_perlin: Perlin::new(seed.wrapping_add(200)),
+            warp_z_perlin: Perlin::new(seed.wrapping_add(201)),
+            micro_perlin: Perlin::new(seed.wrapping_add(300)),
+            continent_perlin: Perlin::new(seed.wrapping_add(350)),
+            ocean_floor_perlin: Perlin::new(seed.wrapping_add(360)),
+            config,
+        }
     }
 
     /// Access the underlying configuration.
@@ -218,8 +241,7 @@ impl NoiseStack {
         let mut frequency = self.config.fbm_base_freq;
         let mut normalization = 0.0;
 
-        for i in 0..self.config.fbm_octaves {
-            let perlin = Perlin::new(self.seed.wrapping_add(i));
+        for perlin in &self.fbm_perlin {
             value += amplitude * perlin.get([x * frequency, z * frequency]);
             normalization += amplitude;
             amplitude *= self.config.fbm_persistence;
@@ -248,8 +270,7 @@ impl NoiseStack {
         let persistence = 0.5;
         let mut normalization = 0.0;
 
-        for i in 0..self.config.ridged_octaves {
-            let perlin = Perlin::new(self.seed.wrapping_add(50 + i));
+        for perlin in &self.ridged_perlin {
             let signal_raw = perlin.get([x * frequency, z * frequency]);
             let mut signal = 1.0 - signal_raw.abs();
             signal *= signal; // sharpen ridges
@@ -274,18 +295,20 @@ impl NoiseStack {
     /// Low-frequency noise in `[-1, 1]` used to blend between FBM and ridged
     /// terrain.
     fn selector_value(&self, x: f64, z: f64) -> f64 {
-        let perlin = Perlin::new(self.seed.wrapping_add(100));
-        perlin.get([x * self.config.selector_freq, z * self.config.selector_freq])
+        self.selector_perlin
+            .get([x * self.config.selector_freq, z * self.config.selector_freq])
     }
 
     /// Domain warp offsets.  Returns `(warp_x, warp_z)` to add to the sample
     /// coordinates before evaluating terrain noise.
     fn warp_offsets(&self, x: f64, z: f64) -> (f64, f64) {
-        let warp_x_noise = Perlin::new(self.seed.wrapping_add(200));
-        let warp_z_noise = Perlin::new(self.seed.wrapping_add(201));
-        let wx = warp_x_noise.get([x * self.config.warp_freq, z * self.config.warp_freq])
+        let wx = self
+            .warp_x_perlin
+            .get([x * self.config.warp_freq, z * self.config.warp_freq])
             * self.config.warp_strength;
-        let wz = warp_z_noise.get([x * self.config.warp_freq, z * self.config.warp_freq])
+        let wz = self
+            .warp_z_perlin
+            .get([x * self.config.warp_freq, z * self.config.warp_freq])
             * self.config.warp_strength;
         (wx, wz)
     }
@@ -293,8 +316,8 @@ impl NoiseStack {
     /// Micro-detail noise.  High-frequency, low-amplitude layer for visual
     /// surface roughness.  Intended to be added only at the surface.
     pub fn micro_detail(&self, x: f64, z: f64) -> f64 {
-        let perlin = Perlin::new(self.seed.wrapping_add(300));
-        perlin.get([x * self.config.micro_freq, z * self.config.micro_freq])
+        self.micro_perlin
+            .get([x * self.config.micro_freq, z * self.config.micro_freq])
             * self.config.micro_amplitude
     }
 
@@ -306,8 +329,7 @@ impl NoiseStack {
     /// values < `continent_threshold - shelf_blend_width` → deep ocean,
     /// in between → continental shelf (gradual transition).
     pub fn continent_value(&self, x: f64, z: f64) -> f64 {
-        let perlin = Perlin::new(self.seed.wrapping_add(350));
-        perlin.get([
+        self.continent_perlin.get([
             x * self.config.continent_freq,
             z * self.config.continent_freq,
         ])
@@ -317,8 +339,7 @@ impl NoiseStack {
     ///
     /// Returns normalized noise for underwater terrain variation.
     fn ocean_floor_noise(&self, x: f64, z: f64) -> f64 {
-        let perlin = Perlin::new(self.seed.wrapping_add(360));
-        perlin.get([x * 0.01, z * 0.01]) * self.config.ocean_floor_amplitude
+        self.ocean_floor_perlin.get([x * 0.01, z * 0.01]) * self.config.ocean_floor_amplitude
     }
 
     /// Classify a position as land / shelf / ocean and return a blend factor.

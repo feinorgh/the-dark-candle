@@ -44,13 +44,52 @@ pub fn terrain_density(depth: f64) -> f32 {
 
 // ── Geological strata & ore veins ──────────────────────────────────────────
 
+/// Pre-cached Perlin objects for geological terrain helpers.
+///
+/// Eliminates per-voxel `Perlin::new()` calls in strata, ore, cave, and
+/// crystal deposit functions.
+pub(crate) struct CachedGeologyPerlin {
+    strata: Perlin,
+    ore_coal: Perlin,
+    ore_copper: Perlin,
+    ore_iron: Perlin,
+    ore_gold: Perlin,
+    cave_cavern: Perlin,
+    cave_tunnel: Perlin,
+    cave_tube_xz: Perlin,
+    cave_tube_xy: Perlin,
+    crystal: Perlin,
+}
+
+impl CachedGeologyPerlin {
+    fn new(seed: u32) -> Self {
+        Self {
+            strata: Perlin::new(seed.wrapping_add(400)),
+            ore_coal: Perlin::new(seed.wrapping_add(500)),
+            ore_copper: Perlin::new(seed.wrapping_add(501)),
+            ore_iron: Perlin::new(seed.wrapping_add(502)),
+            ore_gold: Perlin::new(seed.wrapping_add(503)),
+            cave_cavern: Perlin::new(seed.wrapping_add(600)),
+            cave_tunnel: Perlin::new(seed.wrapping_add(601)),
+            cave_tube_xz: Perlin::new(seed.wrapping_add(602)),
+            cave_tube_xy: Perlin::new(seed.wrapping_add(603)),
+            crystal: Perlin::new(seed.wrapping_add(604)),
+        }
+    }
+}
+
 /// Select a rock material based on depth below the terrain surface.
 ///
 /// Uses a low-frequency 3D noise to vary the material within each stratum,
 /// creating natural-looking geological variation.
-fn strata_material(depth: f64, seed: u32, world_x: f64, world_y: f64, world_z: f64) -> MaterialId {
-    let strata_noise = Perlin::new(seed.wrapping_add(400));
-    let n = strata_noise.get([world_x * 0.02, world_y * 0.02, world_z * 0.02]);
+fn strata_material(
+    depth: f64,
+    perlin: &Perlin,
+    world_x: f64,
+    world_y: f64,
+    world_z: f64,
+) -> MaterialId {
+    let n = perlin.get([world_x * 0.02, world_y * 0.02, world_z * 0.02]);
 
     if depth < 20.0 {
         // Sedimentary layer
@@ -78,41 +117,49 @@ fn strata_material(depth: f64, seed: u32, world_x: f64, world_y: f64, world_z: f
 /// depth range.
 fn ore_material(
     depth: f64,
-    seed: u32,
+    geo: &CachedGeologyPerlin,
     world_x: f64,
     world_y: f64,
     world_z: f64,
 ) -> Option<MaterialId> {
     // Coal: 5–30 m, common
-    if (5.0..=30.0).contains(&depth) {
-        let noise = Perlin::new(seed.wrapping_add(500));
-        if noise.get([world_x * 0.08, world_y * 0.08, world_z * 0.08]) < -0.15 {
-            return Some(MaterialId::COAL);
-        }
+    if (5.0..=30.0).contains(&depth)
+        && geo
+            .ore_coal
+            .get([world_x * 0.08, world_y * 0.08, world_z * 0.08])
+            < -0.15
+    {
+        return Some(MaterialId::COAL);
     }
 
     // Copper ore: 15–50 m, moderate
-    if (15.0..=50.0).contains(&depth) {
-        let noise = Perlin::new(seed.wrapping_add(501));
-        if noise.get([world_x * 0.06, world_y * 0.06, world_z * 0.06]) < -0.20 {
-            return Some(MaterialId::COPPER_ORE);
-        }
+    if (15.0..=50.0).contains(&depth)
+        && geo
+            .ore_copper
+            .get([world_x * 0.06, world_y * 0.06, world_z * 0.06])
+            < -0.20
+    {
+        return Some(MaterialId::COPPER_ORE);
     }
 
     // Iron ore: 30–80 m, moderate
-    if (30.0..=80.0).contains(&depth) {
-        let noise = Perlin::new(seed.wrapping_add(502));
-        if noise.get([world_x * 0.05, world_y * 0.05, world_z * 0.05]) < -0.25 {
-            return Some(MaterialId::IRON);
-        }
+    if (30.0..=80.0).contains(&depth)
+        && geo
+            .ore_iron
+            .get([world_x * 0.05, world_y * 0.05, world_z * 0.05])
+            < -0.25
+    {
+        return Some(MaterialId::IRON);
     }
 
     // Gold ore: 50 m+, rare
-    if depth >= 50.0 {
-        let noise = Perlin::new(seed.wrapping_add(503));
-        if noise.get([world_x * 0.04, world_y * 0.04, world_z * 0.04]) < -0.35 {
-            return Some(MaterialId::GOLD_ORE);
-        }
+    if depth >= 50.0
+        && geo
+            .ore_gold
+            .get([world_x * 0.04, world_y * 0.04, world_z * 0.04])
+            < -0.35
+    {
+        return Some(MaterialId::GOLD_ORE);
     }
 
     None
@@ -128,32 +175,31 @@ fn ore_material(
 ///
 /// Returns `true` if the position should be carved as a cave.
 fn is_multi_scale_cave(
-    seed: u32,
+    geo: &CachedGeologyPerlin,
     cave_threshold: f64,
     world_x: f64,
     world_y: f64,
     world_z: f64,
 ) -> bool {
     // Caverns (cathedral-sized chambers)
-    let cavern_noise = Perlin::new(seed.wrapping_add(600));
-    let cavern = cavern_noise.get([world_x * 0.01, world_y * 0.01, world_z * 0.01]);
+    let cavern = geo
+        .cave_cavern
+        .get([world_x * 0.01, world_y * 0.01, world_z * 0.01]);
     if cavern < cave_threshold * 0.5 {
-        // Scale threshold: caverns use half the threshold for rarity control
         return true;
     }
 
     // Tunnels (narrow passages)
-    let tunnel_noise = Perlin::new(seed.wrapping_add(601));
-    let tunnel = tunnel_noise.get([world_x * 0.04, world_y * 0.04, world_z * 0.04]);
+    let tunnel = geo
+        .cave_tunnel
+        .get([world_x * 0.04, world_y * 0.04, world_z * 0.04]);
     if tunnel < cave_threshold * 1.2 {
         return true;
     }
 
     // Tube networks (worm-like — intersection of two 2D noise fields)
-    let tube_xz = Perlin::new(seed.wrapping_add(602));
-    let tube_xy = Perlin::new(seed.wrapping_add(603));
-    let t_xz = tube_xz.get([world_x * 0.025, world_z * 0.025]);
-    let t_xy = tube_xy.get([world_x * 0.025, world_y * 0.025]);
+    let t_xz = geo.cave_tube_xz.get([world_x * 0.025, world_z * 0.025]);
+    let t_xy = geo.cave_tube_xy.get([world_x * 0.025, world_y * 0.025]);
     if t_xz < cave_threshold * 0.85 && t_xy < cave_threshold * 0.85 {
         return true;
     }
@@ -175,12 +221,17 @@ fn cave_fill_material(depth: f64, sea_level_depth: f64) -> MaterialId {
 }
 
 /// Check if a cave wall should have crystal deposits (deep cavern walls).
-fn is_crystal_deposit(depth: f64, seed: u32, world_x: f64, world_y: f64, world_z: f64) -> bool {
+fn is_crystal_deposit(
+    depth: f64,
+    perlin: &Perlin,
+    world_x: f64,
+    world_y: f64,
+    world_z: f64,
+) -> bool {
     if depth < 40.0 {
         return false;
     }
-    let noise = Perlin::new(seed.wrapping_add(604));
-    noise.get([world_x * 0.10, world_y * 0.10, world_z * 0.10]) < -0.30
+    perlin.get([world_x * 0.10, world_y * 0.10, world_z * 0.10]) < -0.30
 }
 
 /// Configuration for terrain generation, stored as a Bevy resource.
@@ -234,6 +285,8 @@ pub struct TerrainGenerator {
     env_map: EnvironmentMap,
     /// Cached flow-accumulation map, computed lazily on first chunk generation.
     flow_map: OnceLock<FlowMap>,
+    /// Pre-cached Perlin objects for geological terrain helpers.
+    geo_perlin: CachedGeologyPerlin,
 }
 
 impl TerrainGenerator {
@@ -242,6 +295,7 @@ impl TerrainGenerator {
         let detail_noise = Perlin::new(config.seed.wrapping_add(1));
         let cave_noise = Perlin::new(config.seed.wrapping_add(2));
         let env_map = EnvironmentMap::new(config.seed);
+        let geo_perlin = CachedGeologyPerlin::new(config.seed);
         Self {
             config,
             continent_noise,
@@ -250,6 +304,7 @@ impl TerrainGenerator {
             noise_stack: None,
             env_map,
             flow_map: OnceLock::new(),
+            geo_perlin,
         }
     }
 
@@ -259,6 +314,7 @@ impl TerrainGenerator {
         let detail_noise = Perlin::new(config.seed.wrapping_add(1));
         let cave_noise = Perlin::new(config.seed.wrapping_add(2));
         let env_map = EnvironmentMap::new(config.seed);
+        let geo_perlin = CachedGeologyPerlin::new(config.seed);
         Self {
             config,
             continent_noise,
@@ -267,6 +323,7 @@ impl TerrainGenerator {
             noise_stack: Some(noise_stack),
             env_map,
             flow_map: OnceLock::new(),
+            geo_perlin,
         }
     }
 
@@ -320,6 +377,7 @@ impl TerrainGenerator {
                 noise_stack: None,
                 env_map: EnvironmentMap::new(self.config.seed),
                 flow_map: OnceLock::new(),
+                geo_perlin: CachedGeologyPerlin::new(self.config.seed),
             };
             FlowMap::compute(
                 |x, z| sampler.sample_height(x, z),
@@ -335,7 +393,6 @@ impl TerrainGenerator {
     pub fn generate_chunk(&self, chunk: &mut Chunk) {
         let origin = chunk.coord.world_origin();
         let erosion_enabled = self.config.erosion.enabled;
-        let seed = self.config.seed;
         let use_advanced = self.noise_stack.is_some();
 
         // Lazily compute the flow map on first use
@@ -407,9 +464,16 @@ impl TerrainGenerator {
                     } else if use_advanced {
                         // Geological strata with ore veins
                         let strata_depth = depth - effective_soil;
-                        ore_material(strata_depth, seed, world_x, wy_f64, world_z).unwrap_or_else(
-                            || strata_material(strata_depth, seed, world_x, wy_f64, world_z),
-                        )
+                        ore_material(strata_depth, &self.geo_perlin, world_x, wy_f64, world_z)
+                            .unwrap_or_else(|| {
+                                strata_material(
+                                    strata_depth,
+                                    &self.geo_perlin.strata,
+                                    world_x,
+                                    wy_f64,
+                                    world_z,
+                                )
+                            })
                     } else {
                         // Legacy: uniform stone
                         MaterialId::STONE
@@ -419,7 +483,7 @@ impl TerrainGenerator {
                     if material != MaterialId::AIR && material != MaterialId::WATER && depth > 2.0 {
                         let is_cave = if use_advanced {
                             is_multi_scale_cave(
-                                seed,
+                                &self.geo_perlin,
                                 self.config.cave_threshold,
                                 world_x,
                                 wy_f64,
@@ -442,7 +506,14 @@ impl TerrainGenerator {
                         }
 
                         // Crystal deposits on cave-adjacent walls
-                        if use_advanced && is_crystal_deposit(depth, seed, world_x, wy_f64, world_z)
+                        if use_advanced
+                            && is_crystal_deposit(
+                                depth,
+                                &self.geo_perlin.crystal,
+                                world_x,
+                                wy_f64,
+                                world_z,
+                            )
                         {
                             chunk.set_material(lx, ly, lz, MaterialId::QUARTZ_CRYSTAL);
                             continue;
@@ -483,6 +554,8 @@ pub struct SphericalTerrainGenerator {
     cave_noise: Perlin,
     /// Composable multi-octave noise stack (replaces 2-layer blend when present).
     noise_stack: Option<NoiseStack>,
+    /// Pre-cached Perlin objects for geological terrain helpers.
+    geo_perlin: CachedGeologyPerlin,
 }
 
 impl SphericalTerrainGenerator {
@@ -490,6 +563,7 @@ impl SphericalTerrainGenerator {
         let continent_noise = Perlin::new(planet.seed);
         let detail_noise = Perlin::new(planet.seed.wrapping_add(1));
         let cave_noise = Perlin::new(planet.seed.wrapping_add(2));
+        let geo_perlin = CachedGeologyPerlin::new(planet.seed);
         let noise_stack = planet
             .noise
             .as_ref()
@@ -500,6 +574,7 @@ impl SphericalTerrainGenerator {
             detail_noise,
             cave_noise,
             noise_stack,
+            geo_perlin,
         }
     }
 
@@ -599,7 +674,6 @@ impl SphericalTerrainGenerator {
         world_z: f64,
     ) -> MaterialId {
         let use_advanced = self.noise_stack.is_some();
-        let seed = self.planet.seed;
 
         if r > surface_r {
             // Above terrain surface
@@ -627,8 +701,17 @@ impl SphericalTerrainGenerator {
         // Deep: geological strata or layer-based
         let strata_depth = depth_below_surface - self.planet.soil_depth;
         let base_mat = if use_advanced {
-            ore_material(strata_depth, seed, world_x, world_y, world_z)
-                .unwrap_or_else(|| strata_material(strata_depth, seed, world_x, world_y, world_z))
+            ore_material(strata_depth, &self.geo_perlin, world_x, world_y, world_z).unwrap_or_else(
+                || {
+                    strata_material(
+                        strata_depth,
+                        &self.geo_perlin.strata,
+                        world_x,
+                        world_y,
+                        world_z,
+                    )
+                },
+            )
         } else {
             self.planet
                 .layer_at_radius(r)
@@ -639,7 +722,13 @@ impl SphericalTerrainGenerator {
         // Cave carving (only within crust, not too close to surface)
         if depth_below_surface > 2.0 && r > self.planet.mean_radius - 4000.0 {
             let is_cave = if use_advanced {
-                is_multi_scale_cave(seed, self.planet.cave_threshold, world_x, world_y, world_z)
+                is_multi_scale_cave(
+                    &self.geo_perlin,
+                    self.planet.cave_threshold,
+                    world_x,
+                    world_y,
+                    world_z,
+                )
             } else {
                 self.is_cave(world_x, world_y, world_z)
             };
@@ -654,7 +743,13 @@ impl SphericalTerrainGenerator {
 
             // Crystal deposits on cave-adjacent walls
             if use_advanced
-                && is_crystal_deposit(depth_below_surface, seed, world_x, world_y, world_z)
+                && is_crystal_deposit(
+                    depth_below_surface,
+                    &self.geo_perlin.crystal,
+                    world_x,
+                    world_y,
+                    world_z,
+                )
             {
                 return MaterialId::QUARTZ_CRYSTAL;
             }
@@ -797,6 +892,10 @@ impl UnifiedTerrainGenerator {
 mod tests {
     use super::super::chunk::ChunkCoord;
     use super::*;
+
+    fn test_geo(seed: u32) -> CachedGeologyPerlin {
+        CachedGeologyPerlin::new(seed)
+    }
 
     fn default_generator() -> TerrainGenerator {
         TerrainGenerator::new(TerrainConfig {
@@ -1301,13 +1400,13 @@ mod tests {
 
     #[test]
     fn strata_sedimentary_at_shallow_depth() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         // Sample many positions at depth=10 (sedimentary layer: 0-20m)
         let mut sandstone = 0;
         let mut limestone = 0;
         for x in 0..20 {
             for z in 0..20 {
-                let mat = strata_material(10.0, seed, x as f64 * 10.0, 0.0, z as f64 * 10.0);
+                let mat = strata_material(10.0, &geo.strata, x as f64 * 10.0, 0.0, z as f64 * 10.0);
                 match mat {
                     m if m == MaterialId::SANDSTONE => sandstone += 1,
                     m if m == MaterialId::LIMESTONE => limestone += 1,
@@ -1324,11 +1423,11 @@ mod tests {
 
     #[test]
     fn strata_metamorphic_at_mid_depth() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         // depth=40 → metamorphic layer (20-60m), always STONE
         for x in 0..10 {
             for z in 0..10 {
-                let mat = strata_material(40.0, seed, x as f64 * 5.0, 0.0, z as f64 * 5.0);
+                let mat = strata_material(40.0, &geo.strata, x as f64 * 5.0, 0.0, z as f64 * 5.0);
                 assert_eq!(
                     mat,
                     MaterialId::STONE,
@@ -1340,12 +1439,12 @@ mod tests {
 
     #[test]
     fn strata_igneous_at_deep_depth() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         let mut granite = 0;
         let mut basalt = 0;
         for x in 0..20 {
             for z in 0..20 {
-                let mat = strata_material(80.0, seed, x as f64 * 10.0, 0.0, z as f64 * 10.0);
+                let mat = strata_material(80.0, &geo.strata, x as f64 * 10.0, 0.0, z as f64 * 10.0);
                 match mat {
                     m if m == MaterialId::GRANITE => granite += 1,
                     m if m == MaterialId::BASALT => basalt += 1,
@@ -1359,11 +1458,11 @@ mod tests {
 
     #[test]
     fn strata_boundaries_are_correct() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         // Boundary at 20m: depth 19.9 → sedimentary, depth 20.0 → metamorphic
-        let mat_shallow = strata_material(19.9, seed, 0.0, 0.0, 0.0);
-        let mat_mid = strata_material(20.0, seed, 0.0, 0.0, 0.0);
-        let mat_deep = strata_material(60.0, seed, 0.0, 0.0, 0.0);
+        let mat_shallow = strata_material(19.9, &geo.strata, 0.0, 0.0, 0.0);
+        let mat_mid = strata_material(20.0, &geo.strata, 0.0, 0.0, 0.0);
+        let mat_deep = strata_material(60.0, &geo.strata, 0.0, 0.0, 0.0);
 
         assert!(
             mat_shallow == MaterialId::SANDSTONE || mat_shallow == MaterialId::LIMESTONE,
@@ -1382,7 +1481,7 @@ mod tests {
 
     #[test]
     fn ore_veins_respect_depth_ranges() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         // Coal should never appear above depth 5 or below depth 30
         let mut coal_count = 0;
         let mut iron_count = 0;
@@ -1395,23 +1494,23 @@ mod tests {
 
             // Depth 2: no coal
             assert!(
-                ore_material(2.0, seed, x, 0.0, z) != Some(MaterialId::COAL),
+                ore_material(2.0, &geo, x, 0.0, z) != Some(MaterialId::COAL),
                 "Coal should not appear at depth 2"
             );
             // Depth 35: no coal
             assert!(
-                ore_material(35.0, seed, x, 0.0, z) != Some(MaterialId::COAL),
+                ore_material(35.0, &geo, x, 0.0, z) != Some(MaterialId::COAL),
                 "Coal should not appear at depth 35"
             );
 
             // Count occurrences at valid depths
-            if ore_material(15.0, seed, x, 15.0, z) == Some(MaterialId::COAL) {
+            if ore_material(15.0, &geo, x, 15.0, z) == Some(MaterialId::COAL) {
                 coal_count += 1;
             }
-            if ore_material(50.0, seed, x, 50.0, z) == Some(MaterialId::IRON) {
+            if ore_material(50.0, &geo, x, 50.0, z) == Some(MaterialId::IRON) {
                 iron_count += 1;
             }
-            if ore_material(70.0, seed, x, 70.0, z) == Some(MaterialId::GOLD_ORE) {
+            if ore_material(70.0, &geo, x, 70.0, z) == Some(MaterialId::GOLD_ORE) {
                 gold_count += 1;
             }
         }
@@ -1429,12 +1528,12 @@ mod tests {
 
     #[test]
     fn ore_no_gold_above_50m() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         for i in 0..1000 {
             let x = (i as f64) * 7.1;
             let z = (i as f64) * 4.3;
             assert!(
-                ore_material(49.0, seed, x, 49.0, z) != Some(MaterialId::GOLD_ORE),
+                ore_material(49.0, &geo, x, 49.0, z) != Some(MaterialId::GOLD_ORE),
                 "Gold should not appear above 50m depth"
             );
         }
@@ -1442,7 +1541,7 @@ mod tests {
 
     #[test]
     fn multi_scale_caves_produce_variety() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         let threshold = -0.3;
         let mut cave_count = 0;
         let samples = 10_000;
@@ -1451,7 +1550,7 @@ mod tests {
             let x = (i as f64) * 1.7;
             let y = (i as f64) * 0.9;
             let z = (i as f64) * 2.1;
-            if is_multi_scale_cave(seed, threshold, x, y, z) {
+            if is_multi_scale_cave(&geo, threshold, x, y, z) {
                 cave_count += 1;
             }
         }
@@ -1480,13 +1579,13 @@ mod tests {
 
     #[test]
     fn crystal_deposits_only_at_depth() {
-        let seed = 42u32;
+        let geo = test_geo(42);
         // Should never appear above 40m
         for i in 0..1000 {
             let x = (i as f64) * 3.3;
             let z = (i as f64) * 2.7;
             assert!(
-                !is_crystal_deposit(39.0, seed, x, 0.0, z),
+                !is_crystal_deposit(39.0, &geo.crystal, x, 0.0, z),
                 "Crystal deposit should not appear above 40m"
             );
         }
@@ -1496,7 +1595,7 @@ mod tests {
         for i in 0..5000 {
             let x = (i as f64) * 1.1;
             let z = (i as f64) * 0.9;
-            if is_crystal_deposit(60.0, seed, x, 60.0, z) {
+            if is_crystal_deposit(60.0, &geo.crystal, x, 60.0, z) {
                 found = true;
                 break;
             }
