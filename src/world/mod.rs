@@ -126,6 +126,7 @@ impl Plugin for WorldPlugin {
 
         app.add_systems(Update, sync_color_map_from_registry)
             .add_systems(Update, apply_planet_config_from_asset)
+            .add_systems(Update, rebuild_terrain_on_config_change.after(apply_planet_config_from_asset))
             .add_systems(
                 PostStartup,
                 rebuild_terrain_gen_if_planetary.in_set(WorldSet::ChunkManagement),
@@ -137,6 +138,7 @@ impl Plugin for WorldPlugin {
 /// `PlanetConfig` resource with the loaded values and rebuild terrain generators.
 ///
 /// Uses a `Local<bool>` guard so the work is done exactly once.
+#[allow(clippy::too_many_arguments)]
 fn apply_planet_config_from_asset(
     handle: Option<Res<PlanetConfigHandle>>,
     assets: Res<Assets<PlanetConfig>>,
@@ -144,6 +146,7 @@ fn apply_planet_config_from_asset(
     mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
     mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
     v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
+    skip: Option<Res<crate::game_state::SkipWorldCreation>>,
     mut done: Local<bool>,
 ) {
     if *done {
@@ -153,6 +156,18 @@ fn apply_planet_config_from_asset(
     let Some(loaded) = assets.get(&handle.0) else {
         return;
     };
+
+    // When the CLI already configured a scene/preset (SkipWorldCreation),
+    // the PlanetConfig was set explicitly.  Don't overwrite it with the
+    // generic RON fallback — just mark done and keep the existing config.
+    if skip.is_some() {
+        info!(
+            "Skipping planet_config.ron override — CLI/preset config active (seed={})",
+            planet_config.seed,
+        );
+        *done = true;
+        return;
+    }
 
     info!(
         "Loaded planet config from RON: mode={:?}, radius={}, seed={}",
@@ -176,6 +191,36 @@ fn apply_planet_config_from_asset(
     }
 
     *done = true;
+}
+
+/// Rebuilds terrain generators whenever `PlanetConfig` is changed outside of
+/// `apply_planet_config_from_asset` (e.g. by the world creation UI selecting a
+/// preset, or by hot-reloading config).
+fn rebuild_terrain_on_config_change(
+    planet_config: Res<PlanetConfig>,
+    mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
+    mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
+    v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
+) {
+    if !planet_config.is_changed() || planet_config.is_added() {
+        return;
+    }
+
+    info!(
+        "PlanetConfig changed (seed={}) — rebuilding terrain generators",
+        planet_config.seed,
+    );
+
+    let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    terrain_res.0 = generator;
+
+    let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(shared_generator));
+
+    if let Some(mut v2) = v2_gen {
+        let tgen = terrain::SphericalTerrainGenerator::new((*planet_config).clone());
+        v2.0 = Arc::new(tgen);
+    }
 }
 
 /// If `PlanetaryData` is present at startup, rebuild `SharedTerrainGen` with a
