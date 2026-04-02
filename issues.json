@@ -288,7 +288,7 @@
     "related_commits": [],
     "resolution": "Pre-compute surface_radius for each (lx,lz) column at chunk mid-Y, reuse for all Y levels. Reduced noise calls 32\u00d7 (32768\u21921024 per chunk). Chunk gen: 332ms\u219290ms.",
     "notes": [
-      "Remaining time after column caching was dominated by Perlin::new() inside all noise functions — fixed in PERF-003."
+      "Remaining time after column caching was dominated by Perlin::new() inside all noise functions \u2014 fixed in PERF-003."
     ]
   },
   {
@@ -310,12 +310,12 @@
   },
   {
     "id": "PERF-003",
-    "title": "Perlin::new() called ~340K times per chunk — permutation table rebuilt on every noise evaluation",
+    "title": "Perlin::new() called ~340K times per chunk \u2014 permutation table rebuilt on every noise evaluation",
     "category": "performance",
     "severity": "critical",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "NoiseStack methods (fbm, ridged, selector, warp, micro, continent) and terrain helper functions (ore_material, strata_material, is_multi_scale_cave, is_crystal_deposit) all created fresh Perlin objects inside their hot loops. With ~15 Perlin creations per NoiseStack::sample() × 1024 columns + ~10 per underground voxel, each chunk built ~340,000 Perlin objects. Each Perlin::new() initializes a permutation table from the seed.",
+    "description": "NoiseStack methods (fbm, ridged, selector, warp, micro, continent) and terrain helper functions (ore_material, strata_material, is_multi_scale_cave, is_crystal_deposit) all created fresh Perlin objects inside their hot loops. With ~15 Perlin creations per NoiseStack::sample() \u00d7 1024 columns + ~10 per underground voxel, each chunk built ~340,000 Perlin objects. Each Perlin::new() initializes a permutation table from the seed.",
     "reproduction": "Run game with NoiseStack enabled in planet_config.ron. Game freezes on startup due to chunk generation consuming all CPU time.",
     "suspected_files": [
       "src/world/noise.rs",
@@ -323,7 +323,7 @@
     ],
     "suspected_cause": "Perlin objects created inside evaluation loops instead of being cached at construction time.",
     "related_commits": [],
-    "resolution": "Cached all Perlin objects at construction time: NoiseStack stores 14 Perlin fields (fbm×8, ridged×8, selector, warp×2, micro, continent, ocean_floor), CachedGeologyPerlin stores 10 (strata, ore×4, cave×4, crystal). Both TerrainGenerator and SphericalTerrainGenerator hold a CachedGeologyPerlin. Chunk gen: 90ms → 5ms (18× speedup).",
+    "resolution": "Cached all Perlin objects at construction time: NoiseStack stores 14 Perlin fields (fbm\u00d78, ridged\u00d78, selector, warp\u00d72, micro, continent, ocean_floor), CachedGeologyPerlin stores 10 (strata, ore\u00d74, cave\u00d74, crystal). Both TerrainGenerator and SphericalTerrainGenerator hold a CachedGeologyPerlin. Chunk gen: 90ms \u2192 5ms (18\u00d7 speedup).",
     "notes": []
   },
   {
@@ -333,7 +333,7 @@
     "severity": "enhancement",
     "status": "resolved",
     "reported": "2026-06-19",
-    "description": "Surface noise evaluation (NoiseStack::sample()) for terrain height consumes CPU thread pool time that could be used for meshing, underground voxel fill, and physics. Offloading the 2D column noise to GPU compute frees CPU cores and achieves 93× speedup for surface noise specifically.",
+    "description": "Surface noise evaluation (NoiseStack::sample()) for terrain height consumes CPU thread pool time that could be used for meshing, underground voxel fill, and physics. Offloading the 2D column noise to GPU compute frees CPU cores and achieves 93\u00d7 speedup for surface noise specifically.",
     "reproduction": "N/A (enhancement, not bug).",
     "suspected_files": [
       "src/world/noise.rs",
@@ -342,10 +342,23 @@
     ],
     "suspected_cause": "Surface noise is embarrassingly parallel (1024 independent columns per chunk). GPU hash-based Perlin executes all columns in parallel.",
     "related_commits": [],
-    "resolution": "Added GpuNoiseCompute pipeline (noise_compute.rs + noise_eval.wgsl). ChunkManagerPlugin auto-initializes GPU on startup (graceful fallback via GpuContext::try_new()). update_chunks batches up to 8 chunks (8192 columns) per GPU dispatch. Benchmark: 433µs per 8-chunk batch, 54µs per chunk. Phase 1: surface noise only; underground geology (caves, ore, strata) stays on CPU.",
+    "resolution": "Added GpuNoiseCompute pipeline (noise_compute.rs + noise_eval.wgsl). ChunkManagerPlugin auto-initializes GPU on startup (graceful fallback via GpuContext::try_new()). update_chunks batches up to 8 chunks (8192 columns) per GPU dispatch. Benchmark: 433\u00b5s per 8-chunk batch, 54\u00b5s per chunk. Phase 1: surface noise only; underground geology (caves, ore, strata) stays on CPU.",
     "notes": [
-      "GPU uses hash-based f32 Perlin vs CPU permutation-table f64 — terrain is NOT bit-identical but statistically comparable (GPU std/CPU std ratio ~2.6).",
-      "Phase 2 (future): underground 3D noise on GPU — accounts for 95% of total noise evals but requires porting material classification logic to WGSL."
+      "GPU uses hash-based f32 Perlin vs CPU permutation-table f64 \u2014 terrain is NOT bit-identical but statistically comparable (GPU std/CPU std ratio ~2.6).",
+      "Phase 2 (future): underground 3D noise on GPU \u2014 accounts for 95% of total noise evals but requires porting material classification logic to WGSL."
     ]
+  },
+  {
+    "id": "V2-001",
+    "title": "V2 greedy mesh Y-axis faces transparent due to wrong winding",
+    "category": "rendering",
+    "severity": "high",
+    "status": "resolved",
+    "resolution": "Flipped winding order for axis==1 in emit_quad(). The (u,v)->(X,Z) mapping creates a left-handed frame for the Y axis.",
+    "commit": "cc2b8c7",
+    "suspected_files": [
+      "src/world/v2/greedy_mesh.rs"
+    ],
+    "reproduction": "Run with --pipeline v2 --scene spherical_planet. Top faces of all voxels are invisible."
   }
 ]
