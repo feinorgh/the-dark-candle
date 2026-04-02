@@ -651,7 +651,8 @@ impl Plugin for ChunkManagerPlugin {
                         .chain()
                         .in_set(super::WorldSet::ChunkManagement),
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
             );
     }
 }
