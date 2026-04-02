@@ -751,7 +751,7 @@ impl SphericalTerrainGenerator {
     }
 
     /// Determine material at a given radius relative to the terrain surface.
-    fn material_at_radius(
+    pub fn material_at_radius(
         &self,
         r: f64,
         surface_r: f64,
@@ -992,6 +992,14 @@ impl UnifiedTerrainGenerator {
     /// Whether the terrain is in spherical mode.
     pub fn is_spherical(&self) -> bool {
         matches!(self, Self::Spherical(_) | Self::Planetary(_))
+    }
+
+    /// Access the spherical terrain generator, if in spherical mode.
+    pub fn spherical(&self) -> Option<&SphericalTerrainGenerator> {
+        match self {
+            Self::Spherical(g) => Some(g),
+            _ => None,
+        }
     }
 }
 

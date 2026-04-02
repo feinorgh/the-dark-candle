@@ -85,6 +85,10 @@ struct Cli {
     /// Smaller values (e.g. 1000) produce fewer chunks and faster startup.
     #[arg(long)]
     radius: Option<f64>,
+
+    /// Rendering pipeline: v1 (Surface Nets) or v2 (cubed-sphere greedy mesh).
+    #[arg(long, default_value = "v1")]
+    pipeline: String,
 }
 
 fn main() {
@@ -154,6 +158,13 @@ fn main() {
 
     // Apply CLI overrides to the PlanetConfig (if one was inserted above).
     apply_cli_overrides(&cli, &mut app);
+
+    // Insert rendering pipeline version.
+    let pipeline = match cli.pipeline.as_str() {
+        "v2" => the_dark_candle::world::PipelineVersion::V2,
+        _ => the_dark_candle::world::PipelineVersion::V1,
+    };
+    app.insert_resource(pipeline);
 
     // If a scene was selected via CLI, skip the world creation screen
     // by starting directly in the Loading state.

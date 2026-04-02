@@ -14,6 +14,7 @@ pub mod raycast;
 pub mod refinement;
 pub mod scene_presets;
 pub mod terrain;
+pub mod v2;
 pub mod voxel;
 pub mod voxel_access;
 
@@ -63,6 +64,13 @@ pub enum WorldSet {
 #[derive(Resource, Clone)]
 pub struct PlanetaryData(pub Arc<crate::planet::PlanetData>);
 
+/// Selects which rendering pipeline the world module uses.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineVersion {
+    V1,
+    V2,
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -84,12 +92,42 @@ impl Plugin for WorldPlugin {
             .load::<PlanetConfig>("data/planet_config.ron");
         app.insert_resource(PlanetConfigHandle(handle));
 
+        let pipeline = app
+            .world()
+            .get_resource::<PipelineVersion>()
+            .copied()
+            .unwrap_or(PipelineVersion::V1);
+
         app.insert_resource(lod::LodConfig::default())
-            .insert_resource(lod::MaterialColorMap::from_defaults())
-            .add_plugins(ChunkManagerPlugin)
-            .add_plugins(MeshingPlugin)
-            .add_plugins(RefinementPlugin)
-            .add_systems(Update, sync_color_map_from_registry)
+            .insert_resource(lod::MaterialColorMap::from_defaults());
+
+        match pipeline {
+            PipelineVersion::V1 => {
+                app.add_plugins(ChunkManagerPlugin)
+                    .add_plugins(MeshingPlugin)
+                    .add_plugins(RefinementPlugin);
+            }
+            PipelineVersion::V2 => {
+                // Initialize shared resources that apply_planet_config_from_asset needs,
+                // but skip the V1 chunk management and meshing systems.
+                let planet = app
+                    .world()
+                    .get_resource::<PlanetConfig>()
+                    .cloned()
+                    .unwrap_or_default();
+                let generator =
+                    terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+                let shared_generator =
+                    terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+                app.insert_resource(chunk_manager::TerrainGeneratorRes(generator))
+                    .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(
+                        shared_generator,
+                    )))
+                    .add_plugins(v2::chunk_manager::V2WorldPlugin);
+            }
+        }
+
+        app.add_systems(Update, sync_color_map_from_registry)
             .add_systems(Update, apply_planet_config_from_asset)
             .add_systems(
                 PostStartup,
