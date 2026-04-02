@@ -282,7 +282,10 @@ fn emit_quad(
     }
 
     // Triangle winding: ensure the face points in the correct direction.
-    if dir > 0 {
+    // For axis 1 (Y), the (u,v) → (X,Z) mapping creates a left-handed
+    // coordinate frame, so we flip the winding to get the correct normal.
+    let flip = axis == 1;
+    if (dir > 0) ^ flip {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     } else {
         indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
@@ -438,6 +441,50 @@ mod tests {
             // Exactly one component should be ±1
             let ones = n.iter().filter(|c| c.abs() > 0.5).count();
             assert_eq!(ones, 1, "Normal should be axis-aligned: {n:?}");
+        }
+    }
+
+    /// Verify that the triangle winding matches the declared face normal for
+    /// all 6 face directions. A correct winding means the geometric normal
+    /// (cross product of edge vectors) matches the attribute normal.
+    #[test]
+    fn winding_matches_normal_for_all_faces() {
+        let mut voxels = make_air_chunk();
+        voxels[voxel_index(10, 10, 10)].material = MaterialId::STONE;
+        let mesh = greedy_mesh(&voxels, &NeighborSlices::empty(), &default_colors());
+
+        // 6 quads → 12 triangles → 36 indices
+        assert_eq!(mesh.indices.len(), 36);
+
+        for tri in mesh.indices.chunks_exact(3) {
+            let i0 = tri[0] as usize;
+            let i1 = tri[1] as usize;
+            let i2 = tri[2] as usize;
+
+            let p0 = mesh.positions[i0];
+            let p1 = mesh.positions[i1];
+            let p2 = mesh.positions[i2];
+
+            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+            let cross = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let len = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+            assert!(len > 1e-6, "Degenerate triangle");
+            let geo_normal = [cross[0] / len, cross[1] / len, cross[2] / len];
+
+            let attr_normal = mesh.normals[i0];
+            let dot = geo_normal[0] * attr_normal[0]
+                + geo_normal[1] * attr_normal[1]
+                + geo_normal[2] * attr_normal[2];
+            assert!(
+                dot > 0.99,
+                "Winding-derived normal {geo_normal:?} doesn't match \
+                 attribute normal {attr_normal:?} (dot={dot:.4})"
+            );
         }
     }
 }
