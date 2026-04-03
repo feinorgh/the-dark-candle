@@ -4,6 +4,7 @@ use clap::Parser;
 use the_dark_candle::{
     behavior::BehaviorPlugin,
     biology::BiologyPlugin,
+    bodies::BodiesPlugin,
     camera::CameraPlugin,
     chemistry::ChemistryPlugin,
     data::DataPlugin,
@@ -217,6 +218,7 @@ fn main() {
         BiologyPlugin,
         ProcgenPlugin,
         BehaviorPlugin,
+        BodiesPlugin,
         SocialPlugin,
         PersistencePlugin,
         WeatherPlugin,

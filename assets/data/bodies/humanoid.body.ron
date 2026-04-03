@@ -1,0 +1,67 @@
+// Humanoid body composition data
+//
+// Tissue layer densities (kg/m³):
+//   muscle: 1060  — skeletal muscle (ICRP Publication 89)
+//   fat:     920  — adipose tissue
+//   skin:   1100  — dermis + epidermis
+//
+// Thicknesses in metres.
+BodyData(
+    species: "humanoid",
+    regions: [
+        BodyRegion(
+            name: "head",
+            bone: "head",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.005, density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.006, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+        BodyRegion(
+            name: "torso",
+            bone: "chest",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.04,  density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.015, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+        BodyRegion(
+            name: "left_arm",
+            bone: "left_upper_arm",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.025, density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.008, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+        BodyRegion(
+            name: "right_arm",
+            bone: "right_upper_arm",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.025, density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.008, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+        BodyRegion(
+            name: "left_leg",
+            bone: "left_foot",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.04,  density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.012, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+        BodyRegion(
+            name: "right_leg",
+            bone: "right_foot",
+            layers: [
+                TissueLayer(tissue: "muscle", thickness: 0.04,  density: 1060.0),
+                TissueLayer(tissue: "fat",    thickness: 0.012, density: 920.0),
+                TissueLayer(tissue: "skin",   thickness: 0.002, density: 1100.0),
+            ],
+        ),
+    ],
+)

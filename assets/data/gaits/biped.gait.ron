@@ -1,0 +1,146 @@
+// assets/data/gaits/biped.gait.ron
+// Realistic biped gait cycles.
+//
+// Bone angle conventions:
+//   local_rotation: (pitch_rad, yaw_rad, roll_rad) — Euler XYZ
+//
+// Human locomotion SI parameters (sources: Winter 2009, Cavanagh & Lafortune 1980):
+//   Walk:  v ≈ 0.1–2.5 m/s, cycle ≈ 1.0 s, energy ≈ 60 J/m
+//   Run:   v ≈ 2.5–8.0 m/s, cycle ≈ 0.6 s, energy ≈ 160 J/m
+(
+    species: "biped",
+    gaits: [
+        // ── Idle ─────────────────────────────────────────────────────────────
+        (
+            name: "idle",
+            phases: [
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: (0.05, 0.0, 0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: (0.0,  0.0, 0.0)  ),
+                        ( bone: "right_thigh", local_rotation: (0.0,  0.0, 0.0)  ),
+                        ( bone: "left_shin",   local_rotation: (0.0,  0.0, 0.0)  ),
+                        ( bone: "right_shin",  local_rotation: (0.0,  0.0, 0.0)  ),
+                        ( bone: "left_foot",   local_rotation: (0.0,  0.0, 0.0)  ),
+                        ( bone: "right_foot",  local_rotation: (0.0,  0.0, 0.0)  ),
+                    ],
+                ),
+            ],
+            cycle_duration_s: 1.0,
+            energy_cost_j_per_m: 0.0,
+            min_speed: 0.0,
+            max_speed: 0.1,
+        ),
+        // ── Walk ─────────────────────────────────────────────────────────────
+        // Four-phase walk: right-heel-strike, right-toe-off, left-heel-strike, left-toe-off.
+        // Peak hip flexion ≈ 0.52 rad (30°); peak knee flexion ≈ 0.70 rad (40°)
+        // during swing phase.  Ankle dorsiflexion at heel strike ≈ 0.09 rad (5°).
+        (
+            name: "walk",
+            phases: [
+                // Phase 0: right heel strike
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.05,  0.02, 0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: (-0.35,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: ( 0.52,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 0.35,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: (-0.20,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: ( 0.09,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: ( 0.45,  0.0,  0.0)  ),
+                        ( bone: "right_arm",   local_rotation: (-0.45,  0.0,  0.0)  ),
+                    ],
+                ),
+                // Phase 1: right mid-stance / left swing initiation
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: (-0.10,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: ( 0.10,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 0.70,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 0.15,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: (-0.10,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: ( 0.10,  0.0,  0.0)  ),
+                        ( bone: "right_arm",   local_rotation: (-0.10,  0.0,  0.0)  ),
+                    ],
+                ),
+                // Phase 2: left heel strike
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.05, -0.02, 0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: ( 0.52,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: (-0.35,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 0.35,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: ( 0.09,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: (-0.20,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: (-0.45,  0.0,  0.0)  ),
+                        ( bone: "right_arm",   local_rotation: ( 0.45,  0.0,  0.0)  ),
+                    ],
+                ),
+                // Phase 3: left mid-stance / right swing initiation
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: ( 0.10,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: (-0.10,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 0.15,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 0.70,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: (-0.10,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: ( 0.05,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: (-0.10,  0.0,  0.0)  ),
+                        ( bone: "right_arm",   local_rotation: ( 0.10,  0.0,  0.0)  ),
+                    ],
+                ),
+            ],
+            cycle_duration_s: 1.0,
+            energy_cost_j_per_m: 60.0,
+            min_speed: 0.1,
+            max_speed: 2.5,
+        ),
+        // ── Run ──────────────────────────────────────────────────────────────
+        // Two-phase running gait: right-foot contact, left-foot contact.
+        // Greater hip flexion (≈0.87 rad, 50°) and knee flexion (≈1.22 rad, 70°)
+        // than walking.  Trunk forward lean ≈ 0.17 rad (10°).
+        // Energy: ≈160 J/m at 3.5 m/s (human elite runner ≈100–200 J/m).
+        (
+            name: "run",
+            phases: [
+                // Phase 0: right foot contact
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.17,  0.04, 0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: (-0.70,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: ( 0.87,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 1.22,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 0.10,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: ( 0.35,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: (-0.17,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: ( 0.87,  0.0,  0.07) ),
+                        ( bone: "right_arm",   local_rotation: (-0.87,  0.0, -0.07) ),
+                    ],
+                ),
+                // Phase 1: left foot contact
+                (
+                    bone_targets: [
+                        ( bone: "spine",       local_rotation: ( 0.17, -0.04, 0.0)  ),
+                        ( bone: "left_thigh",  local_rotation: ( 0.87,  0.0,  0.0)  ),
+                        ( bone: "right_thigh", local_rotation: (-0.70,  0.0,  0.0)  ),
+                        ( bone: "left_shin",   local_rotation: ( 0.10,  0.0,  0.0)  ),
+                        ( bone: "right_shin",  local_rotation: ( 1.22,  0.0,  0.0)  ),
+                        ( bone: "left_foot",   local_rotation: (-0.17,  0.0,  0.0)  ),
+                        ( bone: "right_foot",  local_rotation: ( 0.35,  0.0,  0.0)  ),
+                        ( bone: "left_arm",    local_rotation: (-0.87,  0.0, -0.07) ),
+                        ( bone: "right_arm",   local_rotation: ( 0.87,  0.0,  0.07) ),
+                    ],
+                ),
+            ],
+            cycle_duration_s: 0.6,
+            energy_cost_j_per_m: 160.0,
+            min_speed: 2.5,
+            max_speed: 12.0,
+        ),
+    ],
+)

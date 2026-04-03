@@ -414,5 +414,44 @@
     "reproduction": "Run with --seed 999 --scene spherical_planet. Terrain is identical to --seed 42.",
     "resolution": "Two bugs: (1) apply_planet_config_from_asset overwrote CLI config with planet_config.ron (seed=42). Now skips override when SkipWorldCreation present. (2) UI preset selection didn't rebuild terrain generators. Added rebuild_terrain_on_config_change with Bevy change detection.",
     "resolved_commit": "0205028"
+  },
+  {
+    "id": "BODIES-001",
+    "title": "bodies/injury.rs uses Bevy 0.14 EventWriter/EventReader and Event derive",
+    "category": "ecs",
+    "severity": "high",
+    "status": "resolved",
+    "suspected_files": [
+      "src/bodies/injury.rs"
+    ],
+    "reproduction": "cargo check --tests fails with 'cannot find type EventWriter/EventReader' in injury.rs",
+    "resolution": "Changed #[derive(Event)] to #[derive(Message)], EventWriter to MessageWriter, EventReader to MessageReader, and add_event to add_message. Fixed E0507 move-out-of-borrow by matching &region.tier. Fixed in Phase 10 skeleton implementation.",
+    "commit": "HEAD"
+  },
+  {
+    "id": "BODIES-002",
+    "title": "bodies/plant.rs uses Vec<Transform> in Deserialize asset (Transform lacks serde)",
+    "category": "serialization",
+    "severity": "high",
+    "status": "resolved",
+    "suspected_files": [
+      "src/bodies/plant.rs"
+    ],
+    "reproduction": "cargo check fails: Transform does not impl Deserialize",
+    "resolution": "Changed Vec<Transform> to Vec<super::skeleton::BoneTransform> which is serde-compatible. Test code updated to use crate-absolute path.",
+    "commit": "HEAD"
+  },
+  {
+    "id": "BODIES-003",
+    "title": "bodies/locomotion.rs references RayHit.pos field which does not exist",
+    "category": "physics",
+    "severity": "high",
+    "status": "resolved",
+    "suspected_files": [
+      "src/bodies/locomotion.rs"
+    ],
+    "reproduction": "cargo check fails: no field pos on RayHit, available fields are x,y,z",
+    "resolution": "Changed hit.pos[1] to hit.y",
+    "commit": "HEAD"
   }
 ]

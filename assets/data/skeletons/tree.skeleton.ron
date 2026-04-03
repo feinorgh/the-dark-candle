@@ -1,0 +1,167 @@
+// Tree skeleton — 7 bones
+//
+// Models a simplified tree structure for physics-driven wind sway.
+// All lengths in metres, masses in kg.
+//
+// Bone index map:
+//  0  root      (anchor, no parent — fixed in the ground)
+//  1  trunk     (parent 0)
+//  2  branch_n  (parent 1, extends north/+Z)
+//  3  branch_s  (parent 1, extends south/-Z)
+//  4  branch_e  (parent 1, extends east/+X)
+//  5  branch_w  (parent 1, extends west/-X)
+//  6  canopy    (parent 1, top of trunk)
+SkeletonData(
+    species: "tree",
+    bones: [
+        BoneData(
+            name: "root",
+            parent: None,
+            length: 0.3,
+            mass: 50.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [0.0, 0.0, 0.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "trunk",
+            parent: Some(0),
+            length: 3.5,
+            mass: 120.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [0.0, 0.3, 0.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "branch_n",
+            parent: Some(1),
+            length: 1.8,
+            mass: 15.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [0.0, 2.8, 0.3],
+                rotation: [0.259, 0.0, 0.0, 0.966],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "branch_s",
+            parent: Some(1),
+            length: 1.8,
+            mass: 15.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [0.0, 2.8, -0.3],
+                rotation: [-0.259, 0.0, 0.0, 0.966],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "branch_e",
+            parent: Some(1),
+            length: 1.8,
+            mass: 15.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [0.3, 2.8, 0.0],
+                rotation: [0.0, 0.0, -0.259, 0.966],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "branch_w",
+            parent: Some(1),
+            length: 1.8,
+            mass: 15.0,
+            material: "wood",
+            rest_transform: BoneTransform(
+                translation: [-0.3, 2.8, 0.0],
+                rotation: [0.0, 0.0, 0.259, 0.966],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+        BoneData(
+            name: "canopy",
+            parent: Some(1),
+            length: 0.5,
+            mass: 30.0,
+            material: "leaves",
+            rest_transform: BoneTransform(
+                translation: [0.0, 3.5, 0.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            ),
+        ),
+    ],
+    joints: [
+        JointData(
+            bone_a: 0,
+            bone_b: 1,
+            joint_type: Fixed,
+            limits: AngularLimits(
+                min: [0.0, 0.0, 0.0],
+                max: [0.0, 0.0, 0.0],
+            ),
+        ),
+        JointData(
+            bone_a: 1,
+            bone_b: 2,
+            joint_type: BallSocket,
+            limits: AngularLimits(
+                min: [-0.52, -0.26, -0.52],
+                max: [0.52, 0.26, 0.52],
+            ),
+        ),
+        JointData(
+            bone_a: 1,
+            bone_b: 3,
+            joint_type: BallSocket,
+            limits: AngularLimits(
+                min: [-0.52, -0.26, -0.52],
+                max: [0.52, 0.26, 0.52],
+            ),
+        ),
+        JointData(
+            bone_a: 1,
+            bone_b: 4,
+            joint_type: BallSocket,
+            limits: AngularLimits(
+                min: [-0.52, -0.26, -0.52],
+                max: [0.52, 0.26, 0.52],
+            ),
+        ),
+        JointData(
+            bone_a: 1,
+            bone_b: 5,
+            joint_type: BallSocket,
+            limits: AngularLimits(
+                min: [-0.52, -0.26, -0.52],
+                max: [0.52, 0.26, 0.52],
+            ),
+        ),
+        JointData(
+            bone_a: 1,
+            bone_b: 6,
+            joint_type: BallSocket,
+            limits: AngularLimits(
+                min: [-0.17, -0.17, -0.17],
+                max: [0.17, 0.17, 0.17],
+            ),
+        ),
+    ],
+    rest_pose: [
+        BoneTransform(translation: [0.0, 0.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [0.0, 0.3, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [0.0, 2.8, 0.3], rotation: [0.259, 0.0, 0.0, 0.966], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [0.0, 2.8, -0.3], rotation: [-0.259, 0.0, 0.0, 0.966], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [0.3, 2.8, 0.0], rotation: [0.0, 0.0, -0.259, 0.966], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [-0.3, 2.8, 0.0], rotation: [0.0, 0.0, 0.259, 0.966], scale: [1.0, 1.0, 1.0]),
+        BoneTransform(translation: [0.0, 3.5, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 1.0, 1.0]),
+    ],
+)

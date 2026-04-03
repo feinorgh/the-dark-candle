@@ -216,7 +216,7 @@ sunlight propagation.
 **New fields on `MaterialData`:** `refractive_index`, `reflectivity`, `absorption_rgb`
 **New constant:** `SPEED_OF_LIGHT = 299_792_458.0 m/s`
 
-### Phase 10: Entity Bodies & Organic Physics (planned)
+### Phase 10: Entity Bodies & Organic Physics ✅
 
 Physical embodiment for all living entities — articulated skeletons, soft/rigid
 tissue physics, procedural locomotion, injury model, and plant body physics.
@@ -263,13 +263,17 @@ Full design: **[atmosphere-simulation.md](atmosphere-simulation.md)**
 
 ---
 
-## Phase 10 — Entity Bodies & Organic Physics (planned)
+## Phase 10 — Entity Bodies & Organic Physics ✅
 
 Physical embodiment for all living entities. Data-driven skeletons
 (`.skeleton.ron`), soft/rigid tissue layers, procedural IK locomotion (walk,
 fly, swim, climb), physical perception (eye FOV cones, ear directionality),
 tiered injury model (bruise → fracture → sever), plant body physics with wind
 response and felling. 10 implementation steps.
+
+New module: `src/bodies/` (skeleton, tissue, ik, locomotion, player, perception,
+injury, plant). New assets: `assets/data/skeletons/`, `assets/data/bodies/`,
+`assets/data/gaits/`.
 
 Full design: **[entity-bodies.md](entity-bodies.md)**
 
