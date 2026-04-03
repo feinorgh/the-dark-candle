@@ -1,4 +1,4 @@
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -48,6 +48,8 @@ pub struct FpsCamera {
     pub grounded: bool,
     /// Whether gravity is enabled (toggle with G key).
     pub gravity_enabled: bool,
+    /// Fly-mode speed multiplier (scroll wheel adjusts, default 1.0).
+    pub fly_speed_multiplier: f32,
 }
 
 /// Player eye height above the ground surface (m).
@@ -78,6 +80,7 @@ impl Default for FpsCamera {
             vertical_velocity: 0.0,
             grounded: false,
             gravity_enabled: true,
+            fly_speed_multiplier: 1.0,
         }
     }
 }
@@ -267,6 +270,7 @@ fn camera_look(
 fn camera_move(
     cursor_q: Query<&CursorOptions, With<PrimaryWindow>>,
     key: Res<ButtonInput<KeyCode>>,
+    scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
     planet: Res<PlanetConfig>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
@@ -356,9 +360,28 @@ fn camera_move(
         direction = direction.normalize();
     }
 
+    // Fly-mode: scroll wheel adjusts speed multiplier (2× per notch)
+    if !cam.gravity_enabled && scroll.delta.y != 0.0 {
+        let old = cam.fly_speed_multiplier;
+        cam.fly_speed_multiplier *= 2.0_f32.powf(scroll.delta.y);
+        cam.fly_speed_multiplier = cam.fly_speed_multiplier.clamp(0.25, 512.0);
+        if (cam.fly_speed_multiplier - old).abs() > f32::EPSILON {
+            info!(
+                "Fly speed: {:.0} m/s (×{:.2})",
+                FLY_SPEED * cam.fly_speed_multiplier,
+                cam.fly_speed_multiplier,
+            );
+        }
+    }
+
     // Determine effective movement speed
     let effective_speed = if !cam.gravity_enabled {
-        FLY_SPEED
+        let base = FLY_SPEED * cam.fly_speed_multiplier;
+        if key.pressed(KeyCode::ShiftLeft) {
+            base * 5.0
+        } else {
+            base
+        }
     } else if key.pressed(KeyCode::ControlLeft) {
         SPRINT_SPEED
     } else {
@@ -467,6 +490,7 @@ mod tests {
         assert_eq!(cam.vertical_velocity, 0.0);
         assert!(!cam.grounded);
         assert!(cam.gravity_enabled);
+        assert_eq!(cam.fly_speed_multiplier, 1.0);
     }
 
     #[test]
@@ -506,6 +530,28 @@ mod tests {
     #[test]
     fn sprint_faster_than_walk() {
         const { assert!(SPRINT_SPEED > WALK_SPEED) };
+    }
+
+    #[test]
+    fn fly_speed_multiplier_range() {
+        // At min multiplier, speed should still be usable (≥5 m/s)
+        let min_speed = FLY_SPEED * 0.25;
+        assert!(min_speed >= 5.0, "min fly speed {min_speed} too low");
+        // At max multiplier, speed should cover the planet quickly
+        let max_speed = FLY_SPEED * 512.0;
+        assert!(max_speed >= 10_000.0, "max fly speed {max_speed} too low for 32km planet");
+    }
+
+    #[test]
+    fn fly_speed_multiplier_clamp() {
+        let mut cam = FpsCamera::default();
+        cam.fly_speed_multiplier = 1000.0;
+        cam.fly_speed_multiplier = cam.fly_speed_multiplier.clamp(0.25, 512.0);
+        assert_eq!(cam.fly_speed_multiplier, 512.0);
+
+        cam.fly_speed_multiplier = 0.01;
+        cam.fly_speed_multiplier = cam.fly_speed_multiplier.clamp(0.25, 512.0);
+        assert_eq!(cam.fly_speed_multiplier, 0.25);
     }
 
     #[test]
