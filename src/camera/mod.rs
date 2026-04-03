@@ -54,7 +54,7 @@ pub struct FpsCamera {
 
 /// Player eye height above the ground surface (m).
 /// Average adult eye height when standing: ~1.7 m.
-const EYE_HEIGHT: f32 = 1.7;
+pub const EYE_HEIGHT: f32 = 1.7;
 
 /// Player walk speed (m/s). Average human: ~1.4 m/s.
 const WALK_SPEED: f32 = 5.0;

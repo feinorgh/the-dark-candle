@@ -32,6 +32,7 @@ impl Plugin for MapPlugin {
                     ui::tab_switch,
                     ui::scroll_zoom,
                     ui::map_pan,
+                    ui::map_teleport,
                     local_map::update_local_map,
                     global_map::update_global_map,
                 )

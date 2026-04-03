@@ -3,6 +3,7 @@
 use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 /// Which map view is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -147,7 +148,7 @@ pub fn spawn_map_overlay(mut commands: Commands, mut time: ResMut<Time<Virtual>>
 
             // Help text
             parent.spawn((
-                Text::new("[M] Close  [Tab] Switch View  [Scroll] Zoom"),
+                Text::new("[M] Close  [Tab] Switch View  [Scroll] Zoom  [Right-Click] Teleport"),
                 TextFont {
                     font_size: 12.0,
                     ..default()
@@ -285,5 +286,239 @@ pub fn map_pan(
                 .global_pan
                 .clamp(Vec2::splat(-max_pan), Vec2::splat(max_pan));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pixel → lat/lon inverse equirectangular mapping
+// ---------------------------------------------------------------------------
+
+/// Convert a screen-space cursor position into (lat, lon) in radians,
+/// accounting for the map container's zoom and pan state.
+///
+/// `cursor_pos` is in window coordinates (origin top-left).
+/// `container_rect` is the computed rect of the map image node.
+///
+/// Returns `None` if the cursor is outside the map image bounds.
+pub fn pixel_to_lat_lon(
+    cursor_pos: Vec2,
+    container_rect: &ComputedNode,
+    container_global: &GlobalTransform,
+    state: &MapViewState,
+) -> Option<(f64, f64)> {
+    use std::f64::consts::{PI, TAU};
+
+    // Map image rect in window space.
+    let size = container_rect.size();
+    if size.x < 1.0 || size.y < 1.0 {
+        return None;
+    }
+    // The node's global translation gives us the centre of the node in screen space.
+    let center = container_global.translation().truncate();
+    let half = size * 0.5;
+    let min = center - half;
+
+    // Normalise cursor position to [0,1] within the container.
+    let rel = cursor_pos - min;
+    let u_screen = rel.x / size.x;
+    let v_screen = rel.y / size.y;
+
+    if !(0.0..=1.0).contains(&u_screen) || !(0.0..=1.0).contains(&v_screen) {
+        return None; // outside the map image
+    }
+
+    // Invert zoom + pan to get base UV.
+    let zoom = state.global_zoom;
+    let pan = state.global_pan;
+    let u = (u_screen - 0.5 - pan.x * zoom) / zoom + 0.5;
+    let v = (v_screen - 0.5 - pan.y * zoom) / zoom + 0.5;
+
+    // Equirectangular: u ∈ [0,1] → lon ∈ [-π, π], v ∈ [0,1] → lat ∈ [π/2, -π/2]
+    let lon = ((u as f64) - 0.5) * TAU;
+    let lat = (0.5 - (v as f64)) * PI;
+
+    Some((lat.clamp(-PI / 2.0, PI / 2.0), lon.clamp(-PI, PI)))
+}
+
+// ---------------------------------------------------------------------------
+// Right-click teleport (global map)
+// ---------------------------------------------------------------------------
+
+use crate::camera::{FpsCamera, EYE_HEIGHT};
+use crate::game_state::GameState;
+use crate::hud::Player;
+use crate::world::chunk_manager::TerrainGeneratorRes;
+use crate::world::planet::PlanetConfig;
+
+#[allow(clippy::too_many_arguments)]
+pub fn map_teleport(
+    mouse: Res<ButtonInput<MouseButton>>,
+    state: Res<MapViewState>,
+    planet_config: Option<Res<PlanetConfig>>,
+    terrain_gen: Option<Res<TerrainGeneratorRes>>,
+    window_q: Query<&Window, With<PrimaryWindow>>,
+    map_node_q: Query<(&ComputedNode, &GlobalTransform), With<MapImageNode>>,
+    mut camera_q: Query<(&mut Transform, &mut FpsCamera), With<Player>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if state.view != MapView::Global {
+        return;
+    }
+    if !mouse.just_pressed(MouseButton::Right) {
+        return;
+    }
+
+    // Get cursor position from the primary window.
+    let Ok(window) = window_q.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    // Get the map image node's computed layout.
+    let Ok((computed_node, global_tf)) = map_node_q.single() else {
+        return;
+    };
+
+    let Some((lat, lon)) = pixel_to_lat_lon(cursor_pos, computed_node, global_tf, &state) else {
+        info!("Teleport: click outside map bounds");
+        return;
+    };
+
+    let Some(planet) = planet_config else {
+        warn!("Teleport: no PlanetConfig available");
+        return;
+    };
+    let Some(tgen) = terrain_gen else {
+        warn!("Teleport: no terrain generator available");
+        return;
+    };
+
+    // Sample terrain height at target.
+    let surface_r = tgen.0.sample_surface_radius_at(lat, lon) as f32;
+    let sea_r = planet.sea_level_radius as f32;
+
+    // Build world position.
+    let dir = Vec3::new(
+        lat.cos() as f32 * lon.cos() as f32,
+        lat.sin() as f32,
+        lat.cos() as f32 * lon.sin() as f32,
+    )
+    .normalize();
+    let teleport_pos = dir * (surface_r.max(sea_r) + EYE_HEIGHT);
+
+    // Move the camera.
+    if let Ok((mut tf, mut fps)) = camera_q.single_mut() {
+        tf.translation = teleport_pos;
+        // Reset vertical velocity so we don't carry momentum.
+        fps.vertical_velocity = 0.0;
+        fps.grounded = false;
+
+        let lat_deg = lat.to_degrees();
+        let lon_deg = lon.to_degrees();
+        let ns = if lat_deg >= 0.0 { "N" } else { "S" };
+        let ew = if lon_deg >= 0.0 { "E" } else { "W" };
+        info!(
+            "Teleported to {:.1}°{ns} {:.1}°{ew} (r={:.0}m)",
+            lat_deg.abs(),
+            lon_deg.abs(),
+            surface_r.max(sea_r),
+        );
+    }
+
+    // Switch back to playing.
+    next_state.set(GameState::Playing);
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: build a `ComputedNode` with a given size.
+    fn make_computed_node(width: f32, height: f32) -> ComputedNode {
+        ComputedNode {
+            size: Vec2::new(width, height),
+            unrounded_size: Vec2::new(width, height),
+            inverse_scale_factor: 1.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pixel_to_lat_lon_center_is_equator_prime() {
+        // No zoom, no pan — the center of the map should be (0, 0).
+        let state = MapViewState {
+            view: MapView::Global,
+            global_zoom: 1.0,
+            global_pan: Vec2::ZERO,
+            ..Default::default()
+        };
+
+        // Simulate a 1024×512 container centered at (512, 256) in screen space.
+        let computed = make_computed_node(1024.0, 512.0);
+        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+
+        // Click at the center of the container.
+        let cursor = Vec2::new(512.0, 256.0);
+
+        let result = pixel_to_lat_lon(cursor, &computed, &global_tf, &state);
+        assert!(result.is_some());
+        let (lat, lon) = result.unwrap();
+        assert!(lat.abs() < 0.01, "center lat should be ~0, got {lat}");
+        assert!(lon.abs() < 0.01, "center lon should be ~0, got {lon}");
+    }
+
+    #[test]
+    fn pixel_to_lat_lon_top_left_is_north_west() {
+        let state = MapViewState {
+            view: MapView::Global,
+            global_zoom: 1.0,
+            global_pan: Vec2::ZERO,
+            ..Default::default()
+        };
+
+        let computed = make_computed_node(1024.0, 512.0);
+        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+
+        // Top-left corner: should be ~(90°N, -180°)
+        let cursor = Vec2::new(0.0, 0.0);
+        let (lat, lon) = pixel_to_lat_lon(cursor, &computed, &global_tf, &state).unwrap();
+        assert!(lat > 1.5, "top-left lat should be ~π/2, got {lat}");
+        assert!(lon < -3.0, "top-left lon should be ~-π, got {lon}");
+    }
+
+    #[test]
+    fn pixel_to_lat_lon_outside_returns_none() {
+        let state = MapViewState::default();
+        let computed = make_computed_node(1024.0, 512.0);
+        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+
+        // Far outside the map image bounds.
+        let cursor = Vec2::new(2000.0, 2000.0);
+        assert!(pixel_to_lat_lon(cursor, &computed, &global_tf, &state).is_none());
+    }
+
+    #[test]
+    fn pixel_to_lat_lon_with_zoom_and_pan() {
+        let state = MapViewState {
+            view: MapView::Global,
+            global_zoom: 2.0,
+            global_pan: Vec2::new(0.1, -0.05),
+            ..Default::default()
+        };
+
+        let computed = make_computed_node(1024.0, 512.0);
+        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+
+        // Center click at 2× zoom with pan — should NOT be (0,0).
+        let cursor = Vec2::new(512.0, 256.0);
+        let (lat, lon) = pixel_to_lat_lon(cursor, &computed, &global_tf, &state).unwrap();
+        // With pan (0.1, -0.05) at zoom 2, the center maps to a shifted lat/lon.
+        assert!(lat.abs() > 0.05 || lon.abs() > 0.05, "should be offset from origin");
     }
 }
