@@ -462,7 +462,9 @@ fn resolve_spawn_location(cli: &Cli, app: &mut App) {
                 std::process::exit(1);
             });
             if !(-90.0..=90.0).contains(&lat_deg) || !(-180.0..=180.0).contains(&lon_deg) {
-                eprintln!("Coordinates out of range: lat must be [-90, 90], lon must be [-180, 180]");
+                eprintln!(
+                    "Coordinates out of range: lat must be [-90, 90], lon must be [-180, 180]"
+                );
                 std::process::exit(1);
             }
             SpawnLocation {

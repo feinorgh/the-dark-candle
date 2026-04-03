@@ -148,6 +148,17 @@ fn amr_fluid_step(
             continue;
         };
 
+        // Sync external changes (FLIP deposits, chemistry state transitions) into
+        // the FluidGrid before each step. Uses a read-only borrow that drops
+        // before the mutable sync_to_chunk borrow at the end of the iteration.
+        {
+            if let Some(entity) = chunk_map.get(&coord)
+                && let Ok(chunk) = chunks.get(entity)
+            {
+                sync::sync_from_chunk(chunk, grid, None);
+            }
+        }
+
         step::fluid_step(grid, None, &config.0, dt);
 
         if let Some(entity) = chunk_map.get(&coord)

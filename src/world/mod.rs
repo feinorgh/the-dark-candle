@@ -126,7 +126,10 @@ impl Plugin for WorldPlugin {
 
         app.add_systems(Update, sync_color_map_from_registry)
             .add_systems(Update, apply_planet_config_from_asset)
-            .add_systems(Update, rebuild_terrain_on_config_change.after(apply_planet_config_from_asset))
+            .add_systems(
+                Update,
+                rebuild_terrain_on_config_change.after(apply_planet_config_from_asset),
+            )
             .add_systems(
                 PostStartup,
                 rebuild_terrain_gen_if_planetary.in_set(WorldSet::ChunkManagement),

@@ -290,16 +290,11 @@ Full design: **[structural-construction.md](structural-construction.md)**
 ## What's Next
 
 With the core simulation stack complete, spherical terrain done (Phase 8,
-including planetary terrain connection), atmosphere simulation implemented
-(Phase 9), atmospheric sky rendering integrated into gameplay, in-game map
-system operational, and structural construction designed (Phase 11), the
-project also needs integration, polish, and gameplay. These are not yet
-planned in detail — each will get a session plan when started.
-
-**Near-term visual integration (Phase 9b–9d):** The chemistry/heat physics are
-fully implemented and tested but not yet running in-game or visible to the
-player. Phases 9b (chemistry runtime), 9c (thermal glow), and 9d (time-of-day)
-will bridge this gap — see their detailed sections below Phase 9a.
+including planetary terrain connection), atmosphere simulation fully implemented
+(Phase 9, all sub-phases 9a–9d), atmospheric sky rendering integrated into
+gameplay, in-game map system operational, and structural construction designed
+(Phase 11), the project needs integration, polish, and gameplay. These are not
+yet planned in detail — each will get a session plan when started.
 
 ### Terrain Detail & World Generation Options ✅
 
@@ -344,12 +339,27 @@ Dual-mode map accessible via M key: local discovery map + global planet map.
 
 **Module:** `src/map/` (discovery.rs, local_map.rs, global_map.rs, ui.rs)
 
-### Coupling & Integration
-- **Cross-model fluid coupling** — AMR ↔ LBM mass/heat exchange at liquid-gas
-  interfaces; FLIP particles entering/leaving LBM gas fields
-- **Plugin activation** — wire AmrFluidPlugin, LbmGasPlugin, FlipPicPlugin into
-  PhysicsPlugin::build() for runtime use (currently test-only). Physics are also
-  validated by the [simulation test framework](simulation-test-system.md).
+### Coupling & Integration ✅
+
+Cross-model fluid coupling between the three physics solvers:
+
+- **Plugin activation** ✅ — AmrFluidPlugin, LbmGasPlugin, FlipPicPlugin wired
+  into PhysicsPlugin::build() for runtime use. Physics validated by the
+  [simulation test framework](simulation-test-system.md).
+- **Virga moisture return** ✅ — `apply_virga()` in `precipitation.rs` now
+  takes `&mut LbmGrid`. Evaporated particle mass is converted from kg to
+  specific humidity (kg/kg) using the ideal gas law and injected back into the
+  LBM moisture field, conserving total atmospheric water.
+- **AMR sync-from-chunk per step** ✅ — `amr_fluid_step()` calls
+  `sync::sync_from_chunk()` before each step, picking up FLIP-deposited voxels
+  and chemistry state transitions (ice melt, water boiling) within the same
+  FixedUpdate tick instead of waiting for the next chunk load.
+- **Lazy FluidGrid initialisation** ✅ — `CouplingPlugin` adds a
+  `lazy_init_fluid_grids` system (`src/physics/coupling.rs`) that scans loaded
+  chunks every 1.5 s and creates FluidGrids for chunks that gained liquid from
+  FLIP deposition after initial load.
+
+**New module:** `src/physics/coupling.rs`
 
 ### Advanced Physics Systems (planned)
 

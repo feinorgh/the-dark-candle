@@ -12,7 +12,7 @@
 // lose mass at a rate proportional to the saturation deficit.
 
 use super::types::LbmGrid;
-use crate::physics::atmosphere::{self, AtmosphereConfig};
+use crate::physics::atmosphere::{self, AtmosphereConfig, R_DRY_AIR};
 use crate::physics::flip_pic::types::Particle;
 use crate::world::voxel::MaterialId;
 
@@ -131,11 +131,13 @@ pub fn precipitate(
 ///
 /// Particles passing through unsaturated air lose mass proportional to the
 /// saturation deficit. When mass reaches zero, the particle is fully evaporated.
+/// Evaporated water mass is returned to the LBM moisture field at the particle's
+/// grid cell, conserving total water mass in the atmosphere.
 ///
 /// Returns the number of particles fully evaporated.
 pub fn apply_virga(
     particles: &mut Vec<Particle>,
-    grid: &LbmGrid,
+    grid: &mut LbmGrid,
     temperatures: &[f32],
     pressures: &[f32],
     dt: f32,
@@ -143,6 +145,9 @@ pub fn apply_virga(
     let size = grid.size();
     let mut evaporated_count = 0;
     let virga_rate: f32 = 5e-5; // kg/s per unit deficit
+
+    // Collect (cell_index, moisture_delta) pairs to avoid borrow conflicts.
+    let mut moisture_deltas: Vec<(usize, f32)> = Vec::new();
 
     for particle in particles.iter_mut() {
         if !particle.is_airborne() {
@@ -178,14 +183,31 @@ pub fn apply_virga(
         // Only evaporate in subsaturated air
         if q < q_sat {
             let deficit = q_sat - q;
-            let mass_loss = virga_rate * deficit * dt;
+            let mass_loss = (virga_rate * deficit * dt).min(particle.mass.max(0.0));
             particle.mass -= mass_loss;
 
             if particle.mass <= 0.0 {
                 particle.mass = 0.0;
                 evaporated_count += 1;
             }
+
+            // Convert particle mass loss (kg) to specific humidity (kg/kg) for the
+            // gas cell. Dry air density from ideal gas law: ρ = P / (R_dry × T).
+            // Voxel volume is 1 m³, so Δq = Δm / (ρ × 1 m³) = Δm × R_dry × T / P.
+            let air_density = (pres / (R_DRY_AIR * temp.max(1.0))).max(1e-3);
+            let moisture_delta = mass_loss / air_density;
+            moisture_deltas.push((idx, moisture_delta));
         }
+    }
+
+    // Apply moisture deltas to the LBM grid, capped at saturation.
+    for (idx, delta) in moisture_deltas {
+        let (x, y, z) = grid.coords_from_index(idx);
+        let temp = temperatures[idx];
+        let pres = pressures[idx];
+        let q_sat = atmosphere::saturation_humidity(temp, pres);
+        let cell = grid.get_mut(x, y, z);
+        cell.moisture = (cell.moisture + delta).min(q_sat);
     }
 
     // Remove fully evaporated particles
@@ -345,7 +367,7 @@ mod tests {
     #[test]
     fn virga_evaporates_particles_in_dry_air() {
         let size = 8;
-        let grid = make_box_grid(size);
+        let mut grid = make_box_grid(size);
         let n = size * size * size;
         let temps = vec![300.0_f32; n];
         let pressures = vec![101_325.0_f32; n];
@@ -361,7 +383,7 @@ mod tests {
             .with_temperature(288.0),
         ];
 
-        let evaporated = apply_virga(&mut particles, &grid, &temps, &pressures, 1.0);
+        let evaporated = apply_virga(&mut particles, &mut grid, &temps, &pressures, 1.0);
 
         if evaporated > 0 {
             // Particle fully evaporated
@@ -401,7 +423,7 @@ mod tests {
             .with_temperature(temp),
         ];
 
-        apply_virga(&mut particles, &grid, &temps, &pressures, 1.0);
+        apply_virga(&mut particles, &mut grid, &temps, &pressures, 1.0);
 
         // Particle mass should be unchanged in saturated air
         assert!(
@@ -434,6 +456,43 @@ mod tests {
             assert_eq!(a.position, b.position);
             assert_eq!(a.velocity, b.velocity);
             assert_eq!(a.material, b.material);
+        }
+    }
+
+    #[test]
+    fn virga_returns_moisture_to_lbm_grid() {
+        let size = 8;
+        let mut grid = make_box_grid(size);
+
+        // Fully dry air in the particle's cell
+        let n = size * size * size;
+        let temps = vec![300.0_f32; n];
+        let pressures = vec![101_325.0_f32; n];
+
+        let initial_moisture = grid.get(4, 4, 4).moisture;
+
+        let mut particles = vec![
+            Particle::new(
+                [4.5, 4.5, 4.5],
+                [0.0, -5.0, 0.0],
+                DROPLET_MASS,
+                MaterialId::WATER,
+            )
+            .with_temperature(300.0),
+        ];
+
+        apply_virga(&mut particles, &mut grid, &temps, &pressures, 1.0);
+
+        let final_moisture = grid.get(4, 4, 4).moisture;
+
+        // Evaporated mass must have been returned as moisture to the LBM cell.
+        // If any mass was lost from the particle, moisture must have increased.
+        let mass_lost = DROPLET_MASS - particles.first().map(|p| p.mass).unwrap_or(0.0).max(0.0);
+        if mass_lost > 0.0 {
+            assert!(
+                final_moisture > initial_moisture,
+                "Evaporated mass must increase LBM cell moisture: initial={initial_moisture}, final={final_moisture}"
+            );
         }
     }
 }

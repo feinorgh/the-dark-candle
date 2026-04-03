@@ -3,6 +3,7 @@ pub mod atmosphere;
 pub mod broad_phase;
 pub mod collision;
 pub mod constants;
+pub mod coupling;
 pub mod flip_pic;
 pub mod gravity;
 pub mod integrity;
@@ -76,6 +77,7 @@ impl Plugin for PhysicsPlugin {
             lbm_gas::LbmGasPlugin,
             flip_pic::FlipPicPlugin,
             amr_fluid::AmrFluidPlugin,
+            coupling::CouplingPlugin,
         ));
     }
 }

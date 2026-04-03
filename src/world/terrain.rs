@@ -1011,11 +1011,8 @@ impl UnifiedTerrainGenerator {
         match self {
             Self::Spherical(g) => g.sample_surface_radius(lat, lon),
             Self::Planetary(g) => {
-                let dir = bevy::math::DVec3::new(
-                    lat.cos() * lon.cos(),
-                    lat.sin(),
-                    lat.cos() * lon.sin(),
-                );
+                let dir =
+                    bevy::math::DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin());
                 let (surface_r, _) = g.surface_radius_at(dir);
                 surface_r
             }

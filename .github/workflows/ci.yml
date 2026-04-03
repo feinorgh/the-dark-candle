@@ -1,10 +1,9 @@
 name: CI
 
+# Workflow disabled — account limitations prevent CI runners from succeeding.
+# Re-enable by restoring the push/pull_request triggers below.
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

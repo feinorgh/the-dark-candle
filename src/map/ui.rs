@@ -344,7 +344,7 @@ pub fn pixel_to_lat_lon(
 // Right-click teleport (global map)
 // ---------------------------------------------------------------------------
 
-use crate::camera::{FpsCamera, EYE_HEIGHT};
+use crate::camera::{EYE_HEIGHT, FpsCamera};
 use crate::game_state::GameState;
 use crate::hud::Player;
 use crate::world::chunk_manager::TerrainGeneratorRes;
@@ -519,6 +519,9 @@ mod tests {
         let cursor = Vec2::new(512.0, 256.0);
         let (lat, lon) = pixel_to_lat_lon(cursor, &computed, &global_tf, &state).unwrap();
         // With pan (0.1, -0.05) at zoom 2, the center maps to a shifted lat/lon.
-        assert!(lat.abs() > 0.05 || lon.abs() > 0.05, "should be offset from origin");
+        assert!(
+            lat.abs() > 0.05 || lon.abs() > 0.05,
+            "should be offset from origin"
+        );
     }
 }

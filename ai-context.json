@@ -1341,6 +1341,23 @@
         "src/camera/mod.rs"
       ],
       "notes": "Scroll wheel adjusts fly speed (0.25x-512x), Shift gives 5x burst. Range: 5 m/s to ~51 km/s."
+    },
+    {
+      "name": "Cross-model fluid coupling",
+      "status": "complete",
+      "paths": [
+        "src/physics/coupling.rs",
+        "src/physics/lbm_gas/precipitation.rs",
+        "src/physics/amr_fluid/plugin.rs"
+      ],
+      "implements": [
+        "CouplingPlugin \u2014 coupling.rs (registers lazy_init_fluid_grids, LazyCouplingTimer)",
+        "lazy_init_fluid_grids \u2014 coupling.rs (scans chunks every 1.5s, creates FluidGrids for FLIP-deposited liquid)",
+        "apply_virga() moisture return \u2014 precipitation.rs (injects evaporated mass back into LbmGrid.moisture via ideal gas law)",
+        "sync_from_chunk per step \u2014 amr_fluid/plugin.rs (picks up FLIP deposits and chemistry changes each FixedUpdate)"
+      ],
+      "notes": "Bridges AMR, LBM, and FLIP/PIC. Conserves atmospheric water via virga return. Lazy FluidGrid init for rain-deposited water bodies.",
+      "uncertain": false
     }
   ],
   "tech_debt": [
@@ -1403,7 +1420,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "dcb0eda",
+    "generated_from_commit": "92578e8",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

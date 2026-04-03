@@ -378,6 +378,31 @@
     "resolved_commit": "8c9e9cf"
   },
   {
+    "id": "PHYSICS-001",
+    "title": "Player falls through terrain geometry outside planet mode",
+    "category": "physics",
+    "severity": "high",
+    "status": "open",
+    "suspected_files": [
+      "src/physics/collision.rs",
+      "src/world/collision.rs",
+      "src/world/chunk_manager.rs"
+    ],
+    "reproduction": "Start a game in a non-planet mode (e.g. flat/local terrain). The player entity falls through the terrain mesh instead of colliding with it."
+  },
+  {
+    "id": "UI-001",
+    "title": "In-game menu does not display UI elements",
+    "category": "ui",
+    "severity": "high",
+    "status": "open",
+    "suspected_files": [
+      "src/ui/mod.rs",
+      "src/game_state.rs"
+    ],
+    "reproduction": "Press the menu key in-game. The game pauses correctly but no UI elements (buttons, panels, etc.) are rendered."
+  },
+  {
     "id": "TERRAIN-005",
     "title": "Seed always 42 regardless of --seed CLI argument or preset selection",
     "category": "terrain",

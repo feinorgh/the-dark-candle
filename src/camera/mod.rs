@@ -114,7 +114,9 @@ pub fn find_random_land(
     // Simple LCG for deterministic pseudo-random sampling without pulling in rand.
     let mut rng_state = seed.wrapping_add(0xBEEF_CAFE);
     let mut next_f64 = || -> f64 {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng_state >> 11) as f64 / (1u64 << 53) as f64
     };
 
@@ -144,7 +146,9 @@ pub fn find_coastline(
 
     let mut rng_state = seed.wrapping_add(0x0C0A_57A1);
     let mut next_f64 = || -> f64 {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng_state >> 11) as f64 / (1u64 << 53) as f64
     };
 
@@ -189,7 +193,8 @@ fn spawn_camera(
     let (spawn_pos, look_target, up_hint) = if let Some(ref tg) = terrain_gen {
         if tg.0.is_spherical() {
             let (lat, lon) = if let Some(ref loc) = spawn_loc {
-                info!("Spawning at {:.1}°{}, {:.1}°{}",
+                info!(
+                    "Spawning at {:.1}°{}, {:.1}°{}",
                     loc.lat.to_degrees().abs(),
                     if loc.lat >= 0.0 { "N" } else { "S" },
                     loc.lon.to_degrees().abs(),
@@ -619,7 +624,10 @@ mod tests {
         assert!(min_speed >= 5.0, "min fly speed {min_speed} too low");
         // At max multiplier, speed should cover the planet quickly
         let max_speed = FLY_SPEED * 512.0;
-        assert!(max_speed >= 10_000.0, "max fly speed {max_speed} too low for 32km planet");
+        assert!(
+            max_speed >= 10_000.0,
+            "max fly speed {max_speed} too low for 32km planet"
+        );
     }
 
     #[test]
@@ -752,7 +760,10 @@ mod tests {
         if let Some((lat, lon)) = result {
             // The point itself should be land.
             let r = tgen.sample_surface_radius_at(lat, lon);
-            assert!(r > planet.sea_level_radius, "coastline point should be land");
+            assert!(
+                r > planet.sea_level_radius,
+                "coastline point should be land"
+            );
 
             // At least one neighbor should be water.
             let probe = 0.003_f64;
