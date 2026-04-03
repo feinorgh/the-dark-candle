@@ -89,6 +89,17 @@ struct Cli {
     /// Rendering pipeline: v1 (Surface Nets) or v2 (cubed-sphere greedy mesh).
     #[arg(long, default_value = "v2")]
     pipeline: String,
+
+    /// Player spawn location on spherical planets.
+    ///
+    /// Modes:
+    ///   random-land  — random point on land (above sea level)
+    ///   coastline    — random land point near water
+    ///   LAT,LON      — explicit coordinates in degrees (e.g. "30.5,-45.2")
+    ///
+    /// Omit to spawn at the default 45°N, 0°E.
+    #[arg(long)]
+    spawn: Option<String>,
 }
 
 fn main() {
@@ -210,8 +221,12 @@ fn main() {
         PersistencePlugin,
         WeatherPlugin,
         the_dark_candle::audio::AudioPlugin,
-    ))
-    .run();
+    ));
+
+    // Resolve --spawn location now that the terrain generator exists.
+    resolve_spawn_location(&cli, &mut app);
+
+    app.run();
 }
 
 /// Apply CLI flag overrides to an already-inserted `PlanetConfig`.
@@ -374,4 +389,95 @@ fn apply_cli_overrides(cli: &Cli, app: &mut App) {
     }
 
     app.insert_resource(config);
+}
+
+/// Resolve `--spawn` CLI argument into a `SpawnLocation` resource.
+///
+/// Must be called after all plugins have been built so that
+/// `TerrainGeneratorRes` is available for land/coastline sampling.
+fn resolve_spawn_location(cli: &Cli, app: &mut App) {
+    use the_dark_candle::camera::{SpawnLocation, find_coastline, find_random_land};
+    use the_dark_candle::world::chunk_manager::TerrainGeneratorRes;
+    use the_dark_candle::world::planet::PlanetConfig;
+
+    let Some(ref spawn_arg) = cli.spawn else {
+        return;
+    };
+
+    let Some(planet) = app.world().get_resource::<PlanetConfig>() else {
+        eprintln!("--spawn requires a spherical world (use --scene or --planet)");
+        std::process::exit(1);
+    };
+    let sea_level = planet.sea_level_radius;
+    let seed = planet.seed;
+
+    let Some(terrain) = app.world().get_resource::<TerrainGeneratorRes>() else {
+        eprintln!("--spawn: terrain generator not available yet");
+        std::process::exit(1);
+    };
+
+    let location = match spawn_arg.to_lowercase().as_str() {
+        "random-land" | "land" | "random" => {
+            info!("Resolving spawn: random land…");
+            match find_random_land(&terrain.0, sea_level, 2000, seed as u64) {
+                Some((lat, lon)) => SpawnLocation { lat, lon },
+                None => {
+                    warn!("Could not find land after 2000 attempts, using default spawn");
+                    return;
+                }
+            }
+        }
+        "coastline" | "coast" | "beach" => {
+            info!("Resolving spawn: coastline…");
+            match find_coastline(&terrain.0, sea_level, 5000, seed as u64) {
+                Some((lat, lon)) => SpawnLocation { lat, lon },
+                None => {
+                    warn!("Could not find coastline after 5000 attempts, trying random land");
+                    match find_random_land(&terrain.0, sea_level, 2000, seed as u64) {
+                        Some((lat, lon)) => SpawnLocation { lat, lon },
+                        None => {
+                            warn!("No land found either, using default spawn");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        coords => {
+            // Parse "LAT,LON" in degrees.
+            let parts: Vec<&str> = coords.split(',').collect();
+            if parts.len() != 2 {
+                eprintln!(
+                    "Invalid --spawn value: '{coords}'. \
+                     Use: random-land, coastline, or LAT,LON (e.g. 30.5,-45.2)"
+                );
+                std::process::exit(1);
+            }
+            let lat_deg: f64 = parts[0].trim().parse().unwrap_or_else(|_| {
+                eprintln!("Invalid latitude: '{}'", parts[0]);
+                std::process::exit(1);
+            });
+            let lon_deg: f64 = parts[1].trim().parse().unwrap_or_else(|_| {
+                eprintln!("Invalid longitude: '{}'", parts[1]);
+                std::process::exit(1);
+            });
+            if !(-90.0..=90.0).contains(&lat_deg) || !(-180.0..=180.0).contains(&lon_deg) {
+                eprintln!("Coordinates out of range: lat must be [-90, 90], lon must be [-180, 180]");
+                std::process::exit(1);
+            }
+            SpawnLocation {
+                lat: lat_deg.to_radians(),
+                lon: lon_deg.to_radians(),
+            }
+        }
+    };
+
+    info!(
+        "Spawn location: {:.1}°{} {:.1}°{}",
+        location.lat.to_degrees().abs(),
+        if location.lat >= 0.0 { "N" } else { "S" },
+        location.lon.to_degrees().abs(),
+        if location.lon >= 0.0 { "E" } else { "W" },
+    );
+    app.insert_resource(location);
 }

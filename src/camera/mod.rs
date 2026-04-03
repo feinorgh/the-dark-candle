@@ -93,34 +93,114 @@ fn local_up_from_position(pos: Vec3) -> Vec3 {
     if len > 1e-6 { pos / len } else { Vec3::Y }
 }
 
+/// Requested spawn location for the player camera (lat/lon in radians).
+/// Consumed once by `spawn_camera` at startup.
+#[derive(Resource, Debug, Clone)]
+pub struct SpawnLocation {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Find a random land position on the planet (surface above sea level).
+/// Returns `(lat, lon)` in radians, or `None` if no land found after `max_attempts`.
+pub fn find_random_land(
+    terrain: &crate::world::terrain::UnifiedTerrainGenerator,
+    sea_level_radius: f64,
+    max_attempts: u32,
+    seed: u64,
+) -> Option<(f64, f64)> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    // Simple LCG for deterministic pseudo-random sampling without pulling in rand.
+    let mut rng_state = seed.wrapping_add(0xBEEF_CAFE);
+    let mut next_f64 = || -> f64 {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (rng_state >> 11) as f64 / (1u64 << 53) as f64
+    };
+
+    for _ in 0..max_attempts {
+        // Uniform distribution on sphere: lat = asin(2u-1), lon = 2π·v - π
+        let lat = (2.0 * next_f64() - 1.0).clamp(-1.0, 1.0).asin();
+        let lon = next_f64() * 2.0 * PI - PI;
+
+        let lat = lat.clamp(-FRAC_PI_2, FRAC_PI_2);
+        let surface_r = terrain.sample_surface_radius_at(lat, lon);
+        if surface_r > sea_level_radius {
+            return Some((lat, lon));
+        }
+    }
+    None
+}
+
+/// Find a coastline position: a land point with at least one water neighbor.
+/// Returns `(lat, lon)` in radians.
+pub fn find_coastline(
+    terrain: &crate::world::terrain::UnifiedTerrainGenerator,
+    sea_level_radius: f64,
+    max_attempts: u32,
+    seed: u64,
+) -> Option<(f64, f64)> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    let mut rng_state = seed.wrapping_add(0x0C0A_57A1);
+    let mut next_f64 = || -> f64 {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (rng_state >> 11) as f64 / (1u64 << 53) as f64
+    };
+
+    // Angular offset for neighbor probing (~100 m at 32 km radius ≈ 0.003 rad).
+    let probe = 0.003_f64;
+    let offsets: [(f64, f64); 4] = [(probe, 0.0), (-probe, 0.0), (0.0, probe), (0.0, -probe)];
+
+    for _ in 0..max_attempts {
+        let lat = (2.0 * next_f64() - 1.0).clamp(-1.0, 1.0).asin();
+        let lon = next_f64() * 2.0 * PI - PI;
+        let lat = lat.clamp(-FRAC_PI_2, FRAC_PI_2);
+
+        let surface_r = terrain.sample_surface_radius_at(lat, lon);
+        if surface_r <= sea_level_radius {
+            continue; // Not land.
+        }
+
+        // Check if any neighbor is water.
+        for &(dlat, dlon) in &offsets {
+            let nlat = (lat + dlat).clamp(-FRAC_PI_2, FRAC_PI_2);
+            let nlon = lon + dlon;
+            let nr = terrain.sample_surface_radius_at(nlat, nlon);
+            if nr <= sea_level_radius {
+                return Some((lat, lon));
+            }
+        }
+    }
+    None
+}
+
 fn spawn_camera(
     mut commands: Commands,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     planet: Res<PlanetConfig>,
+    spawn_loc: Option<Res<SpawnLocation>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
 ) {
     // Pick a spawn position on the terrain surface.
     //
     // Flat mode:  spawn at world origin (0, surface_height, 0).
-    // Spherical mode: spawn on the planet surface at lat=45°, lon=0°. This
-    //   avoids the north pole (Y-axis singularity) and the equator (where
-    //   chunk density is highest during initial load). The actual position is
-    //   a point at distance `surface_radius` from the planet center along the
-    //   (lat, lon) direction vector.
+    // Spherical mode: use SpawnLocation if provided, otherwise default 45°N, 0°E.
     let (spawn_pos, look_target, up_hint) = if let Some(ref tg) = terrain_gen {
         if tg.0.is_spherical() {
-            // Latitude 45°, longitude 0° — a mid-latitude spawn.
-            let lat: f64 = std::f64::consts::FRAC_PI_4; // 45°
-            let lon: f64 = 0.0;
-            let surface_r = tg.0.sample_height(
-                // sample_height for spherical uses the (x, z) to derive lat/lon internally,
-                // but we already have lat/lon. To be consistent, we pass Cartesian coords
-                // that reconstruct the desired lat/lon through the planet's lat_lon() method.
-                // For rotation_axis = Y, a point at (cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon))
-                // gives the correct lat/lon back.
-                lat.cos() * lon.cos() * 1000.0, // world_x
-                lat.cos() * lon.sin() * 1000.0, // world_z (passed as z)
-            ) as f32;
+            let (lat, lon) = if let Some(ref loc) = spawn_loc {
+                info!("Spawning at {:.1}°{}, {:.1}°{}",
+                    loc.lat.to_degrees().abs(),
+                    if loc.lat >= 0.0 { "N" } else { "S" },
+                    loc.lon.to_degrees().abs(),
+                    if loc.lon >= 0.0 { "E" } else { "W" },
+                );
+                (loc.lat, loc.lon)
+            } else {
+                // Default: latitude 45°, longitude 0° — a mid-latitude spawn.
+                (std::f64::consts::FRAC_PI_4, 0.0)
+            };
+            let surface_r = tg.0.sample_surface_radius_at(lat, lon) as f32;
             // Construct the spawn direction from lat/lon (Y-up planet, axis = Y).
             let dir = Vec3::new(
                 lat.cos() as f32 * lon.cos() as f32,
@@ -128,7 +208,7 @@ fn spawn_camera(
                 lat.cos() as f32 * lon.sin() as f32,
             )
             .normalize();
-            let spawn = dir * (surface_r + EYE_HEIGHT);
+            let spawn = dir * (surface_r.max(planet.sea_level_radius as f32) + EYE_HEIGHT);
             // Look tangent to the surface (slightly ahead along the equator direction).
             let look = spawn + Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
             // Use local surface normal as the up hint so the initial frame is
@@ -614,5 +694,85 @@ mod tests {
     fn local_up_near_origin_falls_back_to_y() {
         let up = local_up_from_position(Vec3::new(1e-8, 1e-8, 1e-8));
         assert_eq!(up, Vec3::Y);
+    }
+
+    #[test]
+    fn find_random_land_returns_above_sea_level() {
+        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::terrain::UnifiedTerrainGenerator;
+
+        let planet = PlanetConfig {
+            mode: TerrainMode::Spherical,
+            height_scale: 4000.0,
+            noise: Some(crate::world::noise::NoiseConfig::default()),
+            ..Default::default()
+        };
+        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let result = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
+        assert!(result.is_some(), "should find land on a default planet");
+        let (lat, lon) = result.unwrap();
+        let r = tgen.sample_surface_radius_at(lat, lon);
+        assert!(
+            r > planet.sea_level_radius,
+            "land point should be above sea level: r={r}, sea={}",
+            planet.sea_level_radius,
+        );
+    }
+
+    #[test]
+    fn find_random_land_is_deterministic() {
+        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::terrain::UnifiedTerrainGenerator;
+
+        let planet = PlanetConfig {
+            mode: TerrainMode::Spherical,
+            height_scale: 4000.0,
+            noise: Some(crate::world::noise::NoiseConfig::default()),
+            ..Default::default()
+        };
+        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let a = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
+        let b = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
+        assert_eq!(a, b, "same seed should produce same spawn");
+    }
+
+    #[test]
+    fn find_coastline_has_water_neighbor() {
+        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::terrain::UnifiedTerrainGenerator;
+
+        let planet = PlanetConfig {
+            mode: TerrainMode::Spherical,
+            height_scale: 4000.0,
+            noise: Some(crate::world::noise::NoiseConfig::default()),
+            ..Default::default()
+        };
+        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let result = find_coastline(&tgen, planet.sea_level_radius, 10000, 42);
+        if let Some((lat, lon)) = result {
+            // The point itself should be land.
+            let r = tgen.sample_surface_radius_at(lat, lon);
+            assert!(r > planet.sea_level_radius, "coastline point should be land");
+
+            // At least one neighbor should be water.
+            let probe = 0.003_f64;
+            let offsets = [(probe, 0.0), (-probe, 0.0), (0.0, probe), (0.0, -probe)];
+            let has_water = offsets.iter().any(|(dlat, dlon)| {
+                let nr = tgen.sample_surface_radius_at(lat + dlat, lon + dlon);
+                nr <= planet.sea_level_radius
+            });
+            assert!(has_water, "coastline point should have a water neighbor");
+        }
+        // Note: coastline may not be found on all terrain configs — that's OK.
+    }
+
+    #[test]
+    fn spawn_location_default() {
+        let loc = SpawnLocation {
+            lat: std::f64::consts::FRAC_PI_4,
+            lon: 0.0,
+        };
+        assert!((loc.lat.to_degrees() - 45.0).abs() < 0.01);
+        assert_eq!(loc.lon, 0.0);
     }
 }

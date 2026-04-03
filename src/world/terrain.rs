@@ -1001,6 +1001,27 @@ impl UnifiedTerrainGenerator {
             _ => None,
         }
     }
+
+    /// Sample the surface radius at a given (lat, lon) in radians.
+    ///
+    /// For spherical mode, returns the radial distance from the planet center.
+    /// For planetary mode, queries the tectonic sampler.
+    /// For flat mode, returns 0 (meaningless — use `sample_height` instead).
+    pub fn sample_surface_radius_at(&self, lat: f64, lon: f64) -> f64 {
+        match self {
+            Self::Spherical(g) => g.sample_surface_radius(lat, lon),
+            Self::Planetary(g) => {
+                let dir = bevy::math::DVec3::new(
+                    lat.cos() * lon.cos(),
+                    lat.sin(),
+                    lat.cos() * lon.sin(),
+                );
+                let (surface_r, _) = g.surface_radius_at(dir);
+                surface_r
+            }
+            Self::Flat(_) => 0.0,
+        }
+    }
 }
 
 #[cfg(test)]
