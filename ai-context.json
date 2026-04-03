@@ -1314,6 +1314,33 @@
         "src/world/v2/"
       ],
       "notes": "Default pipeline. Greedy mesh + terrain-gen ground collision."
+    },
+    {
+      "name": "Configurable player spawn location",
+      "status": "complete",
+      "paths": [
+        "src/camera/mod.rs",
+        "src/main.rs",
+        "src/world/terrain.rs"
+      ],
+      "notes": "--spawn CLI: random-land, coastline, or LAT,LON coordinates. Uses terrain generator surface sampling."
+    },
+    {
+      "name": "Map click-to-teleport",
+      "status": "complete",
+      "paths": [
+        "src/map/ui.rs",
+        "src/map/mod.rs"
+      ],
+      "notes": "Right-click on global map teleports player. Inverse equirectangular projection with zoom/pan support."
+    },
+    {
+      "name": "Fly speed multiplier",
+      "status": "complete",
+      "paths": [
+        "src/camera/mod.rs"
+      ],
+      "notes": "Scroll wheel adjusts fly speed (0.25x-512x), Shift gives 5x burst. Range: 5 m/s to ~51 km/s."
     }
   ],
   "tech_debt": [
@@ -1376,7 +1403,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "fca6dcd",
+    "generated_from_commit": "dcb0eda",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
