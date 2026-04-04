@@ -1,0 +1,95 @@
+// Combustion Chain: Bark → Charcoal → Ash  +  Wood → Ash
+//
+// Demonstrates a multi-step combustion chain in a realistic fuel stack:
+//   Step 1 (simultaneous): All layers ignited at 650 K
+//     - Charcoal + Air → Ash   (charcoal_combustion: 623 K)
+//     - Wood     + Air → Ash   (wood_combustion: 573 K)
+//     - Bark     + Air → Charcoal (bark_combustion: 553 K → produces new charcoal!)
+//   Step 2: New charcoal from Bark + Air → Ash  (623 K, tick 2)
+//
+// The key physics: bark produces charcoal as its combustion product rather
+// than ash directly. This charcoal is then hot enough (700 K after bark
+// combustion) to immediately combust with adjacent air in the next tick.
+//
+// Air gaps between fuel layers are essential — without O₂ contact, combustion
+// reactions requiring input_b:"Air" cannot fire.
+//
+// Combustion thresholds (ascending):
+//   Bark:     553 K  → output: Charcoal  (re-burning intermediate)
+//   Wood:     573 K  → output: Ash
+//   Charcoal: 623 K  → output: Ash  (burns hottest)
+//
+// Setup:
+//   - Stone outer shell + stone floor at y=1
+//   - y=2: Charcoal layer  (adjacent to air gap at y=3)
+//   - y=3: Air gap         (oxygen for y=2 charcoal and y=4 wood)
+//   - y=4: Wood layer      (adjacent to air gaps at y=3 and y=5)
+//   - y=5: Air gap         (oxygen for y=4 wood and y=6 bark)
+//   - y=6: Bark layer      (adjacent to air gap at y=5 and open air above)
+//   - y=7..8: Air          (primary oxygen source)
+//   - All fuel layers ignited simultaneously at 650 K
+//
+// Expected outcomes:
+//   - Tick 1: Charcoal → Ash, Wood → Ash, Bark → Charcoal (hot, 650+700=1350 K)
+//   - Tick 2: New charcoal (from Bark) + Air → Ash
+//   - Final state: all fuel consumed, ash remains
+//
+// Source: Wikipedia — Campfire; Charcoal § Combustion chemistry
+
+SimulationScenario(
+    name: "Multi-layer fuel combustion: bark → wood → charcoal",
+    description: "Bark, wood, and charcoal layers ignited simultaneously via air gaps; bark produces charcoal intermediate, which then combusts in the next tick",
+
+    grid_size: 10,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone outer shell
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 1),
+        // Stone floor layer inside
+        Layer(material: "Stone", y: 1),
+        // y=2: Charcoal (adjacent to air gap at y=3)
+        Fill(material: "Charcoal", min: (1, 2, 1), max: (8, 2, 8)),
+        // y=3: Air gap — O₂ access for charcoal (y=2) and wood (y=4)
+        Fill(material: "Air", min: (1, 3, 1), max: (8, 3, 8)),
+        // y=4: Wood (adjacent to air gaps at y=3 and y=5)
+        Fill(material: "Wood", min: (1, 4, 1), max: (8, 4, 8)),
+        // y=5: Air gap — O₂ access for wood (y=4) and bark (y=6)
+        Fill(material: "Air", min: (1, 5, 1), max: (8, 5, 8)),
+        // y=6: Bark (adjacent to air gaps at y=5 and open air above)
+        Fill(material: "Bark", min: (1, 6, 1), max: (8, 6, 8)),
+        // y=7..8: Air (primary oxygen source for bark combustion)
+        Fill(material: "Air", min: (1, 7, 1), max: (8, 8, 8)),
+    ],
+
+    ignition: [
+        // Ignite all fuel layers simultaneously at 650 K
+        HeatRegion(min: (1, 2, 1), max: (8, 2, 8), temperature: 650.0),
+        HeatRegion(min: (1, 4, 1), max: (8, 4, 8), temperature: 650.0),
+        HeatRegion(min: (1, 6, 1), max: (8, 6, 8), temperature: 650.0),
+    ],
+
+    // dt = 300 s, 1000 ticks — reactions complete in 2 ticks, UntilAllPass exits early
+    dt: 300.0,
+    ticks: 1000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // No bark, wood, or charcoal should remain
+        MaterialAbsent(material: "Bark"),
+        MaterialAbsent(material: "Wood"),
+        MaterialAbsent(material: "Charcoal"),
+        // Ash must be present (from bark + wood + charcoal combustion)
+        MaterialCountGt(material: "Ash", min_count: 1),
+        // Many reactions must have fired
+        TotalReactionsGt(min_count: 30),
+    ],
+)

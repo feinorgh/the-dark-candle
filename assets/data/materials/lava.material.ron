@@ -3,7 +3,7 @@ MaterialData(
     name: "Lava",
     default_phase: Liquid,
     density: 2800.0,
-    melting_point: None,
+    melting_point: Some(1473.0),
     boiling_point: Some(2773.0),
     ignition_point: None,
     hardness: 0.0,

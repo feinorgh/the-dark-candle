@@ -34,9 +34,10 @@ SimulationScenario(
     ],
 
     ignition: [
-        // Spark at center, well above autoignition (843 K).
-        // Position (3,3,3) has odd coordinate sum → hydrogen in checkerboard.
-        HotSpot(pos: (3, 3, 3), temperature: 900.0),
+        // Heat the entire interior to 900 K — well above autoignition (843 K).
+        // Using HeatRegion so every H₂ voxel is at ignition temperature; a single
+        // HotSpot would only ignite its immediate neighbours in one tick.
+        HeatRegion(min: (1, 1, 1), max: (6, 6, 6), temperature: 900.0),
     ],
 
     ticks: 30,

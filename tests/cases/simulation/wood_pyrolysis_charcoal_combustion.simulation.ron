@@ -1,0 +1,76 @@
+// Wood Pyrolysis and Charcoal Combustion Chain
+//
+// Demonstrates a two-stage fire chemistry chain:
+//   Stage 1: Wood (interior, no air access) + heat → Charcoal  (pyrolysis, 473 K+)
+//   Stage 1: Wood (surface, air access)     + Air  → Ash       (direct combustion, 573 K+)
+//   Stage 2: Charcoal + Air → Ash                              (combustion, 623 K+)
+//
+// Because reactions are checked alphabetically (wood_combustion before wood_pyrolysis),
+// surface wood (with adjacent Air) burns directly to Ash. Interior wood (no Air neighbour)
+// can only pyrolyse to Charcoal. This produces the characteristic two-stage chemistry
+// where different combustion pathways operate depending on oxygen availability.
+//
+// Setup:
+//   - Stone-walled chamber with oxygen-rich air fill
+//   - Central 4×4×4 wood block; surface voxels adjacent to air, interior voxels isolated
+//   - All wood ignited above both thresholds (700 K)
+//
+// Expected outcomes after tick 1:
+//   - Surface wood + Air → Ash (56 voxels via wood_combustion)
+//   - Interior wood (no air) → Charcoal (8 voxels via wood_pyrolysis)
+//   - Final state: no wood, ash present, charcoal present
+//
+// Physics:
+//   Pyrolysis (wood → charcoal): T_onset ≈ 200°C (473 K), endothermic, no O₂
+//   Wood combustion (wood → ash): T_ign ≈ 300°C (573 K), requires O₂
+//   Charcoal combustion:          T_ign ≈ 350°C (623 K), exothermic
+//
+// Source: Wikipedia — Pyrolysis; Charcoal § Properties
+
+SimulationScenario(
+    name: "Wood pyrolysis and charcoal combustion chain",
+    description: "Surface wood combusts directly with air to ash (573 K); interior wood pyrolyses to charcoal (473 K) — demonstrates O₂-dependent vs thermal-only combustion paths",
+
+    grid_size: 8,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone chamber walls
+        Shell(material: "Stone", min: (0, 0, 0), max: (7, 7, 7), thickness: 1),
+        // Air-fill interior
+        Fill(material: "Air", min: (1, 1, 1), max: (6, 6, 6)),
+        // Wood block in the centre
+        Fill(material: "Wood", min: (2, 2, 2), max: (5, 5, 5)),
+    ],
+
+    ignition: [
+        // Heat entire wood block above both combustion and pyrolysis thresholds.
+        // Surface wood (with Air neighbours) fires wood_combustion → Ash.
+        // Interior wood (no Air) fires wood_pyrolysis → Charcoal.
+        HeatRegion(min: (2, 2, 2), max: (5, 5, 5), temperature: 700.0),
+    ],
+
+    // dt = 500 s, 100 ticks — both reactions fire in tick 1
+    dt: 500.0,
+    ticks: 100,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // No wood should remain (pyrolysed or combusted)
+        MaterialAbsent(material: "Wood"),
+        // Charcoal must be present (interior voxels → pyrolysis path taken)
+        MaterialCountGt(material: "Charcoal", min_count: 1),
+        // Ash must be present (surface voxels → direct combustion path taken)
+        MaterialCountGt(material: "Ash", min_count: 1),
+        // Reactions must have fired (both pyrolysis and combustion)
+        TotalReactionsGt(min_count: 5),
+    ],
+)

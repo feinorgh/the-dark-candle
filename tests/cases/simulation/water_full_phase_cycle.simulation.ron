@@ -1,0 +1,78 @@
+// Full Water Phase Cycle: Ice → Water → Steam
+//
+// Models the complete H₂O phase diagram by ramping temperature from −30°C
+// through room temperature to +177°C, covering both melting and vaporisation:
+//
+//   Transition 1: Ice (solid) → Water (liquid) at 273.15 K  [melted_into]
+//   Transition 2: Water (liquid) → Steam (gas) at 373.15 K  [boiled_into]
+//
+// Latent heats act as "thermal buffers" that slow each transition:
+//   Fusion:       L_f = 334,000 J/kg
+//   Vaporisation: L_v = 2,260,000 J/kg  (much larger — takes much longer)
+//
+// Setup:
+//   - Open grid with convective boundary (htc = 50 W/(m²·K))
+//   - 4³ ice block at the centre, air surrounds it
+//   - Ambient ramps from 243 K (−30°C) → 450 K (+177°C) over 250,000 s
+//
+// Expected outcomes:
+//   - Surface ice melts first once ambient crosses 273.15 K (within ~5 ticks)
+//   - Inner ice melts by conduction through water shell (~35–40 more ticks)
+//   - Surface water boils well before inner ice is gone
+//   - Final assertion: no ice remaining AND steam is present
+//
+// Source: NIST water properties; Clausius-Clapeyron equation
+
+SimulationScenario(
+    name: "Full water phase cycle: ice → water → steam",
+    description: "Ambient ramps from −30°C to +177°C driving ice through both H₂O phase transitions; latent heat buffers visible at each transition",
+
+    grid_size: 6,
+
+    // Start cold: −30°C (243.15 K)
+    ambient_temperature: 243.15,
+    ambient_pressure: 101325.0,
+
+    // Ramp to 450 K (+177°C) over 250,000 s to drive through both transitions
+    ambient_schedule: RampThenHold(
+        end_temperature: 450.0,
+        ramp_seconds: 250000.0,
+    ),
+
+    // High convective HTC to efficiently exchange heat across the ice/air interface
+    boundary_htc: Some(50.0),
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Air fills the grid (default after Init)
+        // 4×4×4 ice block at the centre — 64 voxels
+        Fill(material: "Ice", min: (1, 1, 1), max: (4, 4, 4)),
+    ],
+
+    ignition: [
+        // Ice starts matching cold ambient
+        HeatRegion(
+            min: (1, 1, 1),
+            max: (4, 4, 4),
+            temperature: 243.15,
+        ),
+    ],
+
+    // dt = 60,000 s (~16.7 h), max 500 ticks ≈ 347 days simulated
+    // Large dt needed because latent heat buffers are very large.
+    dt: 60000.0,
+    ticks: 500,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All ice must have melted (cleared Transition 1)
+        MaterialAbsent(material: "Ice"),
+        // Steam must be present (cleared Transition 2)
+        MaterialCountGt(material: "Steam", min_count: 1),
+        // No chemical reactions — pure H₂O phase physics
+        NoReactions,
+    ],
+)

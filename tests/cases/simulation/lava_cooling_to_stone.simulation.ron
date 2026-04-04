@@ -1,0 +1,77 @@
+// Lava Cooling to Stone — Geological Solidification
+//
+// Lava (molten rock) loses heat to its surroundings and solidifies back to stone
+// once its temperature drops below 1473 K. Demonstrates:
+//   - The frozen_into phase transition (Lava → Stone)
+//   - Real-world volcanic rock solidification
+//   - Stefan-Boltzmann radiation as the dominant heat loss mechanism at high T
+//
+// Setup:
+//   - 8³ grid, outer shell of stone walls
+//   - Central lava sphere at 1600 K (just above solidification point 1473 K)
+//   - Cold ambient at 20°C (293.15 K)
+//
+// Expected outcomes:
+//   - Lava loses heat via conduction to stone walls and radiation
+//   - Below 1473 K: lava solidifies to stone (frozen_into: "Stone")
+//   - Final state: all-stone grid at near-ambient temperature
+//
+// Physics:
+//   Lava solidification temperature: 1473 K
+//   Stefan-Boltzmann radiation: P = ε σ A (T⁴ − T_env⁴)
+//   At 1600 K vs 293 K: radiated power ≈ 5.67e-8 × 0.9 × (1600⁴ − 293⁴)
+//                               ≈ 298,000 W/m² → very rapid cooling
+//   Thermal diffusivity of lava: α ≈ 5.5e-7 m²/s (slow conduction)
+//
+// Source: Wikipedia — Lava § Solidification; Streckeisen et al. (1978)
+
+SimulationScenario(
+    name: "Lava cooling to stone",
+    description: "Lava sphere cools via radiation and conduction; solidifies to stone below 1473 K — demonstrates geological phase transition",
+
+    grid_size: 10,
+
+    // Cold ambient: room temperature
+    ambient_temperature: 293.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: Some(5.0),
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone outer shell (2 m thick)
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 2),
+        // Lava sphere in the centre
+        Sphere(
+            material: "Lava",
+            center: (5, 5, 5),
+            radius: 2.5,
+        ),
+    ],
+
+    ignition: [
+        // Lava starts at 1600 K — above solidification temperature (1473 K)
+        HeatRegion(
+            min: (2, 2, 2),
+            max: (7, 7, 7),
+            temperature: 1600.0,
+        ),
+    ],
+
+    // dt = 60 s, max 50000 ticks = 34.7 days simulated
+    dt: 60.0,
+    ticks: 50000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All lava must have solidified
+        MaterialAbsent(material: "Lava"),
+        // Stone must remain (it was already there, plus new solidified stone)
+        MaterialCountGt(material: "Stone", min_count: 1),
+        // No chemical reactions in this thermal-only scenario
+        NoReactions,
+    ],
+)

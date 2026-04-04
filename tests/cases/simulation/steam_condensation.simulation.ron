@@ -1,0 +1,74 @@
+// Steam Condensation — Reverse Phase Transition
+//
+// Steam cools below its condensation temperature (373.15 K) and converts back
+// to liquid water. Demonstrates:
+//   - Reverse boiling/condensation path (Gas → Liquid)
+//   - Latent heat of vaporization released during condensation
+//   - The condensed_into transition field in MaterialData
+//
+// Setup:
+//   - Stone box (walls conduct heat out)
+//   - Interior filled with steam at 450 K (above boiling point initially)
+//   - Cold ambient (20°C / 293.15 K) cools the box
+//
+// Expected outcomes:
+//   - Steam cools toward 373.15 K via conduction through stone walls
+//   - Below 373.15 K: steam condenses to water (latent heat of vaporisation
+//     released, slowing the temperature drop)
+//   - Final state: liquid water at near-ambient temperature
+//
+// Physics:
+//   Boiling point (water):      T_b = 373.15 K (at 101325 Pa)
+//   Latent heat of vaporisation: L_v = 2,260,000 J/kg (water)
+//   Steam density (≈ ideal gas): ρ ≈ 0.6 kg/m³ at 373 K → Q_rel ≈ 1.36 MJ/m³
+//
+// Source: Wikipedia — Properties of water; Clapeyron equation
+
+SimulationScenario(
+    name: "Steam condensation",
+    description: "Steam in a sealed stone box cools below 373.15 K and condenses to water, releasing latent heat of vaporisation",
+
+    grid_size: 10,
+
+    // Cold ambient: 20°C
+    ambient_temperature: 293.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+
+    // Convective boundary: air outside the stone box cools it
+    boundary_htc: Some(15.0),
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone box (1 m thick walls)
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 1),
+        // Fill interior with steam
+        Fill(material: "Steam", min: (1, 1, 1), max: (8, 8, 8)),
+    ],
+
+    ignition: [
+        // Steam starts hot — above boiling point
+        HeatRegion(
+            min: (1, 1, 1),
+            max: (8, 8, 8),
+            temperature: 450.0,
+        ),
+    ],
+
+    // dt = 300 s (5 minutes), max 10000 ticks = 34.7 days simulated
+    dt: 300.0,
+    ticks: 10000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All steam must have condensed
+        MaterialAbsent(material: "Steam"),
+        // Liquid water should have formed
+        MaterialCountGt(material: "Water", min_count: 1),
+        // No chemical reactions in this thermal-only scenario
+        NoReactions,
+    ],
+)

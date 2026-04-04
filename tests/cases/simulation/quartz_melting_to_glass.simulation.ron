@@ -1,0 +1,78 @@
+// Quartz to Glass Phase Transition — Mineral Fusion
+//
+// Quartz crystal heated above its melting point (1986 K) transforms into
+// amorphous glass. This showcases:
+//   - The melted_into: "Glass" transition in quartz.material.ron
+//   - How glass formation differs from simple melting (no liquid intermediate)
+//   - The optical properties of the resulting glass (n=1.52, transparent)
+//
+// Setup:
+//   - Central sphere of quartz crystal (n=1.544)
+//   - Surrounded by superheated air (or small iron heat source)
+//   - An intense heat source drives the temperature above 1986 K
+//
+// Expected outcomes:
+//   - Quartz voxels above 1986 K convert to glass
+//   - The resulting glass has: n=1.52, density=2500 kg/m³
+//   - This enables optical refraction simulations downstream
+//
+// Physics:
+//   Quartz melting: SiO₂ → amorphous glass at ~1650°C (1923 K for fused silica)
+//   Here using 1986 K from the material data file.
+//   Refractive index change: n_quartz=1.544 → n_glass=1.52 (slight decrease)
+//
+// Source: Wikipedia — Quartz; Fused silica § Properties
+
+SimulationScenario(
+    name: "Quartz crystal melting to glass",
+    description: "Quartz sphere heated above 1986 K transforms into glass via the melted_into phase transition — demonstrates mineral fusion",
+
+    grid_size: 10,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone outer shell
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 1),
+        // Iron heat source ring around the quartz sphere
+        Fill(material: "Iron", min: (2, 2, 2), max: (7, 7, 7)),
+        // Central quartz crystal sphere
+        Sphere(
+            material: "QuartzCrystal",
+            center: (5, 5, 5),
+            radius: 2.0,
+        ),
+    ],
+
+    ignition: [
+        // Heat the iron ring to 2500 K — well above quartz melting point (1986 K)
+        HeatRegion(
+            min: (2, 2, 2),
+            max: (7, 7, 7),
+            temperature: 2500.0,
+        ),
+    ],
+
+    // dt = 1.0 s, 2000 ticks = 33 minutes simulated
+    dt: 1.0,
+    ticks: 2000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All quartz must have melted to glass
+        MaterialAbsent(material: "QuartzCrystal"),
+        // Glass must exist
+        MaterialCountGt(material: "Glass", min_count: 1),
+        // Peak temperature must have exceeded the melting point
+        MaxTempGt(threshold: 1986.0),
+        // No chemical reactions
+        NoReactions,
+    ],
+)

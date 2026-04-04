@@ -782,7 +782,7 @@
         "Assertion enum \u2014 assertions.rs:22 (MaterialCountEq/Gt/Lt, MaterialAbsent, RegionAvgTempGt/Lt, VoxelTempGt, RegionAvgPressureGt, MaxTempGt, TotalReactionsGt, NoReactions)",
         "Assertion::evaluate() \u2014 assertions.rs:115 (125+ lines, matches each variant against final grid)"
       ],
-      "notes": "6 simulation scenarios. 9 geometry types via Region enum. Deterministic multi-tick harness",
+      "notes": "17 simulation showcase scenarios in tests/cases/simulation/ \u2014 all passing. Fixed data bugs: steam.material.ron boiling_point None\u2192Some(373.15), lava.material.ron melting_point None\u2192Some(1473.0). Scenarios cover: thermal conduction, ice melting latent heat, steam condensation, lava cooling, stone melting, quartz\u2192glass, water phase cycle, oxyhydrogen combustion, wildfire fuel bed, wood pyrolysis/combustion, multi-layer fuel, Stefan-Boltzmann radiation, thermal insulation comparison, heat capacity comparison, inert gas, radiation with air gap, thermal glow.",
       "uncertain": false
     },
     {
@@ -1483,6 +1483,7 @@
       ],
       "description": "Freeform building system: PartData/RecipeData RON assets, Joint stress model (axial + shear vs material strength), load-path structural analysis with progressive collapse, build-mode placement (B key, R rotate, 1m grid snap), demolition with debris, tick-based crafting with temperature gating, per-entity Inventory with weight/volume limits, BuildingPlugin wired into main. 5 construction materials extended with SI structural strengths; 8 new construction materials (oak, pine, brick, concrete, wrought_iron, bronze, clay_dried, thatch). 26 lib tests pass."
     }
+  ],
   "tech_debt": [
     {
       "description": "TODO: Sample voxel at entity position to determine medium density for buoyancy",

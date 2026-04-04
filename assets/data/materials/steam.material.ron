@@ -4,7 +4,7 @@ MaterialData(
     default_phase: Gas,
     density: 0.6,
     melting_point: None,
-    boiling_point: None,
+    boiling_point: Some(373.15),
     ignition_point: None,
     hardness: 0.0,
     color: (0.9, 0.9, 0.95),

@@ -453,5 +453,41 @@
     "reproduction": "cargo check fails: no field pos on RayHit, available fields are x,y,z",
     "resolution": "Changed hit.pos[1] to hit.y",
     "commit": "HEAD"
+  },
+  {
+    "id": "DATA-001",
+    "title": "steam.material.ron: boiling_point None prevents steam from ever condensing",
+    "category": "data",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-05",
+    "description": "steam.material.ron had boiling_point: None. The state_transitions.rs condensation check requires boiling_point to be Some(...). Because it was None, steam never condensed back to water regardless of temperature, breaking the steam_condensation simulation scenario and any game mechanic relying on steam\u2192water transition.",
+    "reproduction": "Run cargo test --test simulations -- steam_condensation. Steam at 450K in a stone box never condenses even after thousands of ticks.",
+    "suspected_files": [
+      "assets/data/materials/steam.material.ron",
+      "src/chemistry/state_transitions.rs"
+    ],
+    "suspected_cause": "Data entry oversight: boiling_point field left as None instead of Some(373.15) when the material was authored.",
+    "related_commits": [],
+    "resolution": "Fixed boiling_point: None \u2192 boiling_point: Some(373.15) in steam.material.ron. All simulation scenarios now pass.",
+    "notes": "condensed_into: Some(\"Water\") was already correctly set; only boiling_point was missing."
+  },
+  {
+    "id": "DATA-002",
+    "title": "lava.material.ron: melting_point None prevents lava from ever solidifying to stone",
+    "category": "data",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-05",
+    "description": "lava.material.ron had melting_point: None. The state_transitions.rs frozen_into check for Phase::Liquid requires melting_point to be Some(...). Because it was None, lava never solidified back to stone regardless of temperature, breaking the lava_cooling_to_stone simulation scenario and any game mechanic relying on lava\u2192stone solidification.",
+    "reproduction": "Run cargo test --test simulations -- lava_cooling. After 50000 ticks, 81 lava voxels remain despite being well below 1473K solidification temperature.",
+    "suspected_files": [
+      "assets/data/materials/lava.material.ron",
+      "src/chemistry/state_transitions.rs"
+    ],
+    "suspected_cause": "Data entry oversight: melting_point field left as None instead of Some(1473.0) when the material was authored.",
+    "related_commits": [],
+    "resolution": "Fixed melting_point: None \u2192 melting_point: Some(1473.0) in lava.material.ron. Lava now solidifies to stone at 1473K.",
+    "notes": "frozen_into: Some(\"Stone\") was already correctly set; only melting_point was missing."
   }
 ]

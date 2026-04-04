@@ -1,0 +1,79 @@
+// Material Heat Capacity Showcase — Stone vs Iron vs Water
+//
+// Demonstrates specific heat capacity (Cₚ) differences between materials.
+// Equal heat inputs produce different temperature rises depending on Cₚ:
+//
+//   Q = m × Cₚ × ΔT   →   ΔT = Q / (m × Cₚ)
+//
+//   Material  | Density (kg/m³) | Cₚ (J/(kg·K)) | ρCₚ (J/(m³·K))
+//   ─────────────────────────────────────────────────────────────
+//   Iron      | 7874            | 450            | 3,543,300
+//   Stone     | 2700            | 790            | 2,133,000
+//   Water     | 1000            | 4186           | 4,186,000
+//
+// Water has the highest thermal mass — it takes the most energy to heat.
+// Iron has high density but moderate Cₚ. Stone is in between.
+//
+// Setup:
+//   - Three separate 2×2×2 blocks of each material
+//   - Equal heat pulses applied to each block via HeatRegion
+//   - No boundary conditions — energy stays in each block
+//
+// Expected outcomes after 10 s:
+//   - Iron block: highest temperature (low ρCₚ → easy to heat)
+//   - Stone block: medium temperature
+//   - Water block: lowest temperature (highest ρCₚ → hardest to heat)
+//
+// Source: Wikipedia — Specific heat capacity; Heat capacity table
+
+SimulationScenario(
+    name: "Heat capacity comparison: iron vs stone vs water",
+    description: "Equal energy inputs heat iron, stone, and water blocks; iron gets hottest (low Cp), water stays coolest (highest Cp)",
+
+    grid_size: 10,
+
+    ambient_temperature: 300.0,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Background: stone
+        Fill(material: "Stone", min: (0, 0, 0), max: (9, 9, 9)),
+
+        // Block A: Iron (x=1..2)
+        Fill(material: "Iron", min: (1, 4, 4), max: (2, 5, 5)),
+
+        // Block B: Stone (x=4..5) — already stone, no change needed
+
+        // Block C: Water (x=7..8)
+        Fill(material: "Water", min: (7, 4, 4), max: (8, 5, 5)),
+    ],
+
+    ignition: [
+        // Equal temperature shock: set all three blocks to 1000 K simultaneously.
+        // Due to different Cp and density, they will cool at different rates.
+        HeatRegion(min: (1, 4, 4), max: (2, 5, 5), temperature: 1000.0),
+        HeatRegion(min: (4, 4, 4), max: (5, 5, 5), temperature: 1000.0),
+        HeatRegion(min: (7, 4, 4), max: (8, 5, 5), temperature: 1000.0),
+    ],
+
+    // dt = 0.2 s, 50 ticks = 10 s simulated
+    dt: 0.2,
+    ticks: 50,
+
+    stop_condition: FixedTicks,
+
+    assertions: [
+        // All three blocks should still be significantly hot (> 400 K)
+        // — validates heat retention differences
+        RegionAvgTempGt(min: (1, 4, 4), max: (2, 5, 5), threshold: 400.0),
+        RegionAvgTempGt(min: (4, 4, 4), max: (5, 5, 5), threshold: 400.0),
+        RegionAvgTempGt(min: (7, 4, 4), max: (8, 5, 5), threshold: 400.0),
+        // No reactions — pure calorimetry scenario
+        NoReactions,
+    ],
+)

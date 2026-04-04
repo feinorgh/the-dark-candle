@@ -1,0 +1,89 @@
+// Thermal Conduction Gradient
+//
+// Demonstrates Fourier's law of heat conduction: heat flows from hot to cold
+// at a rate proportional to thermal conductivity (k) and temperature gradient.
+//
+// Setup:
+//   - Left column (x=0): iron slab held near 1200 K (superheated core)
+//   - Middle 6 columns: stone (k=2.5 W/(m·K)) or air — acts as thermal pathway
+//   - Right column (x=11): stone at ambient temperature
+//
+// Expected outcomes:
+//   - Heat diffuses from left to right via Fourier conduction
+//   - Hot core region stays significantly warmer than the right side
+//   - Overall grid average temperature rises well above 288 K
+//
+// Physics: q = −k · (dT/dx)
+//   Stone k = 2.5 W/(m·K)
+//   Iron  k = 80.2 W/(m·K)  ← spreads heat much faster
+//
+// Source: Fourier's Law of Heat Conduction (Incropera & DeWitt, §2.1)
+
+SimulationScenario(
+    name: "Thermal conduction gradient",
+    description: "Superheated iron core radiates/conducts heat through a stone slab; temperature gradient emerges from Fourier conduction",
+
+    grid_size: 12,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Fill entire grid with stone first
+        Fill(
+            material: "Stone",
+            min: (0, 0, 0),
+            max: (11, 11, 11),
+        ),
+        // Replace left 2 columns with iron (high-k conductor)
+        Fill(
+            material: "Iron",
+            min: (0, 0, 0),
+            max: (1, 11, 11),
+        ),
+    ],
+
+    ignition: [
+        // Superheated iron source on the left: 1200 K
+        HeatRegion(
+            min: (0, 0, 0),
+            max: (1, 11, 11),
+            temperature: 1200.0,
+        ),
+        // Right-hand stone at ambient
+        HeatRegion(
+            min: (9, 0, 0),
+            max: (11, 11, 11),
+            temperature: 288.15,
+        ),
+    ],
+
+    // dt = 0.1 s, 500 ticks = 50 s simulated time.
+    // Iron α = k/(ρCp) = 80.2 / (7874 × 450) ≈ 2.26e-5 m²/s → diffuses 1 m in ~44 s.
+    dt: 0.1,
+    ticks: 500,
+
+    stop_condition: FixedTicks,
+
+    assertions: [
+        // Left iron slab should still be significantly hot (> 700 K average)
+        RegionAvgTempGt(
+            min: (0, 0, 0),
+            max: (1, 11, 11),
+            threshold: 700.0,
+        ),
+        // Right stone should remain cooler than the hot source
+        RegionAvgTempLt(
+            min: (9, 0, 0),
+            max: (11, 11, 11),
+            threshold: 700.0,
+        ),
+        // No chemistry in this pure-thermal scenario
+        NoReactions,
+    ],
+)

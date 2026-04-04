@@ -1,0 +1,86 @@
+// Stefan-Boltzmann Radiation Through Vacuum
+//
+// Demonstrates that hot objects radiate energy to their surroundings via
+// electromagnetic radiation (Stefan-Boltzmann law) even without any conductive
+// medium — heat transfer through vacuum.
+//
+// This test is identical to the real-world situation of:
+//   - A hot satellite component cooling in space
+//   - A glowing coal heating a nearby stone wall across an air gap
+//
+// Setup:
+//   - 10³ stone-walled box
+//   - Inner cavity contains NO material (air voxels, which have near-zero
+//     thermal conductivity k → effectively vacuum for conduction purposes)
+//   - Hot iron sphere at the centre: 1400 K
+//   - Cold stone walls at 300 K
+//
+// Expected outcomes:
+//   - Conduction through air is extremely slow (k_air ≈ 0.026 W/(m·K))
+//   - Radiation however is proportional to T⁴ — dominant at high temperatures
+//   - Stone walls heat up measurably via radiative transfer alone
+//   - The iron core cools toward the walls' temperature
+//
+// Physics:
+//   Stefan-Boltzmann: P = ε σ A (T_hot⁴ − T_cold⁴)
+//   σ = 5.67e-8 W/(m²·K⁴)
+//   At 1400 K: σ T⁴ ≈ 220,000 W/m² (dominant at high temperature)
+//
+// Source: Stefan-Boltzmann law; Radiative heat transfer (Incropera §12)
+
+SimulationScenario(
+    name: "Stefan-Boltzmann radiation across air gap",
+    description: "Hot iron sphere heats cold stone walls via radiation across an air gap — demonstrates Stefan-Boltzmann T⁴ dependence",
+
+    grid_size: 10,
+
+    ambient_temperature: 293.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Cold stone outer walls
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 1),
+        // Air gap (very low conduction, radiation dominant)
+        Fill(material: "Air", min: (1, 1, 1), max: (8, 8, 8)),
+        // Hot iron sphere at the centre
+        Sphere(material: "Iron", center: (5, 5, 5), radius: 1.5),
+    ],
+
+    ignition: [
+        // Iron core at 1400 K — hot enough for strong radiative emission
+        HeatRegion(
+            min: (3, 3, 3),
+            max: (6, 6, 6),
+            temperature: 1400.0,
+        ),
+    ],
+
+    // dt = 0.5 s, 1000 ticks = 500 s simulated — allows measurable wall warming
+    dt: 0.5,
+    ticks: 1000,
+
+    stop_condition: FixedTicks,
+
+    assertions: [
+        // Inner iron sphere should still be very hot (> 1000 K)
+        RegionAvgTempGt(
+            min: (3, 3, 3),
+            max: (6, 6, 6),
+            threshold: 1000.0,
+        ),
+        // Outer stone walls should have warmed above ambient
+        // (radiation heats them even through the air gap)
+        RegionAvgTempGt(
+            min: (0, 0, 0),
+            max: (1, 9, 9),
+            threshold: 293.16,
+        ),
+        // No chemistry — pure radiative heat transfer scenario
+        NoReactions,
+    ],
+)

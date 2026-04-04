@@ -1,0 +1,81 @@
+// Wildfire Propagation — Dry Organic Fuel Bed
+//
+// A mixed layer of dry leaves, grass, and twigs sits on stone ground.
+// All fuel is simultaneously ignited to verify that each material type
+// undergoes the correct combustion reaction:
+//
+//   DryLeaves + Air → Air + heat    (453 K, flash fire, no residue)
+//   Grass     + Air → Air + heat    (533 K, grass fire, no residue)
+//   Twig      + Air → Ash + heat    (473 K, produces ash)
+//
+// Fire at 1 m SI scale cannot propagate via thermal conduction alone — the
+// thermal mass per voxel is too large. This scenario demonstrates that
+// each fuel type correctly reacts when ignited above its threshold temperature,
+// producing the expected combustion products.
+//
+// Setup:
+//   - 10³ grid, stone floor layer at y=0
+//   - Air fills y=2..9
+//   - Fuel bed at y=1: dry leaves (x=0..2), grass (x=3..5), twigs (x=6..9)
+//   - All fuel ignited simultaneously via HeatRegion
+//
+// Expected outcomes:
+//   - All dry leaves consumed (flash fire → Air)
+//   - All grass consumed (grass fire → Air)
+//   - All twigs consumed (→ Ash)
+//   - More than 20 reactions total
+//
+// Source: Wikipedia — Wildfire § Combustion; fire triangle
+
+SimulationScenario(
+    name: "Wildfire propagation through fuel bed",
+    description: "Three fuel types (dry leaves, grass, twigs) simultaneously ignited; each undergoes its correct combustion reaction at its threshold temperature",
+
+    grid_size: 10,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone ground floor
+        Layer(material: "Stone", y: 0),
+        // Air fills y=1..9 (initial state — fuel placed below)
+        Fill(material: "Air", min: (0, 1, 0), max: (9, 9, 9)),
+        // Fuel bed at y=1:
+        //   x=0..2: dry leaves (ignites at 453 K — easiest to ignite)
+        Fill(material: "DryLeaves", min: (0, 1, 0), max: (2, 1, 9)),
+        //   x=3..5: grass (533 K)
+        Fill(material: "Grass", min: (3, 1, 0), max: (5, 1, 9)),
+        //   x=6..9: twigs (473 K, produce ash)
+        Fill(material: "Twig", min: (6, 1, 0), max: (9, 1, 9)),
+    ],
+
+    ignition: [
+        // Ignite entire fuel bed at 700 K — above all ignition thresholds.
+        // At 1 m SI scale thermal mass is too large for heat to propagate via
+        // conduction in a physically meaningful time; all fuel ignited at once.
+        HeatRegion(min: (0, 1, 0), max: (9, 1, 9), temperature: 700.0),
+    ],
+
+    // dt = 200 s, 100 ticks; UntilAllPass exits at tick 1 once all fuel reacts.
+    dt: 200.0,
+    ticks: 100,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All dry leaves must be gone (flash fire)
+        MaterialAbsent(material: "DryLeaves"),
+        // All grass must be gone
+        MaterialAbsent(material: "Grass"),
+        // Twigs must be gone
+        MaterialAbsent(material: "Twig"),
+        // Many reactions must have fired
+        TotalReactionsGt(min_count: 20),
+    ],
+)

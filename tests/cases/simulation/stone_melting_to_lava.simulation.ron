@@ -1,0 +1,72 @@
+// Stone Melting to Lava — Rock Melting Under Extreme Heat
+//
+// Stone voxels heated above their melting point (1473 K) transition to lava.
+// This is the reverse of lava_cooling_to_stone.simulation.ron, demonstrating
+// that phase transitions are bidirectional and driven purely by temperature.
+//
+// Setup:
+//   - 8³ stone grid
+//   - Extreme heat source at the centre: 2000 K
+//   - No ambient cooling (boundary_htc = None) — heat stays in system
+//
+// Expected outcomes:
+//   - Central stone voxels heat above 1473 K and melt to lava
+//   - Lava count grows as heat diffuses outward through the stone
+//   - Stone count falls as material is converted
+//
+// Physics:
+//   Stone melting point: 1473 K
+//   melted_into: "Lava" (from stone.material.ron)
+//   Latent heat of fusion (basaltic rock): ~400,000 J/kg
+//   The temperature plateau at 1473 K during melting is observable.
+//
+// Source: Wikipedia — Melting point § Silicate rocks; Bowen's reaction series
+
+SimulationScenario(
+    name: "Stone melting to lava",
+    description: "Central superheated region melts surrounding stone into lava above 1473 K — demonstrates the melted_into phase transition",
+
+    grid_size: 10,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Solid stone fills the entire grid
+        Fill(
+            material: "Stone",
+            min: (0, 0, 0),
+            max: (9, 9, 9),
+        ),
+    ],
+
+    ignition: [
+        // Extreme heat source at centre: well above stone melting point
+        HeatRegion(
+            min: (4, 4, 4),
+            max: (5, 5, 5),
+            temperature: 2200.0,
+        ),
+    ],
+
+    // dt = 5 s, 2000 ticks = 10000 s simulated (≈ 2.8 hours)
+    // Stone α = k/(ρ×Cp) = 2.5 / (2700×790) ≈ 1.17e-6 m²/s
+    dt: 5.0,
+    ticks: 2000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // At least some stone should have melted to lava
+        MaterialCountGt(material: "Lava", min_count: 1),
+        // Peak temperature should still be very high
+        MaxTempGt(threshold: 1473.0),
+        // No chemical reactions in this thermal-only scenario
+        NoReactions,
+    ],
+)

@@ -1,0 +1,76 @@
+// Ice Melting — Latent Heat Demonstration
+//
+// Demonstrates that phase transitions require latent heat: temperature does NOT
+// rise during melting; instead, the absorbed energy goes into breaking crystal
+// bonds. This produces the characteristic "temperature plateau" at 273.15 K.
+//
+// Setup:
+//   - 8³ grid; centre 4³ sphere of ice at −20°C (253.15 K)
+//   - Surrounding air at +10°C (283.15 K) — above melting point
+//   - Boundary convective HTC ensures air stays warm
+//
+// Expected outcomes:
+//   - Ice absorbs heat from the air and warms toward 273.15 K
+//   - Phase transition: Ice → Water when latent heat (334,000 J/kg per voxel) is met
+//   - Once all latent heat is absorbed, water temperature rises above 273.15 K
+//   - Final state: no ice remains, all water
+//
+// Physics:
+//   Latent heat of fusion (water): L_f = 334,000 J/kg
+//   Each 1 m³ water voxel: mass = 1000 kg → Q = 3.34 × 10⁸ J to melt
+//   Heat flux from 10°C air → ice via conduction + convection
+//
+// Source: Incropera & DeWitt, §11 — Phase Change; Wikipedia — Latent heat
+
+SimulationScenario(
+    name: "Ice melting — latent heat plateau",
+    description: "Sphere of ice in warm air; demonstrates the 273.15 K temperature plateau while latent heat of fusion is absorbed before phase transition",
+
+    grid_size: 10,
+
+    // Warm air at +10°C (283.15 K) — above melting point
+    ambient_temperature: 283.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+
+    // Convective air-ice boundary: h = 25 W/(m²·K)
+    boundary_htc: Some(25.0),
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Air fills the grid (default after Init)
+        // Central sphere of ice at −20°C
+        Sphere(
+            material: "Ice",
+            center: (5, 5, 5),
+            radius: 2.5,
+        ),
+    ],
+
+    ignition: [
+        // Ice starts cold
+        HeatRegion(
+            min: (3, 3, 3),
+            max: (7, 7, 7),
+            temperature: 253.15,
+        ),
+    ],
+
+    // dt = 60000 s (~16.7 hours), run until convergence (max 5000 ticks ≈ 9.5 years).
+    // Large dt needed because latent heat buffers are large (334,000 J/kg × 917 kg/m³).
+    dt: 60000.0,
+    ticks: 5000,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // All ice must have melted
+        MaterialAbsent(material: "Ice"),
+        // Water should exist in the centre region
+        MaterialCountGt(material: "Water", min_count: 1),
+        // No chemical reactions (pure thermal transition)
+        NoReactions,
+    ],
+)
