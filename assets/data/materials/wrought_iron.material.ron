@@ -1,0 +1,29 @@
+// Wrought iron — low-carbon iron with fibrous slag inclusions.
+// More ductile and corrosion-resistant than cast iron; less strong than steel.
+(
+    id: 104,
+    name: "wrought_iron",
+    density: 7750.0,
+    hardness: 4.0,
+    thermal_conductivity: 59.0,   // W/(m·K)
+    specific_heat: 500.0,         // J/(kg·K)
+    melting_point: Some(1803.0),  // K (~1530 °C)
+    boiling_point: Some(3133.0),
+    ignition_point: None,
+    heat_of_combustion: None,
+    youngs_modulus: Some(190_000_000_000.0), // 190 GPa
+    tensile_strength: Some(310_000_000.0),   // 310 MPa
+    compressive_strength: Some(310_000_000.0),
+    shear_strength: Some(180_000_000.0),
+    flexural_strength: Some(310_000_000.0),
+    fracture_toughness: Some(50_000_000.0),  // 50 MPa·√m (ductile)
+    color: (0.45, 0.40, 0.40, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: Some(272_000.0),      // J/kg
+    latent_heat_of_vaporization: Some(6_300_000.0),
+)

@@ -1,0 +1,29 @@
+// Dried clay — unfired clay that has been air-dried. Weaker than fired brick.
+// Suitable for primitive construction in dry climates; dissolves in rain if unprotected.
+(
+    id: 106,
+    name: "clay_dried",
+    density: 1500.0,
+    hardness: 2.0,
+    thermal_conductivity: 0.55,   // W/(m·K)
+    specific_heat: 1380.0,        // J/(kg·K)
+    melting_point: None,
+    boiling_point: None,
+    ignition_point: None,
+    heat_of_combustion: None,
+    youngs_modulus: Some(1_400_000_000.0),  // 1.4 GPa (unfired clay)
+    tensile_strength: Some(500_000.0),      // 0.5 MPa
+    compressive_strength: Some(2_500_000.0), // 2.5 MPa
+    shear_strength: Some(800_000.0),
+    flexural_strength: Some(1_000_000.0),
+    fracture_toughness: Some(60_000.0),    // 0.06 MPa·√m (very brittle)
+    color: (0.65, 0.52, 0.38, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: None,
+    latent_heat_of_vaporization: None,
+)

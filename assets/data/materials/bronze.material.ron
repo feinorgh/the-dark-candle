@@ -1,0 +1,28 @@
+// Bronze — copper-tin alloy (≈ 88% Cu, 12% Sn). The first widely-used metal alloy.
+(
+    id: 105,
+    name: "bronze",
+    density: 8800.0,
+    hardness: 3.5,
+    thermal_conductivity: 60.0,   // W/(m·K)
+    specific_heat: 380.0,         // J/(kg·K)
+    melting_point: Some(1173.0),  // K (~900 °C, varies with Sn content)
+    boiling_point: Some(2835.0),
+    ignition_point: None,
+    heat_of_combustion: None,
+    youngs_modulus: Some(120_000_000_000.0), // 120 GPa
+    tensile_strength: Some(310_000_000.0),   // 310 MPa (cold-worked)
+    compressive_strength: Some(310_000_000.0),
+    shear_strength: Some(160_000_000.0),
+    flexural_strength: Some(310_000_000.0),
+    fracture_toughness: Some(40_000_000.0),  // 40 MPa·√m
+    color: (0.80, 0.50, 0.20, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: Some(210_000.0),
+    latent_heat_of_vaporization: None,
+)

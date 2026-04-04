@@ -1,0 +1,9 @@
+(
+    name: "wall",
+    description: "A flat vertical wall section (1 m × 1 m × 0.25 m).",
+    shape: Wall,
+    size: (1.0, 1.0, 0.25),
+    attachment_faces: 63,
+    material_slot: "stone",
+    mass_kg: None,
+)

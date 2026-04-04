@@ -1,0 +1,11 @@
+// Craft wooden planks from raw logs.
+// 1 log → 4 planks (wastage from sawing).
+(
+    name: "wood_to_planks",
+    description: "Saw a log into four wooden planks.",
+    inputs: [("wood", 1)],
+    output: ("wooden_plank", 4),
+    tool_class: Some("saw"),
+    required_temperature_k: None,
+    duration_ticks: 60,
+)

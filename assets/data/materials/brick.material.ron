@@ -1,0 +1,29 @@
+// Fired clay brick — one of the oldest masonry materials.
+// Properties are for standard red fired brick.
+(
+    id: 102,
+    name: "brick",
+    density: 1920.0,
+    hardness: 6.0,
+    thermal_conductivity: 0.72,   // W/(m·K)
+    specific_heat: 840.0,         // J/(kg·K)
+    melting_point: Some(1900.0),  // K (approximate for fired clay)
+    boiling_point: None,
+    ignition_point: None,
+    heat_of_combustion: None,
+    youngs_modulus: Some(20_000_000_000.0),  // 20 GPa
+    tensile_strength: Some(3_000_000.0),     // 3 MPa (brittle in tension)
+    compressive_strength: Some(35_000_000.0), // 35 MPa
+    shear_strength: Some(5_000_000.0),
+    flexural_strength: Some(5_000_000.0),
+    fracture_toughness: Some(300_000.0),    // 0.3 MPa·√m (brittle)
+    color: (0.72, 0.30, 0.20, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: None,
+    latent_heat_of_vaporization: None,
+)

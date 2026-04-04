@@ -21,4 +21,9 @@ MaterialData(
     heat_of_combustion: Some(15000000.0),
     albedo: 0.25,
     molar_mass: None,
+    tensile_strength: Some(40000000.0),
+    compressive_strength: Some(30000000.0),
+    shear_strength: Some(8000000.0),
+    flexural_strength: Some(50000000.0),
+    fracture_toughness: Some(10000000.0),
 )

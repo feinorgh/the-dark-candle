@@ -5,6 +5,7 @@ use the_dark_candle::{
     behavior::BehaviorPlugin,
     biology::BiologyPlugin,
     bodies::BodiesPlugin,
+    building::BuildingPlugin,
     camera::CameraPlugin,
     chemistry::ChemistryPlugin,
     data::DataPlugin,
@@ -216,6 +217,7 @@ fn main() {
     ))
     .add_plugins((
         BiologyPlugin,
+        BuildingPlugin,
         ProcgenPlugin,
         BehaviorPlugin,
         BodiesPlugin,

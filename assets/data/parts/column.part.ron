@@ -1,0 +1,9 @@
+(
+    name: "column",
+    description: "A vertical support column (0.5 m × 1 m × 0.5 m). Transmits compressive load.",
+    shape: Column,
+    size: (0.5, 1.0, 0.5),
+    attachment_faces: 48, // FACE_NY | FACE_PY (top/bottom connections)
+    material_slot: "stone",
+    mass_kg: None,
+)

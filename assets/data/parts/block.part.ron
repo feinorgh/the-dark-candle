@@ -1,0 +1,10 @@
+(
+    name: "block",
+    description: "A solid 1×1×1 cube block. The fundamental building unit.",
+    shape: Cube,
+    // 1 m³ occupancy
+    size: (1.0, 1.0, 1.0),
+    attachment_faces: 63, // FACE_ALL — attaches on all six faces
+    material_slot: "stone",
+    mass_kg: None, // derived from material density × volume
+)

@@ -1,0 +1,9 @@
+(
+    name: "roof",
+    description: "A sloped roof panel (1 m × 0.5 m × 1 m, 30° slope). Sheds water and snow.",
+    shape: Roof,
+    size: (1.0, 0.5, 1.0),
+    attachment_faces: 63,
+    material_slot: "wood",
+    mass_kg: None,
+)

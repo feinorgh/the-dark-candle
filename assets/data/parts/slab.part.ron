@@ -1,0 +1,9 @@
+(
+    name: "slab",
+    description: "A flat half-height slab (0.5 m thick). Good for floors and ceilings.",
+    shape: Slab,
+    size: (1.0, 0.5, 1.0),
+    attachment_faces: 63,
+    material_slot: "stone",
+    mass_kg: None,
+)

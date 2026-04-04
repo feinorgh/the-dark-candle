@@ -1,0 +1,29 @@
+// Oak hardwood — dense, strong hardwood suitable for structural beams and floors.
+// SI material properties.
+(
+    id: 100,
+    name: "oak",
+    density: 750.0,               // kg/m³  (air-dried oak)
+    hardness: 4.0,                // Mohs approximation
+    thermal_conductivity: 0.17,   // W/(m·K)
+    specific_heat: 1700.0,        // J/(kg·K)
+    melting_point: None,
+    boiling_point: None,
+    ignition_point: Some(573.0),  // K (~300 °C)
+    heat_of_combustion: Some(17_000_000.0), // J/kg
+    youngs_modulus: Some(12_000_000_000.0), // Pa  (12 GPa)
+    tensile_strength: Some(100_000_000.0),  // Pa  (100 MPa along grain)
+    compressive_strength: Some(55_000_000.0), // Pa (55 MPa)
+    shear_strength: Some(9_000_000.0),      // Pa  (9 MPa)
+    flexural_strength: Some(112_000_000.0), // Pa  (112 MPa)
+    fracture_toughness: Some(500_000.0),    // Pa·√m (0.5 MPa·√m)
+    color: (0.55, 0.35, 0.15, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: None,
+    latent_heat_of_vaporization: None,
+)

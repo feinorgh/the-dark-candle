@@ -1,0 +1,29 @@
+// Portland-class concrete — unreinforced.
+// Very strong in compression, weak in tension (cracks under tensile loads).
+(
+    id: 103,
+    name: "concrete",
+    density: 2400.0,
+    hardness: 7.0,
+    thermal_conductivity: 1.7,    // W/(m·K)
+    specific_heat: 880.0,         // J/(kg·K)
+    melting_point: None,
+    boiling_point: None,
+    ignition_point: None,
+    heat_of_combustion: None,
+    youngs_modulus: Some(30_000_000_000.0),  // 30 GPa
+    tensile_strength: Some(3_000_000.0),     // 3 MPa (very low — concrete cracks in tension)
+    compressive_strength: Some(40_000_000.0), // 40 MPa (C40 mix)
+    shear_strength: Some(4_000_000.0),
+    flexural_strength: Some(5_000_000.0),
+    fracture_toughness: Some(350_000.0),    // 0.35 MPa·√m
+    color: (0.70, 0.70, 0.68, 1.0),
+    emissive_color: (0.0, 0.0, 0.0, 0.0),
+    is_fluid: false,
+    is_gas: false,
+    viscosity: None,
+    refractive_index: None,
+    absorption_coefficient: None,
+    latent_heat_of_fusion: None,
+    latent_heat_of_vaporization: None,
+)

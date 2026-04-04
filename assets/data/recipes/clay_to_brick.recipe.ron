@@ -1,0 +1,12 @@
+// Fire clay at high temperature to produce fired bricks.
+// 4 clay → 3 bricks (5–10 % shrinkage + breakage).
+// Requires kiln temperature ≥ 1273 K (1000 °C).
+(
+    name: "clay_to_brick",
+    description: "Fire clay in a kiln to produce bricks.",
+    inputs: [("clay_dried", 4)],
+    output: ("brick", 3),
+    tool_class: None,
+    required_temperature_k: Some(1273.0),
+    duration_ticks: 600,
+)

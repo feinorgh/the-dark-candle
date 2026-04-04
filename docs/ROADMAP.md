@@ -279,7 +279,7 @@ Full design: **[entity-bodies.md](entity-bodies.md)**
 
 ---
 
-## Phase 11 — Buildings & Structural Construction (planned)
+## Phase 11 — Buildings & Structural Construction ✅
 
 Freeform building from physical materials with data-driven parts (`.part.ron`).
 Structural strength properties (tensile, compressive, shear, flexural in Pa),

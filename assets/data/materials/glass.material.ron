@@ -29,4 +29,9 @@ MaterialData(
     boiled_into: None,
     frozen_into: None,
     condensed_into: None,
+    tensile_strength: Some(33000000.0),
+    compressive_strength: Some(1000000000.0),
+    shear_strength: Some(30000000.0),
+    flexural_strength: Some(40000000.0),
+    fracture_toughness: Some(750000.0),
 )

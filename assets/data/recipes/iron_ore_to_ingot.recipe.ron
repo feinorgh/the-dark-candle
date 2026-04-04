@@ -1,0 +1,11 @@
+// Smelt iron ore into a wrought iron ingot.
+// Requires blast furnace temperature ≥ 1811 K (1538 °C, iron melting point).
+(
+    name: "iron_ore_to_ingot",
+    description: "Smelt iron ore in a furnace to produce a wrought iron ingot.",
+    inputs: [("iron", 2)],
+    output: ("wrought_iron", 1),
+    tool_class: None,
+    required_temperature_k: Some(1811.0),
+    duration_ticks: 480,
+)

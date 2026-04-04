@@ -2,6 +2,8 @@ use bevy::prelude::*;
 
 use crate::data::{EnemyData, GameAssets};
 
+pub mod inventory;
+
 pub struct EntityPlugin;
 
 impl Plugin for EntityPlugin {

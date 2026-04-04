@@ -1,0 +1,9 @@
+(
+    name: "arch",
+    description: "A curved arch segment spanning 1 m. Distributes load axially along the curve.",
+    shape: Arch,
+    size: (1.0, 1.0, 0.25),
+    attachment_faces: 12, // FACE_NZ | FACE_PZ (arch feet)
+    material_slot: "stone",
+    mass_kg: None,
+)

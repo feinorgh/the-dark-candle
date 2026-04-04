@@ -1,0 +1,9 @@
+(
+    name: "beam",
+    description: "A horizontal structural beam (0.25 m × 0.25 m × 1 m).",
+    shape: Beam,
+    size: (0.25, 0.25, 1.0),
+    attachment_faces: 12, // FACE_NZ | FACE_PZ (end-to-end connections)
+    material_slot: "wood",
+    mass_kg: None,
+)

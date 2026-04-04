@@ -1446,8 +1446,43 @@
         "assets/data/gaits/quadruped.gait.ron"
       ],
       "description": "Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK solver, locomotion gaits, player embodiment, eye/ear perception, per-region injury model (bruise\u2192fracture\u2192sever), plant wind response and felling. 48 lib tests pass."
+    },
+    {
+      "name": "Buildings & Structural Construction",
+      "status": "complete",
+      "files": [
+        "src/building/mod.rs",
+        "src/building/parts.rs",
+        "src/building/joints.rs",
+        "src/building/stress.rs",
+        "src/building/crafting.rs",
+        "src/building/placement.rs",
+        "src/building/demolition.rs",
+        "src/entities/inventory.rs",
+        "assets/data/parts/block.part.ron",
+        "assets/data/parts/slab.part.ron",
+        "assets/data/parts/beam.part.ron",
+        "assets/data/parts/column.part.ron",
+        "assets/data/parts/wall.part.ron",
+        "assets/data/parts/arch.part.ron",
+        "assets/data/parts/stair.part.ron",
+        "assets/data/parts/roof.part.ron",
+        "assets/data/recipes/wood_to_planks.recipe.ron",
+        "assets/data/recipes/clay_to_brick.recipe.ron",
+        "assets/data/recipes/sand_to_glass.recipe.ron",
+        "assets/data/recipes/iron_ore_to_ingot.recipe.ron",
+        "assets/data/recipes/mix_concrete.recipe.ron",
+        "assets/data/materials/oak.material.ron",
+        "assets/data/materials/pine.material.ron",
+        "assets/data/materials/brick.material.ron",
+        "assets/data/materials/concrete.material.ron",
+        "assets/data/materials/wrought_iron.material.ron",
+        "assets/data/materials/bronze.material.ron",
+        "assets/data/materials/clay_dried.material.ron",
+        "assets/data/materials/thatch.material.ron"
+      ],
+      "description": "Freeform building system: PartData/RecipeData RON assets, Joint stress model (axial + shear vs material strength), load-path structural analysis with progressive collapse, build-mode placement (B key, R rotate, 1m grid snap), demolition with debris, tick-based crafting with temperature gating, per-entity Inventory with weight/volume limits, BuildingPlugin wired into main. 5 construction materials extended with SI structural strengths; 8 new construction materials (oak, pine, brick, concrete, wrought_iron, bronze, clay_dried, thatch). 26 lib tests pass."
     }
-  ],
   "tech_debt": [
     {
       "description": "TODO: Sample voxel at entity position to determine medium density for buoyancy",
@@ -1508,7 +1543,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "bd386b715c88d6ac1d53e38dc5516cceadd5b4d1",
+    "generated_from_commit": "7170a66b8562059fb4217bb9ccb9a635a12b5c4a",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod behavior;
 pub mod biology;
+pub mod building;
 pub mod bodies;
 pub mod camera;
 pub mod chemistry;

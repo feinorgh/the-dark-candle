@@ -1,0 +1,11 @@
+// Mix concrete: aggregate (sand/gravel) + limestone powder + water → concrete.
+// Sets at ambient temperature over 2400 ticks (≈ 40 minutes real time).
+(
+    name: "mix_concrete",
+    description: "Mix sand, limestone, and water to form uncured concrete.",
+    inputs: [("sand", 2), ("limestone", 1)],
+    output: ("concrete", 2),
+    tool_class: Some("mixing_vessel"),
+    required_temperature_k: None,
+    duration_ticks: 2400,
+)

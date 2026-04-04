@@ -134,6 +134,26 @@ pub struct MaterialData {
     /// Source: Wikipedia — Young's modulus.
     #[serde(default)]
     pub youngs_modulus: Option<f32>,
+    /// Maximum tensile stress before fracture (Pa). None for fluids/gases.
+    /// Source: Wikipedia — Tensile strength.
+    #[serde(default)]
+    pub tensile_strength: Option<f32>,
+    /// Maximum compressive stress before crushing (Pa). None for fluids/gases.
+    /// Source: Wikipedia — Compressive strength.
+    #[serde(default)]
+    pub compressive_strength: Option<f32>,
+    /// Maximum shear stress before failure (Pa). None for fluids/gases.
+    /// Source: Wikipedia — Shear strength.
+    #[serde(default)]
+    pub shear_strength: Option<f32>,
+    /// Maximum bending stress before snapping (Pa). None for fluids/gases.
+    /// Source: Wikipedia — Flexural strength.
+    #[serde(default)]
+    pub flexural_strength: Option<f32>,
+    /// Resistance to crack propagation (Pa·√m). None for fluids/gases.
+    /// Source: Wikipedia — Fracture toughness.
+    #[serde(default)]
+    pub fracture_toughness: Option<f32>,
 
     // --- Chemical / combustion properties (SI) ---
     /// Energy released per kg when burned (J/kg). None if non-flammable.

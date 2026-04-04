@@ -1,0 +1,9 @@
+(
+    name: "stair",
+    description: "A stair step (1 m wide, 0.5 m rise, 0.5 m depth). Stackable.",
+    shape: Stair,
+    size: (1.0, 0.5, 0.5),
+    attachment_faces: 63,
+    material_slot: "stone",
+    mass_kg: None,
+)

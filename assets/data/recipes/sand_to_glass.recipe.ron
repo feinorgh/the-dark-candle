@@ -1,0 +1,11 @@
+// Smelt sand into glass.
+// 1 kg of silica sand → 1 glass block at ≥ 1723 K (1450 °C).
+(
+    name: "sand_to_glass",
+    description: "Smelt sand in a furnace to produce glass.",
+    inputs: [("sand", 2)],
+    output: ("glass", 1),
+    tool_class: None,
+    required_temperature_k: Some(1723.0),
+    duration_ticks: 300,
+)
