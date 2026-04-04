@@ -44,8 +44,16 @@ All material properties use **real-world SI units**. When adding or editing mate
 | `friction_coefficient` | dimensionless (0–1) | 0.5 | Wikipedia: Friction |
 | `restitution` | dimensionless (0–1) | 0.2 | — |
 | `youngs_modulus` | Pa | 200e9 | Wikipedia: Young's modulus |
+| `tensile_strength` | Pa | 400_000_000.0 | Wikipedia: Ultimate tensile strength |
+| `compressive_strength` | Pa | 250_000_000.0 | Wikipedia: Compressive strength |
+| `shear_strength` | Pa | 170_000_000.0 | Wikipedia: Shear strength |
+| `flexural_strength` | Pa | 350_000_000.0 | Wikipedia: Flexural strength |
+| `fracture_toughness` | Pa·√m | 50_000_000.0 | Wikipedia: Fracture toughness |
 | `heat_of_combustion` | J/kg | None (non-flammable) | Wikipedia: Heat of combustion |
 | `molar_mass` | kg/mol | None (used for gases) | — |
+
+> **Note on RON notation:** RON does not parse scientific notation (`400e6`).  
+> Always write full decimal literals: `400_000_000.0` not `400e6`.
 
 ## Dependencies
 

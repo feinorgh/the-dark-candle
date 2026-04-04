@@ -1,4 +1,4 @@
-# Phase 11 — Buildings & Structural Construction (planned)
+# Phase 11 — Buildings & Structural Construction ✅
 
 A freeform building system where players construct structures from physical
 materials — wood, stone, metal, glass, concrete, clay, and more — all defined as
@@ -231,3 +231,53 @@ Voxel storage, chunk management, meshing pipeline, octree structure (used by
 parts for sub-voxel resolution), chemistry system (fire/heat/reactions apply
 to building materials automatically), existing material RON files (extended,
 not replaced), existing item system (extended with building items).
+
+
+---
+
+## Implementation Status ✅
+
+**Completed at commit `283d996` (Phase 11).**
+
+### Files created
+
+| File | Description |
+|------|-------------|
+| `src/building/mod.rs` | `BuildingPlugin` — asset loaders, resources, system schedule |
+| `src/building/parts.rs` | `PartData` RON asset, `PartShape` enum, `PlacedPart` component, attachment face flags |
+| `src/building/joints.rs` | `Joint` component with `apply_axial`/`apply_shear` vs `MaterialData` strengths |
+| `src/building/stress.rs` | `StressTick`, `PartLoad`, `GroundAnchor`, load-path analysis, LBM wind loading, progressive collapse |
+| `src/building/crafting.rs` | `RecipeData` RON asset, `CraftingQueue`, temperature-gated crafting |
+| `src/building/placement.rs` | `BuildMode` (B key toggle, R rotate), 1 m grid snap, auto joint creation |
+| `src/building/demolition.rs` | `PendingDemolition`, debris spawning, `DroppedPart` |
+| `src/entities/inventory.rs` | `Inventory` component with weight (kg) + volume (m³) limits |
+| `src/building/AGENTS.md` | Agent guidance document |
+
+### MaterialData extension
+
+`MaterialData` in `src/data/mod.rs` extended with 5 optional structural strength fields
+(all `Option<f32>`, `#[serde(default)]` — fully backward-compatible):
+
+```
+tensile_strength    (Pa)
+compressive_strength (Pa)
+shear_strength      (Pa)
+flexural_strength   (Pa)
+fracture_toughness  (Pa·√m)
+```
+
+10 existing material files updated with SI values; 8 new construction materials added
+(IDs 100–107: oak, pine, brick, concrete, wrought_iron, bronze, clay_dried, thatch).
+
+### Part RON files (assets/data/parts/)
+
+`block.part.ron`, `slab.part.ron`, `beam.part.ron`, `column.part.ron`,
+`wall.part.ron`, `arch.part.ron`, `stair.part.ron`, `roof.part.ron`
+
+### Recipe RON files (assets/data/recipes/)
+
+`wood_to_planks`, `clay_to_brick`, `sand_to_glass`, `iron_ore_to_ingot`, `mix_concrete`
+
+### Tests
+
+26 unit tests pass across all submodules (`cargo test --lib -- building`).

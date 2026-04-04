@@ -1,4 +1,4 @@
-# Phase 10 — Entity Bodies & Organic Physics (planned)
+# Phase 10 — Entity Bodies & Organic Physics ✅
 
 Physical embodiment for all living entities — player, creatures, and plants.
 Replaces the abstract point-entity model (Phase 4) with articulated bodies
@@ -215,3 +215,37 @@ replaced). Behavior AI (action selection unchanged — locomotion replaces
 the velocity output). Existing rigid body solver (reused for per-bone
 dynamics). Voxel collision (extended from single AABB to compound, not
 replaced).
+
+---
+
+## Implementation Status ✅
+
+**Completed at commit `bd386b7` (Phase 10).**
+
+### Files created
+
+| File | Description |
+|------|-------------|
+| `src/bodies/mod.rs` | `BodiesPlugin`, system schedule |
+| `src/bodies/skeleton.rs` | `SkeletonData` RON asset, `BoneData`, `SkeletonInstance`, FK propagation |
+| `src/bodies/tissue.rs` | `TissueLayer`, `BodyCollider`, compound AABB collider construction |
+| `src/bodies/ik.rs` | `IkChain`, FABRIK solver, foot/hand placement |
+| `src/bodies/locomotion.rs` | `GaitData` RON asset, `LocomotionState`, `AnimPhase` |
+| `src/bodies/perception.rs` | `EyeMount`, `EarMount`, `PerceptionEvent`, range-gated vision/hearing |
+| `src/bodies/injury.rs` | `InjuryRecord`, per-region severity (Bruised → Fractured → Severed), wound propagation |
+| `src/bodies/plant.rs` | `PlantBody`, `PlantJoint`, wind response, felling mechanics |
+| `src/bodies/player.rs` | `PlayerBody` — maps input to locomotion controller |
+
+### RON data files
+
+- `assets/data/skeletons/humanoid.skeleton.ron` — 14-bone biped skeleton
+- `assets/data/skeletons/quadruped.skeleton.ron` — 18-bone quadruped skeleton
+- `assets/data/skeletons/tree.skeleton.ron` — 5-level recursive tree trunk
+- `assets/data/bodies/humanoid.body.ron` — tissue layers for humanoid
+- `assets/data/bodies/quadruped.body.ron` — tissue layers for quadruped
+- `assets/data/gaits/biped.gait.ron` — walk/run/sprint gait parameters
+- `assets/data/gaits/quadruped.gait.ron` — trot/gallop gait parameters
+
+### Tests
+
+48 unit tests pass (`cargo test --lib -- bodies`).

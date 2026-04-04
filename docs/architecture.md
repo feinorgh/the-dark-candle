@@ -20,10 +20,12 @@ This game strictly adheres to Bevy's ECS model.
 | `world` | `src/world/` | Chunks, voxels, terrain generation (NoiseStack, biome integration, scene presets), geological strata & ores, multi-scale caves, hydraulic erosion, Surface Nets meshing, collision, planetary sampling |
 | `physics` | `src/physics/` | Gravity, collision, AMR fluid, LBM gas, FLIP/PIC particles |
 | `chemistry` | `src/chemistry/` | Materials, heat transfer, reactions, state transitions |
+| `building` | `src/building/` | Freeform structural construction: `PartData`/`RecipeData` RON assets, `Joint` stress model, load-path analysis with progressive collapse, player placement (B key, 1 m grid), demolition, tick-based crafting |
 | `biology` | `src/biology/` | Metabolism, health, growth, death, plant systems |
 | `behavior` | `src/behavior/` | Needs, utility AI, pathfinding, perception |
+| `bodies` | `src/bodies/` | Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK, locomotion gaits, player embodiment, per-region injury |
 | `social` | `src/social/` | Relationships, factions, reputation, group behaviors |
-| `entities` | `src/entities/` | Creature and item spawning, procedural generation |
+| `entities` | `src/entities/` | Creature and item spawning, `Inventory` component (weight/volume-limited item stacks) |
 | `procgen` | `src/procgen/` | Procedural tree generation, biome integration |
 | `lighting` | `src/lighting/` | Sun cycle, light maps, sky scattering, volumetric effects, atmospheric sky (Bevy Atmosphere component), distance fog with time-of-day sync |
 | `weather` | `src/weather/` | Cloud particles, wind upload, snow/rain accumulation |

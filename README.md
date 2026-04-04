@@ -58,7 +58,7 @@ terrain detail.
 
 ### 🧱 Voxel World
 - **Octree chunks** — 32³ base resolution with adaptive multi-resolution subdivision
-- **28 material types** — loaded from RON data files: stone, water, iron, lava, wood, glass, plus geological materials (sandstone, limestone, granite, basalt) and ores (coal, copper, gold, quartz crystal)
+- **36 material types** — loaded from RON data files: stone, water, iron, lava, wood, glass, plus geological materials (sandstone, limestone, granite, basalt) and ores (coal, copper, gold, quartz crystal), plus 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch)
 - **NoiseStack noise engine** — composable multi-octave FBM, ridged fractals, domain warping, terrain-type selector, micro-detail, continent/ocean masks
 - **Procedural terrain** — noise-based heightmaps, valley/river carving, hydraulic erosion (droplet, grid, and combined modes)
 - **Geological depth** — stratified rock layers (sedimentary/metamorphic/igneous) with depth-based ore veins and multi-scale cave systems (caverns, tunnels, worm tubes with underground lakes and lava)
@@ -105,7 +105,27 @@ terrain detail.
 - **Pathfinding** — A* on voxel grid with movement cost per material
 - **Food sources** — forageable resources with regrowth timers
 
-### 🎮 Game Systems
+### 🏗️ Buildings & Structural Construction
+- **Data-driven parts** — 8 part types (block, slab, beam, column, wall, arch, stair, roof) defined in `.part.ron` files; material is a separate field so one part type works with any material
+- **Joint stress model** — adjacent parts auto-connect with `Joint` entities; each joint tracks axial and shear stress vs real SI material strengths (Pa)
+- **Structural stress analysis** — load-path propagation every 10 ticks; gravity loads accumulate from top-down, LBM wind pressure applies lateral forces, joints that exceed material strength break
+- **Progressive collapse** — parts lose all live joints and become unsupported are despawned; debris fragments spawn with scatter velocities
+- **Crafting system** — `RecipeData` RON assets define input materials, tool requirement, minimum temperature (K), and duration in ticks; `CraftingQueue` component tracks per-workstation progress
+- **Player build mode** — press B to toggle; R rotates 90°; left-click places on 1 m grid with auto joint creation; placement validates support and inventory
+- **36 materials** — 28 terrain/chemistry materials plus 8 construction-specific: oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch — all with real SI properties
+- **Inventory system** — per-entity `Inventory` component with configurable weight (kg) and volume (m³) limits
+
+### 🦎 Entity Bodies & Organic Physics
+- **Articulated skeletons** — species-specific `.skeleton.ron` files define bone trees with parent→child hierarchy, rest-pose transforms, hinge/ball-socket/fixed joint constraints
+- **Forward kinematics** — pose propagates from root bone down the tree each tick
+- **FABRIK inverse kinematics** — `IkChain` solves foot/hand placement on uneven terrain in ≤10 iterations
+- **Tissue layers** — `TissueLayer` (skin, muscle, bone, organ) with material-derived density, elasticity, and failure thresholds; compound AABB colliders built from bone extents
+- **Locomotion gaits** — `.gait.ron` files define walk/run/sprint/trot/gallop cycle parameters; `LocomotionState` drives limb animation phases
+- **Player embodiment** — player is a regular creature with `PlayerBody`; input maps to the same locomotion controller as AI creatures
+- **Perception** — `EyeMount` (cone-frustum visibility test) and `EarMount` (range + material attenuation) fire `PerceptionEvent` when conditions are met
+- **Per-region injury** — `InjuryRecord` tracks severity (Bruised → Fractured → Severed) per body region; wound effects propagate to locomotion and biology systems
+- **Plant bodies** — `PlantBody` with `PlantJoint` spring model for wind sway; felling mechanic when trunk joint fails
+
 - **Save/load** — 4 save slots (1 autosave + 3 manual) in RON format (SAVE_VERSION=4)
 - **First-person camera** — WASD + mouse look with configurable sensitivity
 - **HUD** — health, temperature, coordinates, diagnostics overlay
@@ -204,13 +224,15 @@ The codebase is organised into focused ECS modules:
 | `world/` | Octree chunks, meshing, terrain generation (NoiseStack, biome integration, scene presets), erosion (D8 valley + hydraulic), raycasting, planetary sampling |
 | `physics/` | Rigid bodies, gravity, collision, LBM gas, FLIP fluid, atmosphere |
 | `chemistry/` | Heat transfer, reactions, state transitions, radiation |
+| `building/` | Structural construction: part/recipe RON assets, joint stress model, load-path analysis, player placement, demolition, crafting |
+| `bodies/` | Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK, locomotion gaits, player embodiment, injury system |
 | `planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, rendering |
 | `lighting/` | Sun cycle, atmospheric sky (Bevy Atmosphere component), light maps, volumetric clouds, distance fog |
 | `weather/` | Particle emitters, wind advection, snow/rain accumulation |
 | `biology/` | Metabolism, body temperature, hydration, energy systems |
 | `behavior/` | Behaviour trees, AI decision-making |
 | `social/` | Factions, relationships |
-| `entities/` | Creatures, items, spawning |
+| `entities/` | Creatures, items, `Inventory` component (weight/volume-limited item stacks) |
 | `procgen/` | Tree generation, biome decoration |
 | `gpu/` | Headless wgpu compute pipelines (atmosphere, terrain, particles) |
 | `data/` | RON asset loading for materials, reactions, configs |
@@ -220,13 +242,15 @@ The codebase is organised into focused ECS modules:
 | `camera/` | First-person camera controller |
 | `map/` | In-game map overlay: local discovery map + global planet map |
 
-**148 source files · ~53K lines of Rust · 1372+ tests**
+**177 source files · ~58K lines of Rust · 1500+ tests**
 
 ### Data-Driven Design
 
 Game data lives in `assets/data/` as RON files:
-- **28 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties (including 8 geological: sandstone, limestone, granite, basalt, coal, copper ore, gold ore, quartz crystal)
+- **36 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties; 28 terrain/chemistry materials (including 8 geological and 4 ores) + 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch); all with SI structural strength values (tensile, compressive, shear, flexural, fracture toughness)
 - **8 chemical reactions** — reactants, products, activation energy, enthalpy
+- **8 part types** — block, slab, beam, column, wall, arch, stair, roof (`.part.ron`)
+- **5 crafting recipes** — wood_to_planks, clay_to_brick, sand_to_glass, iron_ore_to_ingot, mix_concrete (`.recipe.ron`)
 - **1 tree species** — L-system parameters for procedural generation
 - **Configs** — atmosphere, fluid, planet, subdivision, universal constants
 
@@ -246,6 +270,8 @@ Detailed design documents live in [`docs/`](docs/):
 - [Fluid Simulation](docs/fluid-simulation-system.md)
 - [Atmosphere Simulation](docs/atmosphere-simulation.md)
 - [Advanced Physics](docs/advanced-physics.md)
+- [Entity Bodies](docs/entity-bodies.md)
+- [Buildings & Structural Construction](docs/structural-construction.md)
 - [Optics & Light](docs/optics-light.md)
 - [Simulation Test System](docs/simulation-test-system.md)
 - [Roadmap](docs/ROADMAP.md)
@@ -256,10 +282,18 @@ Detailed design documents live in [`docs/`](docs/):
 
 The Dark Candle is in active early development. The planetary generation
 pipeline is functional and produces visually compelling worlds. The voxel engine,
-physics, and chemistry systems are tested and working at the simulation level.
+physics, chemistry, entity body, and structural construction systems are tested
+and working at the simulation level.
+
+Current completed phases (1–11):
+- Terrain detail & world generation (8 scene presets, geological depth, hydraulic erosion) ✅
+- Physics: LBM gas, FLIP/PIC fluid, AMR fluid coupling, atmosphere ✅
+- Atmosphere & weather: orbital sun, sky scattering, volumetric clouds, rain/snow ✅
+- Lighting: sunlight, fog, cloud shadows, thermal glow ✅
+- Entity bodies: articulated skeleton, IK, tissue colliders, locomotion, injury ✅
+- Buildings & structural construction: parts, joints, stress analysis, crafting ✅
 
 Current focus areas:
-- Terrain detail & world generation (8 scene presets, geological depth, hydraulic erosion) ✅
 - Connecting planetary generation to the in-game voxel world
 - Expanding the creature AI and ecology systems
 - Performance optimisation for real-time gameplay
