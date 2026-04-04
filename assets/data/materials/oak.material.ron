@@ -1,29 +1,39 @@
 // Oak hardwood — dense, strong hardwood suitable for structural beams and floors.
 // SI material properties.
-(
+MaterialData(
     id: 100,
     name: "oak",
-    density: 750.0,               // kg/m³  (air-dried oak)
-    hardness: 4.0,                // Mohs approximation
-    thermal_conductivity: 0.17,   // W/(m·K)
-    specific_heat: 1700.0,        // J/(kg·K)
+    default_phase: Solid,
+    density: 750.0,
     melting_point: None,
     boiling_point: None,
-    ignition_point: Some(573.0),  // K (~300 °C)
-    heat_of_combustion: Some(17_000_000.0), // J/kg
-    youngs_modulus: Some(12_000_000_000.0), // Pa  (12 GPa)
-    tensile_strength: Some(100_000_000.0),  // Pa  (100 MPa along grain)
-    compressive_strength: Some(55_000_000.0), // Pa (55 MPa)
-    shear_strength: Some(9_000_000.0),      // Pa  (9 MPa)
-    flexural_strength: Some(112_000_000.0), // Pa  (112 MPa)
-    fracture_toughness: Some(500_000.0),    // Pa·√m (0.5 MPa·√m)
-    color: (0.55, 0.35, 0.15, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    ignition_point: Some(573.0),
+    hardness: 4.0,
+    color: (0.55, 0.35, 0.15),
+    transparent: false,
+    thermal_conductivity: 0.17,
+    specific_heat_capacity: 1700.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.90,
     absorption_coefficient: None,
-    latent_heat_of_fusion: None,
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.45,
+    restitution: 0.3,
+    youngs_modulus: Some(12000000000.0),
+    heat_of_combustion: Some(17000000.0),
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: None,
+    albedo: 0.35,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(100000000.0),
+    compressive_strength: Some(55000000.0),
+    shear_strength: Some(9000000.0),
+    flexural_strength: Some(112000000.0),
+    fracture_toughness: Some(500000.0),
 )

@@ -1,28 +1,39 @@
-// Bronze — copper-tin alloy (≈ 88% Cu, 12% Sn). The first widely-used metal alloy.
-(
+// Bronze — copper-tin alloy (approx 88% Cu, 12% Sn).
+// SI material properties.
+MaterialData(
     id: 105,
     name: "bronze",
+    default_phase: Solid,
     density: 8800.0,
-    hardness: 3.5,
-    thermal_conductivity: 60.0,   // W/(m·K)
-    specific_heat: 380.0,         // J/(kg·K)
-    melting_point: Some(1173.0),  // K (~900 °C, varies with Sn content)
-    boiling_point: Some(2835.0),
+    melting_point: Some(1220.0),
+    boiling_point: Some(2855.0),
     ignition_point: None,
-    heat_of_combustion: None,
-    youngs_modulus: Some(120_000_000_000.0), // 120 GPa
-    tensile_strength: Some(310_000_000.0),   // 310 MPa (cold-worked)
-    compressive_strength: Some(310_000_000.0),
-    shear_strength: Some(160_000_000.0),
-    flexural_strength: Some(310_000_000.0),
-    fracture_toughness: Some(40_000_000.0),  // 40 MPa·√m
-    color: (0.80, 0.50, 0.20, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    hardness: 3.5,
+    color: (0.80, 0.50, 0.20),
+    transparent: false,
+    thermal_conductivity: 63.0,
+    specific_heat_capacity: 380.0,
+    latent_heat_fusion: Some(205000.0),
+    latent_heat_vaporization: None,
+    emissivity: 0.22,
     absorption_coefficient: None,
-    latent_heat_of_fusion: Some(210_000.0),
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.35,
+    restitution: 0.3,
+    youngs_modulus: Some(120000000000.0),
+    heat_of_combustion: None,
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: Some(0.55),
+    albedo: 0.25,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(250000000.0),
+    compressive_strength: Some(250000000.0),
+    shear_strength: Some(140000000.0),
+    flexural_strength: Some(250000000.0),
+    fracture_toughness: Some(60000000.0),
 )

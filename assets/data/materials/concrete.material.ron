@@ -1,29 +1,39 @@
-// Portland-class concrete — unreinforced.
-// Very strong in compression, weak in tension (cracks under tensile loads).
-(
+// Portland cement concrete — standard structural concrete C25/30.
+// SI material properties.
+MaterialData(
     id: 103,
     name: "concrete",
+    default_phase: Solid,
     density: 2400.0,
-    hardness: 7.0,
-    thermal_conductivity: 1.7,    // W/(m·K)
-    specific_heat: 880.0,         // J/(kg·K)
     melting_point: None,
     boiling_point: None,
     ignition_point: None,
-    heat_of_combustion: None,
-    youngs_modulus: Some(30_000_000_000.0),  // 30 GPa
-    tensile_strength: Some(3_000_000.0),     // 3 MPa (very low — concrete cracks in tension)
-    compressive_strength: Some(40_000_000.0), // 40 MPa (C40 mix)
-    shear_strength: Some(4_000_000.0),
-    flexural_strength: Some(5_000_000.0),
-    fracture_toughness: Some(350_000.0),    // 0.35 MPa·√m
-    color: (0.70, 0.70, 0.68, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    hardness: 6.5,
+    color: (0.70, 0.70, 0.68),
+    transparent: false,
+    thermal_conductivity: 1.5,
+    specific_heat_capacity: 880.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.91,
     absorption_coefficient: None,
-    latent_heat_of_fusion: None,
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.65,
+    restitution: 0.1,
+    youngs_modulus: Some(30000000000.0),
+    heat_of_combustion: None,
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: None,
+    albedo: 0.40,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(3000000.0),
+    compressive_strength: Some(30000000.0),
+    shear_strength: Some(4500000.0),
+    flexural_strength: Some(4500000.0),
+    fracture_toughness: Some(1000000.0),
 )

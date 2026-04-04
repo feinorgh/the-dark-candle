@@ -30,7 +30,7 @@ See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
 - **Speed of light constant** — `SPEED_OF_LIGHT = 299_792_458.0 m/s` in
   `constants.rs` + `universal_constants.ron`
 
-## Tier 2 — Refraction & Reflection (planned)
+## Tier 2 — Refraction & Reflection ✅
 
 - **Refraction (Snell's law)** — light bends at material boundaries proportional
   to the ratio of refractive indices: n₁ sin θ₁ = n₂ sin θ₂. Enables lensing
@@ -40,6 +40,14 @@ See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
   reflectance depends on angle and refractive index ratio. At glancing angles
   even water becomes mirror-like (total internal reflection above the critical
   angle)
+
+### Implementation Status (Tier 2 — complete)
+
+| Component | File | Description |
+|---|---|---|
+| Pure optics math | `src/lighting/optics.rs` | `snell_refract`, `fresnel_reflectance`, `reflect_dir`, `is_total_internal_reflection`, `critical_angle`, temperature-dependent air n, Cauchy dispersion (25 tests) |
+| Refractive DDA | `src/world/raycast.rs` | `dda_march_ray_refractive` — traces rays bending at n-boundaries, handles TIR bounces, returns `RefractivePath` with Fresnel transmittance (4 tests) |
+| Chunk refraction map | `src/lighting/refraction.rs` | `ChunkRefractionMap` component, `propagate_refraction_from_registry` system, `update_chunk_refraction_maps` wired into `LightingPlugin` (4 tests) |
 
 ## Tier 3 — Advanced Phenomena (planned)
 

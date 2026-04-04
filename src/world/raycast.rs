@@ -588,6 +588,233 @@ where
     None
 }
 
+// ---------------------------------------------------------------------------
+// Refractive DDA ray march (Snell's law + Fresnel at material boundaries)
+// ---------------------------------------------------------------------------
+
+/// A single refracted/reflected path segment from a refractive ray march.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefractiveSegment {
+    /// Grid-space origin of this segment.
+    pub origin: [f32; 3],
+    /// Unit direction of this segment.
+    pub dir: [f32; 3],
+    /// Refractive index of the medium for this segment.
+    pub n: f32,
+    /// Distance travelled in this segment (metres, since 1 voxel = 1 m).
+    pub length: f32,
+    /// Fresnel transmittance at the boundary that started this segment (0–1).
+    /// 1.0 for the first segment (no prior boundary).
+    pub transmittance: f32,
+}
+
+/// Result of a refractive DDA ray march.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefractiveMarchResult {
+    /// Ordered list of path segments from origin to the terminal hit or
+    /// the maximum distance.
+    pub segments: Vec<RefractiveSegment>,
+    /// The terminal opaque hit, if any.
+    pub hit: Option<DdaHit>,
+    /// Total accumulated reflectance loss (product of Fresnel transmittances).
+    pub total_transmittance: f32,
+}
+
+/// March a ray through a voxel grid applying Snell's law refraction and
+/// Fresnel reflection at material boundaries.
+///
+/// At each voxel crossing where the refractive index changes:
+/// - Computes the surface normal from the DDA crossing axis.
+/// - Applies Snell's law to compute the refracted direction.
+/// - Computes the Fresnel transmittance for that interface.
+/// - If total internal reflection occurs, the ray is reflected instead.
+///
+/// The march terminates when:
+/// - An opaque voxel (no refractive index) is hit.
+/// - `max_dist` total path length is exceeded.
+/// - `max_bounces` TIR reflections have occurred.
+///
+/// # Arguments
+/// - `get_n` — returns `Some(n)` if the material is refractive, `None` if opaque.
+/// - `max_dist` — maximum total path length in metres.
+/// - `max_bounces` — maximum number of TIR reflections before terminating.
+pub fn dda_march_ray_refractive<F>(
+    voxels: &[Voxel],
+    size: usize,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+    max_bounces: u32,
+    get_n: F,
+) -> RefractiveMarchResult
+where
+    F: Fn(MaterialId) -> Option<f32>,
+{
+    use crate::lighting::optics::{fresnel_reflectance, reflect_dir, snell_refract};
+
+    let mut segments: Vec<RefractiveSegment> = Vec::new();
+    let mut total_transmittance = 1.0_f32;
+    let mut bounces = 0u32;
+    let mut dist_remaining = max_dist;
+
+    // Current ray state.
+    let mut cur_origin = origin;
+    let mut cur_dir = normalize3(dir);
+
+    // Determine starting refractive index (the medium the ray begins in).
+    let ox = cur_origin[0].floor() as i32;
+    let oy = cur_origin[1].floor() as i32;
+    let oz = cur_origin[2].floor() as i32;
+    let start_n = if ox >= 0
+        && oy >= 0
+        && oz >= 0
+        && (ox as usize) < size
+        && (oy as usize) < size
+        && (oz as usize) < size
+    {
+        let idx = (oz as usize) * size * size + (oy as usize) * size + (ox as usize);
+        let mat = voxels[idx].material;
+        get_n(mat).unwrap_or(1.0)
+    } else {
+        1.0 // Outside grid → air.
+    };
+    let mut cur_n = start_n;
+    let mut seg_start = cur_origin;
+    let mut seg_transmittance = 1.0_f32;
+
+    loop {
+        if dist_remaining <= 0.0 {
+            // Flush the current in-progress segment.
+            segments.push(RefractiveSegment {
+                origin: seg_start,
+                dir: cur_dir,
+                n: cur_n,
+                length: max_dist - dist_remaining,
+                transmittance: seg_transmittance,
+            });
+            break;
+        }
+
+        // March one step with the DDA.
+        let Some(hit) = dda_march_ray(voxels, size, cur_origin, cur_dir, dist_remaining) else {
+            // No hit — ray escapes the grid.
+            let seg_len = (max_dist - dist_remaining).min(dist_remaining);
+            segments.push(RefractiveSegment {
+                origin: seg_start,
+                dir: cur_dir,
+                n: cur_n,
+                length: seg_len,
+                transmittance: seg_transmittance,
+            });
+            break;
+        };
+
+        let new_mat = voxels[hit.z * size * size + hit.y * size + hit.x].material;
+        let new_n_opt = get_n(new_mat);
+
+        // Opaque surface — terminate.
+        let Some(new_n) = new_n_opt else {
+            let seg_len = hit.t;
+            segments.push(RefractiveSegment {
+                origin: seg_start,
+                dir: cur_dir,
+                n: cur_n,
+                length: seg_len,
+                transmittance: seg_transmittance,
+            });
+            return RefractiveMarchResult {
+                segments,
+                hit: Some(DdaHit {
+                    x: hit.x,
+                    y: hit.y,
+                    z: hit.z,
+                    face_axis: hit.face_axis,
+                    face_sign: hit.face_sign,
+                    t: hit.t,
+                }),
+                total_transmittance,
+            };
+        };
+
+        // Refractive boundary — compute normal pointing out of the new medium.
+        let face_normal = hit.face_normal();
+        // The normal from DDA points in the direction the ray came from.
+        // We need it pointing from new medium → old medium (away from the surface
+        // the ray is entering), so flip it to point into the old medium.
+        let normal_toward_incident = [
+            -face_normal[0] * hit.face_sign,
+            -face_normal[1] * hit.face_sign,
+            -face_normal[2] * hit.face_sign,
+        ];
+
+        let cos_i = -dot3(cur_dir, normal_toward_incident).abs();
+        let r = fresnel_reflectance(cos_i.abs(), cur_n, new_n);
+        let t = 1.0 - r;
+
+        // Finish the current segment up to the boundary.
+        let boundary_pos = [
+            cur_origin[0] + cur_dir[0] * hit.t,
+            cur_origin[1] + cur_dir[1] * hit.t,
+            cur_origin[2] + cur_dir[2] * hit.t,
+        ];
+        segments.push(RefractiveSegment {
+            origin: seg_start,
+            dir: cur_dir,
+            n: cur_n,
+            length: hit.t,
+            transmittance: seg_transmittance,
+        });
+        dist_remaining -= hit.t;
+
+        // Try to refract.
+        if let Some(refracted_dir) =
+            snell_refract(cur_dir, normal_toward_incident, cur_n, new_n)
+        {
+            // Successful refraction — continue with the refracted ray.
+            total_transmittance *= t;
+            cur_n = new_n;
+            cur_dir = refracted_dir;
+        } else {
+            // Total internal reflection.
+            if bounces >= max_bounces {
+                break;
+            }
+            bounces += 1;
+            total_transmittance *= r;
+            cur_dir = reflect_dir(cur_dir, normal_toward_incident);
+            // n stays the same after TIR.
+        }
+
+        cur_origin = [
+            boundary_pos[0] + cur_dir[0] * 1e-4,
+            boundary_pos[1] + cur_dir[1] * 1e-4,
+            boundary_pos[2] + cur_dir[2] * 1e-4,
+        ];
+        seg_start = cur_origin;
+        seg_transmittance = total_transmittance;
+    }
+
+    RefractiveMarchResult {
+        segments,
+        hit: None,
+        total_transmittance,
+    }
+}
+
+#[inline]
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[inline]
+fn normalize3(v: [f32; 3]) -> [f32; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len < 1e-10 {
+        return v;
+    }
+    [v[0] / len, v[1] / len, v[2] / len]
+}
+
 /// Ray-AABB intersection for a grid bounding box `[0, size]³`.
 /// Returns `(t_near, t_far)`.
 fn ray_aabb(origin: [f32; 3], dir: [f32; 3], size: f32) -> (f32, f32) {
@@ -1103,5 +1330,129 @@ mod tests {
             (len - 1.0).abs() < 0.01,
             "Normal should be unit length, got {len}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Refractive DDA tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: make a grid where a centre slab [0..size, y_lo..y_hi, 0..size]
+    /// is filled with a "glass" material (ID 12, n=1.52) and everything else
+    /// is air (ID 0, n=1.0).
+    fn make_refractive_slab(size: usize, y_lo: usize, y_hi: usize) -> Vec<Voxel> {
+        let mut grid = vec![Voxel::default(); size * size * size];
+        for z in 0..size {
+            for y in y_lo..y_hi {
+                for x in 0..size {
+                    let idx = z * size * size + y * size + x;
+                    grid[idx].material = MaterialId::GLASS;
+                    grid[idx].density = 1.0;
+                }
+            }
+        }
+        grid
+    }
+
+    fn refractive_n(mat: MaterialId) -> Option<f32> {
+        match mat {
+            MaterialId::AIR => Some(1.0),
+            MaterialId::GLASS => Some(1.52),
+            MaterialId::WATER => Some(1.33),
+            _ => None, // Opaque
+        }
+    }
+
+    #[test]
+    fn refractive_march_straight_through_homogeneous() {
+        // Uniform air grid — no refraction, ray travels in a straight line.
+        let size = 16;
+        let grid = make_grid(size);
+        let origin = [8.0, 8.0, 0.5];
+        let dir = [0.0, 0.0, 1.0];
+        let result =
+            dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, |m| refractive_n(m));
+        // Should produce segments with the same direction throughout.
+        assert!(!result.segments.is_empty());
+        for seg in &result.segments {
+            assert!(
+                (seg.dir[2] - 1.0).abs() < 1e-4,
+                "direction should not change in air"
+            );
+        }
+    }
+
+    #[test]
+    fn refractive_march_normal_incidence_no_deflection() {
+        // Normal incidence (ray perpendicular to slab surface) — Snell's law
+        // gives no angular deflection, only a change of n.
+        let size = 16;
+        let grid = make_refractive_slab(size, 6, 10);
+        let origin = [8.0, 0.5, 8.0];
+        let dir = [0.0, 1.0, 0.0]; // Straight up into slab.
+        let result =
+            dda_march_ray_refractive(&grid, size, origin, dir, 15.0, 4, |m| refractive_n(m));
+        // All segments should point in the +Y direction.
+        for seg in &result.segments {
+            assert!(
+                seg.dir[1] > 0.99,
+                "normal incidence — no lateral deflection expected, got {:?}",
+                seg.dir
+            );
+        }
+        // Transmittance should be close to 1 (glass Fresnel R ≈ 4% per surface).
+        assert!(
+            result.total_transmittance > 0.9,
+            "expected high transmittance through glass slab, got {}",
+            result.total_transmittance
+        );
+    }
+
+    #[test]
+    fn refractive_march_oblique_changes_direction() {
+        // Oblique incidence — refracted ray must change direction inside slab.
+        let size = 16;
+        let grid = make_refractive_slab(size, 6, 10);
+        // 45° from above.
+        let d = 1.0_f32 / 2.0_f32.sqrt();
+        let dir = [0.0, d, d];
+        let origin = [8.0, 0.5, 8.0];
+        let result =
+            dda_march_ray_refractive(&grid, size, origin, dir, 20.0, 4, |m| refractive_n(m));
+        // Find a segment inside the glass (n ≈ 1.52).
+        let glass_segs: Vec<_> = result.segments.iter().filter(|s| s.n > 1.4).collect();
+        // Must have at least one glass segment.
+        assert!(
+            !glass_segs.is_empty(),
+            "expected at least one segment inside glass"
+        );
+        // The z-component inside glass should be smaller than the incident z-component
+        // (ray bends toward the normal, so the angle with the normal decreases).
+        let glass_z = glass_segs[0].dir[2];
+        assert!(
+            glass_z < d + 0.01,
+            "refracted ray should bend toward normal in denser medium; z={glass_z} vs incident z={d}"
+        );
+    }
+
+    #[test]
+    fn refractive_march_tir_stays_inside() {
+        // Supercritical angle from inside glass → TIR, ray stays inside.
+        // Critical angle for glass→air: arcsin(1/1.52) ≈ 41.1°
+        // Use an angle of 60° from the normal (well above 41°).
+        let size = 32;
+        let grid = make_refractive_slab(size, 0, 32); // Entire grid is glass.
+        let d = (60.0_f32.to_radians()).sin();
+        let dir = [d, (60.0_f32.to_radians()).cos(), 0.0]; // 60° from Y-normal.
+        let origin = [16.0, 16.0, 16.0];
+        let result =
+            dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, |m| refractive_n(m));
+        // With TIR all segments should remain at n ≈ 1.52.
+        for seg in &result.segments {
+            assert!(
+                seg.n > 1.4,
+                "TIR — ray must stay in glass, but seg.n={}",
+                seg.n
+            );
+        }
     }
 }

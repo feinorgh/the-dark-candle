@@ -6,7 +6,9 @@
 
 pub mod clouds;
 pub mod light_map;
+pub mod optics;
 pub mod orbital;
+pub mod refraction;
 pub mod scattering;
 pub mod shadows;
 pub mod sky;
@@ -416,6 +418,7 @@ impl Plugin for LightingPlugin {
                     update_ambient,
                     update_fog,
                     update_chunk_light_maps,
+                    refraction::update_chunk_refraction_maps,
                     update_terrain_shadows,
                 )
                     .chain()

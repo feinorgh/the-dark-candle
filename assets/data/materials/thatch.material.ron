@@ -1,29 +1,39 @@
-// Thatch — dried grass/straw bundles used for primitive roofing.
-// Very low structural strength; primarily used for insulation and rain-shedding.
-(
+// Thatch — dried grass or reed used for primitive roofing.
+// SI material properties.
+MaterialData(
     id: 107,
     name: "thatch",
-    density: 120.0,               // kg/m³ (dry compressed thatch layer)
-    hardness: 0.5,
-    thermal_conductivity: 0.06,   // W/(m·K) — excellent insulator
-    specific_heat: 1600.0,        // J/(kg·K)
+    default_phase: Solid,
+    density: 100.0,
     melting_point: None,
     boiling_point: None,
-    ignition_point: Some(523.0),  // K (~250 °C — highly flammable)
-    heat_of_combustion: Some(15_000_000.0), // J/kg
-    youngs_modulus: Some(200_000_000.0),    // 0.2 GPa (fibrous composite)
-    tensile_strength: Some(2_000_000.0),    // 2 MPa (along fibre direction)
-    compressive_strength: Some(500_000.0),  // 0.5 MPa
-    shear_strength: Some(400_000.0),
-    flexural_strength: Some(1_500_000.0),
-    fracture_toughness: Some(20_000.0),    // 0.02 MPa·√m (fibrous, low toughness)
-    color: (0.82, 0.75, 0.35, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    ignition_point: Some(473.0),
+    hardness: 1.0,
+    color: (0.80, 0.70, 0.30),
+    transparent: false,
+    thermal_conductivity: 0.06,
+    specific_heat_capacity: 1600.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.88,
     absorption_coefficient: None,
-    latent_heat_of_fusion: None,
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.50,
+    restitution: 0.1,
+    youngs_modulus: Some(1000000000.0),
+    heat_of_combustion: Some(14000000.0),
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: None,
+    albedo: 0.30,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(20000000.0),
+    compressive_strength: Some(5000000.0),
+    shear_strength: Some(3000000.0),
+    flexural_strength: Some(10000000.0),
+    fracture_toughness: Some(50000.0),
 )

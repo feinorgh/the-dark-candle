@@ -1,29 +1,39 @@
-// Dried clay — unfired clay that has been air-dried. Weaker than fired brick.
-// Suitable for primitive construction in dry climates; dissolves in rain if unprotected.
-(
+// Sun-dried clay — unfired clay brick, weaker than fired brick.
+// SI material properties.
+MaterialData(
     id: 106,
     name: "clay_dried",
-    density: 1500.0,
-    hardness: 2.0,
-    thermal_conductivity: 0.55,   // W/(m·K)
-    specific_heat: 1380.0,        // J/(kg·K)
-    melting_point: None,
+    default_phase: Solid,
+    density: 1800.0,
+    melting_point: Some(1750.0),
     boiling_point: None,
     ignition_point: None,
-    heat_of_combustion: None,
-    youngs_modulus: Some(1_400_000_000.0),  // 1.4 GPa (unfired clay)
-    tensile_strength: Some(500_000.0),      // 0.5 MPa
-    compressive_strength: Some(2_500_000.0), // 2.5 MPa
-    shear_strength: Some(800_000.0),
-    flexural_strength: Some(1_000_000.0),
-    fracture_toughness: Some(60_000.0),    // 0.06 MPa·√m (very brittle)
-    color: (0.65, 0.52, 0.38, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    hardness: 2.0,
+    color: (0.65, 0.50, 0.35),
+    transparent: false,
+    thermal_conductivity: 0.45,
+    specific_heat_capacity: 880.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.92,
     absorption_coefficient: None,
-    latent_heat_of_fusion: None,
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.55,
+    restitution: 0.05,
+    youngs_modulus: Some(5000000000.0),
+    heat_of_combustion: None,
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: None,
+    albedo: 0.30,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(1000000.0),
+    compressive_strength: Some(8000000.0),
+    shear_strength: Some(1500000.0),
+    flexural_strength: Some(2000000.0),
+    fracture_toughness: Some(100000.0),
 )

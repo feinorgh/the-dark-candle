@@ -47,7 +47,7 @@
       {
         "name": "lighting",
         "path": "src/lighting/",
-        "responsibility": "Orbital sun mechanics, Rayleigh+Mie atmospheric scattering (CPU for export, Bevy Atmosphere component for in-game GPU sky), sunlight propagation/light maps, volumetric cloud ray-marching, terrain shadows, cloud shadows, distance fog with time-of-day color, day/night cycle"
+        "responsibility": "Orbital sun mechanics, Rayleigh+Mie atmospheric scattering (CPU for export, Bevy Atmosphere component for in-game GPU sky), sunlight propagation/light maps, volumetric cloud ray-marching, terrain shadows, cloud shadows, distance fog with time-of-day color, day/night cycle. Phase 12 Tier 2: Snell's law refraction + Fresnel equations + TIR in optics.rs; per-chunk refraction maps in refraction.rs; refractive DDA ray march in world/raycast.rs"
       },
       {
         "name": "weather",
@@ -1543,7 +1543,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "7170a66b8562059fb4217bb9ccb9a635a12b5c4a",
+    "generated_from_commit": "0b86f061d50fa7b2f680eda89256fb841d80f045",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

@@ -1,29 +1,39 @@
 // Fired clay brick — one of the oldest masonry materials.
-// Properties are for standard red fired brick.
-(
+// SI material properties for standard red fired brick.
+MaterialData(
     id: 102,
     name: "brick",
+    default_phase: Solid,
     density: 1920.0,
-    hardness: 6.0,
-    thermal_conductivity: 0.72,   // W/(m·K)
-    specific_heat: 840.0,         // J/(kg·K)
-    melting_point: Some(1900.0),  // K (approximate for fired clay)
+    melting_point: Some(1900.0),
     boiling_point: None,
     ignition_point: None,
-    heat_of_combustion: None,
-    youngs_modulus: Some(20_000_000_000.0),  // 20 GPa
-    tensile_strength: Some(3_000_000.0),     // 3 MPa (brittle in tension)
-    compressive_strength: Some(35_000_000.0), // 35 MPa
-    shear_strength: Some(5_000_000.0),
-    flexural_strength: Some(5_000_000.0),
-    fracture_toughness: Some(300_000.0),    // 0.3 MPa·√m (brittle)
-    color: (0.72, 0.30, 0.20, 1.0),
-    emissive_color: (0.0, 0.0, 0.0, 0.0),
-    is_fluid: false,
-    is_gas: false,
-    viscosity: None,
-    refractive_index: None,
+    hardness: 6.0,
+    color: (0.72, 0.30, 0.20),
+    transparent: false,
+    thermal_conductivity: 0.72,
+    specific_heat_capacity: 840.0,
+    latent_heat_fusion: None,
+    latent_heat_vaporization: None,
+    emissivity: 0.93,
     absorption_coefficient: None,
-    latent_heat_of_fusion: None,
-    latent_heat_of_vaporization: None,
+    absorption_rgb: None,
+    viscosity: None,
+    friction_coefficient: 0.60,
+    restitution: 0.1,
+    youngs_modulus: Some(20000000000.0),
+    heat_of_combustion: None,
+    molar_mass: None,
+    refractive_index: None,
+    reflectivity: None,
+    albedo: 0.30,
+    melted_into: None,
+    boiled_into: None,
+    frozen_into: None,
+    condensed_into: None,
+    tensile_strength: Some(3000000.0),
+    compressive_strength: Some(35000000.0),
+    shear_strength: Some(5000000.0),
+    flexural_strength: Some(5000000.0),
+    fracture_toughness: Some(300000.0),
 )
