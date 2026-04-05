@@ -1,0 +1,87 @@
+// Glass Prism Dispersion — Chromatic Separation
+//
+// A glass block (borosilicate) splits white light into a visible spectrum.
+// This scenario validates:
+//   - Glass material has a dispersive refractive index (Cauchy B = 4.61e-15 m²)
+//   - Dispersion yields n_blue > n_green > n_red (blue bends most)
+//   - The caustic factor analytic formula is correct for glass–air interfaces
+//   - No thermal reactions occur (dispersion is a purely optical effect)
+//
+// Physics:
+//   Cauchy's equation: n(λ) = A + B/λ²
+//   For borosilicate glass (B = 4.61e-15 m²):
+//     n_R (680 nm) ≈ 1.5143  (least bending)
+//     n_G (550 nm) = 1.52    (reference)
+//     n_B (440 nm) ≈ 1.5438  (most bending)
+//   This spread Δn ≈ 0.030 gives a visible "rainbow fringe" at edges.
+//
+//   Abbe number V_d = (n_G − 1) / (n_B − n_R) ≈ 65 (crown glass)
+//   Lower Abbe number = more chromatic aberration.
+//
+// Source: Schott Optical Glass Catalogue; Wikipedia — Dispersion (optics)
+
+SimulationScenario(
+    name: "Glass prism dispersion",
+    description: "Validates chromatic dispersion in glass: Cauchy B coefficient, per-channel n, and caustic factor for an air-glass interface",
+
+    grid_size: 10,
+
+    ambient_temperature: 288.15,
+    ambient_pressure: 101325.0,
+    ambient_schedule: Constant,
+    boundary_htc: None,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Stone shell to bound the scene.
+        Shell(material: "Stone", min: (0, 0, 0), max: (9, 9, 9), thickness: 1),
+        // Central glass block — the dispersive prism.
+        Fill(material: "Glass", min: (3, 3, 3), max: (6, 6, 6)),
+    ],
+
+    ignition: [],
+
+    // Short run — purely material validation, no thermal dynamics needed.
+    dt: 1.0,
+    ticks: 1,
+
+    stop_condition: UntilAllPass,
+
+    assertions: [
+        // Glass must be present.
+        MaterialCountGt(material: "Glass", min_count: 1),
+
+        // Glass has the correct refractive index (n ≈ 1.52 at green).
+        MaterialRefractiveIndexInRange(
+            material: "Glass",
+            min_n: 1.50,
+            max_n: 1.55,
+        ),
+
+        // Glass has Cauchy dispersion configured.
+        MaterialIsDispersive(material: "Glass"),
+
+        // Caustic concentration factor for air→glass at normal incidence
+        // should be ≈ (1.52)² = 2.31 — well above 2.0.
+        CausticFactorGt(
+            cos_i: 1.0,
+            n1: 1.0,
+            n2: 1.52,
+            threshold: 2.0,
+        ),
+
+        // No reactions in a cold glass block.
+        NoReactions,
+    ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/glass_prism_dispersion.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Material,
+        fps: 30,
+        scale: 32,
+        time_scale: 1.0,
+    )),
+)

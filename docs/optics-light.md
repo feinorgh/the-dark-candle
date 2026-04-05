@@ -49,17 +49,76 @@ See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
 | Refractive DDA | `src/world/raycast.rs` | `dda_march_ray_refractive` — traces rays bending at n-boundaries, handles TIR bounces, returns `RefractivePath` with Fresnel transmittance (4 tests) |
 | Chunk refraction map | `src/lighting/refraction.rs` | `ChunkRefractionMap` component, `propagate_refraction_from_registry` system, `update_chunk_refraction_maps` wired into `LightingPlugin` (4 tests) |
 
-## Tier 3 — Advanced Phenomena (planned)
+## Tier 3 — Advanced Phenomena ✅
 
-- **Mie scattering** — forward-peaked scattering by particles comparable to
-  wavelength (water droplets, dust, ash). Produces halos around sun/moon, white
-  clouds, fog glow. Coupled to LBM humidity/particulate density
-- **Caustics** — focused light patterns from refraction through curved surfaces
-  (underwater ripple patterns, light through glass bottles). Approximate via
-  photon mapping or screen-space caustic estimation
-- **Dispersion** — wavelength-dependent refractive index separates white light
-  into spectral components (prisms, rainbows). Model via 3-channel (RGB)
-  refraction with slightly different n per channel
+### Dispersion (Cauchy equation)
+
+White light separates into a spectrum because refractive index varies with
+wavelength. This is modeled via the **Cauchy equation**:
+
+```
+n(λ) = A + B / λ²
+```
+
+The green-channel n (`refractive_index` in `MaterialData`) anchors the
+curve; `cauchy_b: Option<f32>` provides the B coefficient in m².
+
+| Material | n (550 nm) | B (m²) | Abbe # |
+|---|---|---|---|
+| Borosilicate glass | 1.52 | 4.61 × 10⁻¹⁵ | ~65 |
+| Fused silica (quartz) | 1.46 | 3.40 × 10⁻¹⁵ | ~68 |
+
+Per-channel n at R=680 nm, G=550 nm, B=440 nm is computed by
+`optics::dispersive_n_rgb(base_n, cauchy_b)`.  Blue always has the highest n
+(shortest λ → most bending).
+
+### Local Mie Scattering
+
+Voxel-scale particle media (steam, ash) scatter light forward via the
+Henyey-Greenstein phase function:
+
+```
+p(θ) = (1 − g²) / [4π (1 + g² − 2g cosθ)^1.5]
+```
+
+Extinction follows Beer-Lambert: T = exp(−β × d), with β (m⁻¹) and
+asymmetry g per material.
+
+| Material | β (m⁻¹) | g |
+|---|---|---|
+| Steam | 50 | 0.85 |
+| Ash | 20 | 0.65 |
+
+### Caustics
+
+The analytical caustic concentration factor at a flat interface is:
+
+```
+C = (n₂/n₁)² × (cos θ₁ / cos θ₂)
+```
+
+This is the Jacobian of the solid-angle mapping for a refracted photon bundle.
+At normal incidence (θ₁ = 0), C = (n₂/n₁)²:
+
+- air → water: C ≈ 1.77
+- air → glass: C ≈ 2.31
+
+A photon-beam tracer (`caustics::trace_caustic_beam`) distributes stratified
+samples across a cone and casts them through a flat interface, returning
+`CausticPhoton { pos, rgb }` structs for kernel density estimation.
+
+### Implementation Status (Tier 3 — complete)
+
+| Component | File | Description |
+|---|---|---|
+| Dispersion math | `src/lighting/optics.rs` | `cauchy_a_from_n_green`, `dispersive_n_rgb`, `snell_refract_rgb`, `fresnel_reflectance_rgb`, `fresnel_transmittance_rgb` (10 new tests; 35 total) |
+| MaterialData cauchy_b | `src/data/mod.rs` | `cauchy_b: Option<f32>` field + `dispersion_n_rgb()` helper; backward-compat via `#[serde(default)]` |
+| Dispersive DDA | `src/world/raycast.rs` | `dda_march_ray_dispersive` — 3 independent per-channel ray traces; `DispersivePath` result struct (3 tests) |
+| Local Mie module | `src/lighting/mie_local.rs` | `mie_params_for_material`, `mie_transmittance_rgb`, `mie_phase_hg`, `mie_in_scatter_factor` (12 tests) |
+| Caustics module | `src/lighting/caustics.rs` | `CausticPhoton`, `trace_caustic_beam`, `caustic_irradiance_at`, `refraction_caustic_factor`, `underwater_irradiance_fraction` (11 tests) |
+| Material RON files | `assets/data/materials/` | `glass.material.ron` and `quartz_crystal.material.ron` updated with `cauchy_b` values |
+| Simulation scenarios | `tests/cases/simulation/` | `glass_prism_dispersion.simulation.ron` and `underwater_caustics.simulation.ron` |
+
 
 ## Design constraints
 

@@ -25,6 +25,10 @@ MaterialData(
     refractive_index: Some(1.52),
     reflectivity: Some(0.04),
     albedo: 0.30,
+    // Cauchy B dispersion coefficient: borosilicate glass (B = 4.61e-15 m²).
+    // Causes blue light to refract ~0.3% more than red — visible as a spectrum
+    // through thick glass or a prism.
+    cauchy_b: Some(4.61e-15),
     melted_into: None,
     boiled_into: None,
     frozen_into: None,

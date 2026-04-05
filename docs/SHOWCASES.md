@@ -177,6 +177,49 @@ two-tick sequential combustion chain and the importance of air-gap geometry.
 
 ---
 
+## Optics Scenarios (Phase 12 Tier 3)
+
+### `glass_prism_dispersion`
+**Chromatic dispersion: borosilicate glass splits white light into a spectrum.**
+
+A 3³ glass block (borosilicate, n=1.52, B=4.61 × 10⁻¹⁵ m²) is embedded in a
+stone shell. The scenario validates the optical pipeline:
+
+- Glass has a refractive index in [1.50, 1.55] (green-channel anchor)
+- `cauchy_b` is set → `MaterialIsDispersive` assertion passes
+- Per-channel Cauchy equation: n_B (440 nm) ≈ 1.544 > n_G (550 nm) = 1.52 >
+  n_R (680 nm) ≈ 1.514 → blue bends most (Abbe number V ≈ 65, crown glass)
+- Caustic concentration factor for an air→glass interface at normal incidence:
+  C = (1.52)² ≈ 2.31 — exceeds the 2.0 threshold
+
+No reactions in a cold glass block (NoReactions confirmed).
+
+**Key physics:** Cauchy dispersion `n(λ) = A + B/λ²` with A anchored at
+green (550 nm). Chromatic aberration coefficient Δn ≈ 0.030 over the visible
+spectrum. The caustic analytic formula gives irradiance concentration from the
+solid-angle Jacobian of refraction.
+
+### `underwater_caustics`
+**Refraction concentrates sunlight below a water surface: caustic factor ≈ 1.77.**
+
+A water slab (y=4–7) floats above a stone floor inside a stone shell.
+The scenario validates:
+
+- Water refractive index in [1.30, 1.36] (real value 1.33)
+- Overhead sun (cos θ = 1.0, air→water): caustic factor C = (1.33)² ≈ 1.77 > 1.5
+- Low-angle sun (cos θ = 0.707 = 45°): caustic factor > 1.0 (still concentrates)
+- No chemical reactions in cold, still water
+
+**Key physics:** `refraction_caustic_factor(cos_i, n1, n2)` implements the
+Jacobian of solid-angle mapping at a flat refractive interface:
+`C = (n2/n1)² × (cos θ1 / cos θ2)`.
+At normal incidence, cos θ1 = cos θ2 = 1, so C = (n2/n1)².
+Combined with Fresnel transmittance T_⊥ ≈ 0.98, the irradiance just below
+the surface is E_under ≈ 1.73 × E_surface — underwater is brighter than above
+at the caustic peak.
+
+---
+
 ## Notes for Contributors
 
 - All scenarios use SI units: 1 voxel = 1 m, temperatures in Kelvin.
@@ -191,3 +234,6 @@ two-tick sequential combustion chain and the importance of air-gap geometry.
   accidentally trigger chemistry.
 - See `docs/simulation-test-system.md` for the full assertion and geometry
   reference.
+- Optics assertions (`MaterialRefractiveIndexInRange`, `MaterialIsDispersive`,
+  `CausticFactorGt`) validate optical properties loaded from `MaterialData`
+  without requiring any physical simulation ticks.

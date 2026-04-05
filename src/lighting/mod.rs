@@ -4,8 +4,10 @@
 // temperature, intensity, and ambient brightness. Exposes a SolarInsolation
 // resource for future solar heating integration.
 
+pub mod caustics;
 pub mod clouds;
 pub mod light_map;
+pub mod mie_local;
 pub mod optics;
 pub mod orbital;
 pub mod refraction;

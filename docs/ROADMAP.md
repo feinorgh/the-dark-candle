@@ -382,13 +382,15 @@ glow rendering (incandescence + bloom), time-of-day dynamic lighting.
 
 Full design: **[atmosphere-simulation.md](atmosphere-simulation.md)** (sub-phases section)
 
-### Phase 12: Optics & Light Phenomena (Tier 1 ✅, Tier 2 ✅)
+### Phase 12: Optics & Light Phenomena (Tier 1 ✅, Tier 2 ✅, Tier 3 ✅)
 
 Physically-based light transport: material optical properties, Rayleigh
 scattering sky, DDA raymarcher, Beer-Lambert RGB absorption, per-voxel sunlight.
 Tier 2 (refraction/reflection) complete: Snell's law, Fresnel equations, TIR,
 per-chunk refraction maps, refractive DDA ray march.
-Tier 3 (Mie, caustics, dispersion) planned.
+Tier 3 (advanced optics) complete: Cauchy chromatic dispersion (per-channel n
+via B/λ² correction), local Mie scattering for steam/ash (Henyey-Greenstein),
+caustics analytical Jacobian + photon beam KDE, dispersive DDA raymarcher.
 
 Full design: **[optics-light.md](optics-light.md)**
 
@@ -458,7 +460,7 @@ Phase 3 (Temperature ✅)─┘      │
                                 ├──→ Phase 9b–9d: Chemistry Runtime + Visual ✅
 Phase 8 (Spherical Planet) ─────┘
 Phase 9 (Atmosphere) ───────────┐
-                                ├──→ Phase 12: Optics (Tier 1 ✅, Tier 2 ✅, Tier 3 planned)
+                                ├──→ Phase 12: Optics (Tier 1 ✅, Tier 2 ✅, Tier 3 ✅)
 Phase 11 (Buildings) ───────────┘
                                 ├──→ Phase 13: Electricity & Magnetism
                                 └──→ Phase 14: Nuclear Physics & Radiation
@@ -471,7 +473,7 @@ Phase 6 (Behavior ✅) ──────┘
 
 Material property extensions accumulate across phases:
 - Phase 9a adds: `absorption_coefficient`, `albedo`
-- Phase 12 adds: `refractive_index`, `reflectivity`, `absorption_rgb` (**Tier 1 ✅**)
+- Phase 12 adds: `refractive_index`, `reflectivity`, `absorption_rgb` (**Tier 1 ✅**), `cauchy_b` (**Tier 3 ✅**)
 - Phase 13 adds: `electrical_conductivity`, `magnetic_permeability`
 - Phase 14 adds: `atomic_number`, `mass_attenuation_coeff`, `radioactive`
 

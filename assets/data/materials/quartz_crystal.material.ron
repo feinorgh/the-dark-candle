@@ -23,6 +23,9 @@ MaterialData(
     refractive_index: Some(1.544),
     reflectivity: Some(0.10),
     albedo: 0.65,
+    // Cauchy B dispersion: fused silica / SiO₂ (B ≈ 3.4e-15 m²).
+    // Slightly less dispersive than borosilicate glass (4.61e-15 m²).
+    cauchy_b: Some(3.4e-15),
     melted_into: Some("Glass"),
     boiled_into: None,
     frozen_into: None,

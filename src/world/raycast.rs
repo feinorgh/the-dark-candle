@@ -799,6 +799,110 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Dispersive DDA — per-channel spectral ray marching
+// ---------------------------------------------------------------------------
+
+/// Result of a dispersive (per-spectral-channel) ray march.
+///
+/// Each of the R, G, and B channels is traced independently with its own
+/// wavelength-specific refractive index. Because n differs per channel
+/// (Cauchy dispersion), the rays gradually separate at each refractive
+/// boundary, producing spectral splitting (prism effect, rainbow).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DispersivePath {
+    /// Terminal direction for each channel (R = 0, G = 1, B = 2) after all
+    /// boundary refractions. `None` if total internal reflection trapped that
+    /// channel (no transmitted ray exits the grid).
+    pub dirs: [Option<[f32; 3]>; 3],
+
+    /// Accumulated Fresnel transmittance for each channel (product over all
+    /// boundaries encountered). 1.0 = no reflective losses, 0.0 = fully reflected.
+    pub transmittance: [f32; 3],
+
+    /// Total path length (m) for each channel. May differ slightly between
+    /// channels due to different refraction angles.
+    pub path_lengths: [f32; 3],
+
+    /// Number of refractive boundary crossings encountered (same for all
+    /// channels, since boundaries are geometry, not wavelength).
+    pub boundary_count: u32,
+}
+
+/// March three spectral rays (R, G, B) through a voxel grid with per-channel
+/// Snell's law refraction (Cauchy dispersion).
+///
+/// For each channel, calls `dda_march_ray_refractive` with the wavelength-
+/// specific refractive index supplied by `get_n_rgb`. Because `n_blue > n_green
+/// > n_red` in most transparent materials, the blue channel bends the most at
+/// > each boundary — separating white light into a spectrum.
+///
+/// # Arguments
+/// - `get_n_rgb` — closure returning `Some([nR, nG, nB])` if the material is
+///   refractive (use `MaterialData::dispersion_n_rgb()`), `None` if opaque.
+/// - `max_dist`    — maximum path length per channel (m).
+/// - `max_bounces` — maximum TIR reflections before terminating each channel.
+///
+/// # Example
+/// ```ignore
+/// // Trace a white ray through a glass block:
+/// let result = dda_march_ray_dispersive(
+///     voxels, CHUNK_SIZE,
+///     [8.0, 8.0, 0.1], [0.0, 0.0, 1.0],
+///     64.0, 2,
+///     |mat| registry.get(mat).and_then(|d| d.dispersion_n_rgb()),
+/// );
+/// // result.dirs[2] (blue) exits at a slightly different angle than result.dirs[0] (red)
+/// ```
+pub fn dda_march_ray_dispersive<F>(
+    voxels: &[Voxel],
+    size: usize,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+    max_bounces: u32,
+    get_n_rgb: F,
+) -> DispersivePath
+where
+    F: Fn(MaterialId) -> Option<[f32; 3]>,
+{
+    let dir_n = normalize3(dir);
+    let mut dirs = [Some(dir_n); 3];
+    let mut transmittances = [1.0_f32; 3];
+    let mut path_lengths = [0.0_f32; 3];
+    let mut boundary_count = 0u32;
+
+    for ch in 0..3usize {
+        // Trace this spectral channel using its own per-channel n.
+        let result =
+            dda_march_ray_refractive(voxels, size, origin, dir_n, max_dist, max_bounces, |mat| {
+                get_n_rgb(mat).map(|rgb| rgb[ch])
+            });
+
+        // Final direction: last segment's direction (or None if no segments).
+        dirs[ch] = result.segments.last().map(|s| s.dir);
+        transmittances[ch] = result.total_transmittance;
+        path_lengths[ch] = result.segments.iter().map(|s| s.length).sum();
+
+        // Count boundary crossings (transmittance < 1 marks a boundary).
+        // Only set from the first channel — boundaries are the same geometry.
+        if ch == 0 {
+            boundary_count = result
+                .segments
+                .iter()
+                .filter(|s| s.transmittance < 1.0)
+                .count() as u32;
+        }
+    }
+
+    DispersivePath {
+        dirs,
+        transmittance: transmittances,
+        path_lengths,
+        boundary_count,
+    }
+}
+
 #[inline]
 fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
@@ -1360,6 +1464,16 @@ mod tests {
         }
     }
 
+    /// Per-channel dispersive n for glass (borosilicate, B = 4.61e-15 m²).
+    fn dispersive_n_glass(mat: MaterialId) -> Option<[f32; 3]> {
+        use crate::lighting::optics::dispersive_n_rgb;
+        match mat {
+            MaterialId::AIR => Some([1.0; 3]),
+            MaterialId::GLASS => Some(dispersive_n_rgb(1.52, 4.61e-15)),
+            _ => None,
+        }
+    }
+
     #[test]
     fn refractive_march_straight_through_homogeneous() {
         // Uniform air grid — no refraction, ray travels in a straight line.
@@ -1448,5 +1562,81 @@ mod tests {
                 seg.n
             );
         }
+    }
+
+    // --- dda_march_ray_dispersive ---
+
+    #[test]
+    fn dispersive_march_straight_through_air_no_splitting() {
+        // Uniform air grid: all channels have n ≈ 1.0, no boundaries.
+        // All three channels should exit in the same direction.
+        let size = 16;
+        let grid = make_grid(size);
+        let dir = [0.0_f32, 0.0, 1.0];
+        let origin = [8.0, 8.0, 0.1];
+        let result = dda_march_ray_dispersive(&grid, size, origin, dir, 32.0, 2, |mat| {
+            if mat == MaterialId::AIR {
+                Some([1.0; 3])
+            } else {
+                None
+            }
+        });
+        // No boundaries → boundary_count = 0
+        assert_eq!(result.boundary_count, 0, "no boundaries in uniform medium");
+        // All channels should have the same transmittance (1.0 → no losses)
+        for &t in &result.transmittance {
+            assert!((t - 1.0).abs() < 0.01, "transmittance = {t}");
+        }
+    }
+
+    #[test]
+    fn dispersive_march_blue_bends_more_than_red_in_glass() {
+        // Glass slab: blue channel (highest n) should bend the most.
+        // Set up a glass slab in the bottom half, air in the top half.
+        // Shoot a diagonal ray downward into the slab.
+        let size = 32;
+        let grid = make_refractive_slab(size, 0, 16); // glass in y=[0..16]
+        let angle = 30.0_f32.to_radians();
+        let dir = [angle.sin(), -angle.cos(), 0.0]; // 30° from vertical downward
+        let origin = [16.0, 28.0, 16.0]; // start in air, above slab
+        let result =
+            dda_march_ray_dispersive(&grid, size, origin, dir, 32.0, 1, dispersive_n_glass);
+
+        // Red and blue channels should have different final directions.
+        let dir_r = result.dirs[0];
+        let dir_b = result.dirs[2];
+
+        // Both should reach the glass (no TIR going into denser medium).
+        assert!(dir_r.is_some(), "red channel should transmit");
+        assert!(dir_b.is_some(), "blue channel should transmit");
+
+        let dr = dir_r.unwrap();
+        let db = dir_b.unwrap();
+
+        // Blue bends more toward the normal → smaller x-component inside glass.
+        assert!(
+            db[0].abs() < dr[0].abs() + 1e-4,
+            "blue should bend more than red: b_x={} r_x={}",
+            db[0],
+            dr[0]
+        );
+    }
+
+    #[test]
+    fn dispersive_march_path_lengths_similar_for_all_channels() {
+        // Through a glass slab: path lengths should be within a few percent.
+        let size = 32;
+        let grid = make_refractive_slab(size, 8, 24); // glass in y=[8..24]
+        let dir = [0.2_f32, -0.98, 0.0]; // shallow angle
+        let origin = [16.0, 30.0, 16.0];
+        let result =
+            dda_march_ray_dispersive(&grid, size, origin, dir, 40.0, 1, dispersive_n_glass);
+
+        // Path lengths differ only slightly (due to different angles in glass).
+        let [lr, lg, lb] = result.path_lengths;
+        assert!(
+            (lr - lb).abs() < lr * 0.05,
+            "path lengths should be within 5%: r={lr} g={lg} b={lb}"
+        );
     }
 }

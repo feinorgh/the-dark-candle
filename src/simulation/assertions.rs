@@ -71,6 +71,40 @@ pub enum Assertion {
 
     /// No reactions should have occurred (negative test).
     NoReactions,
+
+    /// The material has a refractive index within the given bounds.
+    ///
+    /// Checks the `refractive_index` field in the `MaterialRegistry` — useful
+    /// for verifying that glass/quartz/water have their expected optical properties
+    /// after phase transitions.
+    MaterialRefractiveIndexInRange {
+        material: String,
+        /// Inclusive lower bound.
+        min_n: f32,
+        /// Inclusive upper bound.
+        max_n: f32,
+    },
+
+    /// The material has Cauchy dispersion configured (cauchy_b is Some).
+    ///
+    /// Verifies that a material will split white light into a spectrum.
+    MaterialIsDispersive { material: String },
+
+    /// The analytical caustic concentration factor at the given incidence
+    /// geometry exceeds a threshold.
+    ///
+    /// Uses `refraction_caustic_factor(cos_i, n1, n2)` from the optics module.
+    /// For air→water at normal incidence this should be ≈ 1.77.
+    CausticFactorGt {
+        /// cos(θ_incidence) — 1.0 = overhead (normal incidence).
+        cos_i: f32,
+        /// Refractive index of the incident medium (e.g. 1.0 for air).
+        n1: f32,
+        /// Refractive index of the transmitted medium (e.g. 1.33 for water).
+        n2: f32,
+        /// Minimum expected caustic concentration factor.
+        threshold: f32,
+    },
 }
 
 /// 3D index into a flat `size³` array.
@@ -247,6 +281,56 @@ pub fn evaluate(
                 return Err(format!(
                     "NoReactions: expected 0 reactions, got {}",
                     stats.total_reactions
+                ));
+            }
+        }
+
+        Assertion::MaterialRefractiveIndexInRange {
+            material,
+            min_n,
+            max_n,
+        } => {
+            let mat = registry
+                .resolve_name(material)
+                .ok_or_else(|| format!("unknown material: {material:?}"))?;
+            let data = registry
+                .get(mat)
+                .ok_or_else(|| format!("material data not found for: {material:?}"))?;
+            let n = data
+                .refractive_index
+                .ok_or_else(|| format!("{material:?} has no refractive index"))?;
+            if n < *min_n || n > *max_n {
+                return Err(format!(
+                    "MaterialRefractiveIndexInRange({material:?}): n={n:.4} not in [{min_n}, {max_n}]"
+                ));
+            }
+        }
+
+        Assertion::MaterialIsDispersive { material } => {
+            let mat = registry
+                .resolve_name(material)
+                .ok_or_else(|| format!("unknown material: {material:?}"))?;
+            let data = registry
+                .get(mat)
+                .ok_or_else(|| format!("material data not found for: {material:?}"))?;
+            if data.cauchy_b.is_none() {
+                return Err(format!(
+                    "MaterialIsDispersive({material:?}): cauchy_b is not set — material is not dispersive"
+                ));
+            }
+        }
+
+        Assertion::CausticFactorGt {
+            cos_i,
+            n1,
+            n2,
+            threshold,
+        } => {
+            let factor = crate::lighting::caustics::refraction_caustic_factor(*cos_i, *n1, *n2);
+            if factor <= *threshold {
+                return Err(format!(
+                    "CausticFactorGt(cos_i={cos_i}, n1={n1}, n2={n2}): \
+                     caustic factor={factor:.4} ≤ threshold={threshold}"
                 ));
             }
         }

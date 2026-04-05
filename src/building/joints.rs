@@ -220,6 +220,7 @@ mod tests {
             refractive_index: None,
             reflectivity: None,
             absorption_rgb: None,
+            cauchy_b: None,
             albedo: 0.3,
             melted_into: None,
             boiled_into: None,

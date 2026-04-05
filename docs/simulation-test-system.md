@@ -238,6 +238,9 @@ Assertions are checked after all ticks complete. A scenario passes only if **eve
 |---|---|---|
 | `TotalReactionsGt` | Total reactions across all ticks exceeds N | `TotalReactionsGt(min_count: 5)` |
 | `NoReactions` | Zero reactions fired (negative test) | `NoReactions` |
+| `MaterialRefractiveIndexInRange` | Named material has refractive index in [min_n, max_n] | `MaterialRefractiveIndexInRange(material: "Glass", min_n: 1.50, max_n: 1.55)` |
+| `MaterialIsDispersive` | Named material has `cauchy_b` set (chromatic dispersion enabled) | `MaterialIsDispersive(material: "Glass")` |
+| `CausticFactorGt` | Analytical caustic concentration factor C=(n2/n1)²×(cosθ1/cosθ2) exceeds threshold | `CausticFactorGt(cos_i: 1.0, n1: 1.0, n2: 1.33, threshold: 1.5)` |
 
 ## Simulation Tick Loop
 

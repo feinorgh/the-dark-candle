@@ -184,6 +184,19 @@ pub struct MaterialData {
     /// `None` = derive from scalar absorption_coefficient (equal on all channels).
     #[serde(default)]
     pub absorption_rgb: Option<[f32; 3]>,
+    /// Cauchy B dispersion coefficient (m²). When `Some`, the material splits
+    /// white light into a spectrum (dispersion). Combined with `refractive_index`
+    /// (treated as n at the green reference wavelength 550 nm), gives per-channel
+    /// refractive indices via Cauchy's equation: n(λ) = A + B/λ².
+    ///
+    /// Higher B = more dispersion (wider colour splitting):
+    /// - Borosilicate glass: 4.61e-15 m²
+    /// - Fused quartz / SiO₂: 3.4e-15 m²
+    /// - Diamond: 1.1e-14 m² (very high dispersion)
+    ///
+    /// `None` = non-dispersive (single refractive index for all wavelengths).
+    #[serde(default)]
+    pub cauchy_b: Option<f32>,
     /// Surface albedo (fraction of incident solar radiation reflected).
     /// Range 0.0–1.0. Default: 0.3.
     /// Low values (dark surfaces) absorb more heat.
@@ -224,6 +237,30 @@ impl MaterialData {
             return Some([0.0, 0.0, 0.0]);
         }
         None // Opaque
+    }
+
+    /// Per-channel refractive indices (R, G, B) accounting for dispersion.
+    ///
+    /// If `cauchy_b` is set, applies Cauchy dispersion so blue bends more than
+    /// red (`n_B > n_G > n_R`). If only `refractive_index` is set, all three
+    /// channels share the same index. Returns `None` for opaque materials.
+    ///
+    /// # Example
+    /// ```
+    /// # use the_dark_candle::data::MaterialData;
+    /// let mut glass = MaterialData::default();
+    /// glass.refractive_index = Some(1.52);
+    /// glass.cauchy_b = Some(4.61e-15);
+    /// let [nr, ng, nb] = glass.dispersion_n_rgb().unwrap();
+    /// assert!(nb > ng && ng > nr);
+    /// ```
+    pub fn dispersion_n_rgb(&self) -> Option<[f32; 3]> {
+        let base_n = self.refractive_index?;
+        if let Some(b) = self.cauchy_b {
+            Some(crate::lighting::optics::dispersive_n_rgb(base_n, b))
+        } else {
+            Some([base_n, base_n, base_n])
+        }
     }
 }
 

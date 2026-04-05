@@ -263,6 +263,100 @@ pub fn cauchy_n_rgb(a: f32, b: f32) -> [f32; 3] {
 }
 
 // ---------------------------------------------------------------------------
+// Dispersion — per-channel n from base index + Cauchy B
+// ---------------------------------------------------------------------------
+
+/// Derive the Cauchy A coefficient from the known n at green (550 nm) and B.
+///
+/// Cauchy: `n(λ) = A + B/λ²`  →  `A = n_green − B / λ_green²`
+///
+/// Material data files store `refractive_index` measured at the green
+/// reference wavelength (550 nm), so this recovers A unambiguously.
+pub fn cauchy_a_from_n_green(n_green: f32, cauchy_b: f32) -> f32 {
+    const LAMBDA_G: f32 = 550e-9;
+    n_green - cauchy_b / (LAMBDA_G * LAMBDA_G)
+}
+
+/// Per-channel refractive indices (R, G, B) for a dispersive material.
+///
+/// Given the material's base index (at 550 nm / green) and its Cauchy B
+/// coefficient (m²), returns wavelength-specific indices:
+/// - R channel: λ = 680 nm  → lowest n
+/// - G channel: λ = 550 nm  → base_n (by construction)
+/// - B channel: λ = 440 nm  → highest n  (blue bends most)
+///
+/// This matches real dispersion: prisms split white light with blue bending
+/// more than red.
+///
+/// # Arguments
+/// - `base_n`   — refractive index at 550 nm (= `refractive_index` in `MaterialData`)
+/// - `cauchy_b` — Cauchy B coefficient (m²).
+///   Borosilicate glass: 4.61e-15 m², quartz: 3.4e-15 m², diamond: 1.1e-14 m²
+///
+/// # Example
+/// ```
+/// # use the_dark_candle::lighting::optics::dispersive_n_rgb;
+/// // Borosilicate glass: B = 4.61e-15 m²
+/// let [nr, ng, nb] = dispersive_n_rgb(1.52, 4.61e-15);
+/// assert!(nb > ng && ng > nr); // blue bends most
+/// ```
+pub fn dispersive_n_rgb(base_n: f32, cauchy_b: f32) -> [f32; 3] {
+    let a = cauchy_a_from_n_green(base_n, cauchy_b);
+    cauchy_n_rgb(a, cauchy_b)
+}
+
+/// Refract an incident ray independently for each RGB channel.
+///
+/// Returns one refracted direction per channel. A channel entry is `None`
+/// when total internal reflection occurs for that wavelength.
+///
+/// Because the refractive index is wavelength-dependent (Cauchy dispersion),
+/// each channel exits at a slightly different angle — separating white light
+/// into a spectrum.
+///
+/// # Arguments
+/// - `incident` — unit incident direction (pointing **toward** the surface)
+/// - `normal`   — unit surface normal (pointing **away** from the entering medium)
+/// - `n1_rgb`   — per-channel refractive indices of the incident medium `[nR, nG, nB]`
+/// - `n2_rgb`   — per-channel refractive indices of the transmitted medium `[nR, nG, nB]`
+pub fn snell_refract_rgb(
+    incident: [f32; 3],
+    normal: [f32; 3],
+    n1_rgb: [f32; 3],
+    n2_rgb: [f32; 3],
+) -> [Option<[f32; 3]>; 3] {
+    [
+        snell_refract(incident, normal, n1_rgb[0], n2_rgb[0]),
+        snell_refract(incident, normal, n1_rgb[1], n2_rgb[1]),
+        snell_refract(incident, normal, n1_rgb[2], n2_rgb[2]),
+    ]
+}
+
+/// Per-channel Fresnel reflectance at a dispersive interface.
+///
+/// Because n differs per channel, the reflectance also varies slightly.
+///
+/// # Arguments
+/// - `cos_i`  — cosine of the angle of incidence (≥ 0)
+/// - `n1_rgb` — per-channel indices of the incident medium
+/// - `n2_rgb` — per-channel indices of the transmitted medium
+pub fn fresnel_reflectance_rgb(cos_i: f32, n1_rgb: [f32; 3], n2_rgb: [f32; 3]) -> [f32; 3] {
+    [
+        fresnel_reflectance(cos_i, n1_rgb[0], n2_rgb[0]),
+        fresnel_reflectance(cos_i, n1_rgb[1], n2_rgb[1]),
+        fresnel_reflectance(cos_i, n1_rgb[2], n2_rgb[2]),
+    ]
+}
+
+/// Per-channel Fresnel transmittance at a dispersive interface.
+///
+/// T[ch] = 1 − R[ch].
+pub fn fresnel_transmittance_rgb(cos_i: f32, n1_rgb: [f32; 3], n2_rgb: [f32; 3]) -> [f32; 3] {
+    let r = fresnel_reflectance_rgb(cos_i, n1_rgb, n2_rgb);
+    [1.0 - r[0], 1.0 - r[1], 1.0 - r[2]]
+}
+
+// ---------------------------------------------------------------------------
 // Vector math helpers (no external deps needed for pure optics math)
 // ---------------------------------------------------------------------------
 
@@ -487,5 +581,104 @@ mod tests {
     fn cauchy_n_zero_b_returns_a() {
         let n = cauchy_n(550e-9, 1.5, 0.0);
         assert!(approx_eq(n, 1.5));
+    }
+
+    // --- dispersive_n_rgb ---
+
+    #[test]
+    fn dispersive_n_rgb_blue_higher_than_red() {
+        // Glass (borosilicate): B = 4.61e-15, base_n at 550nm ≈ 1.52
+        let [nr, ng, nb] = dispersive_n_rgb(1.52, 4.61e-15);
+        assert!(nb > ng, "blue n ({nb}) should exceed green n ({ng})");
+        assert!(ng > nr, "green n ({ng}) should exceed red n ({nr})");
+    }
+
+    #[test]
+    fn dispersive_n_rgb_green_equals_base_n() {
+        let base_n = 1.52_f32;
+        let [_nr, ng, _nb] = dispersive_n_rgb(base_n, 4.61e-15);
+        // Green channel should exactly equal base_n (Cauchy evaluated at 550 nm)
+        assert!(
+            (ng - base_n).abs() < 1e-5,
+            "green n ({ng}) should equal base_n ({base_n})"
+        );
+    }
+
+    #[test]
+    fn dispersive_n_rgb_zero_b_all_equal() {
+        let base_n = 1.33_f32;
+        let [nr, ng, nb] = dispersive_n_rgb(base_n, 0.0);
+        assert!(approx_eq(nr, base_n));
+        assert!(approx_eq(ng, base_n));
+        assert!(approx_eq(nb, base_n));
+    }
+
+    // --- snell_refract_rgb ---
+
+    #[test]
+    fn snell_refract_rgb_blue_bends_more_than_red() {
+        // 30° incidence, air → glass (dispersive).
+        let cos30 = 30f32.to_radians().cos();
+        let sin30 = 30f32.to_radians().sin();
+        let incident = [sin30, -cos30, 0.0];
+        let normal = [0.0, 1.0, 0.0];
+        let n1 = [1.0; 3];
+        let n2 = dispersive_n_rgb(1.52, 4.61e-15);
+        let refracted = snell_refract_rgb(incident, normal, n1, n2);
+        let r_dir = refracted[0].unwrap();
+        let b_dir = refracted[2].unwrap();
+        // Blue bends more → blue x-component (lateral) is smaller than red.
+        assert!(
+            b_dir[0].abs() < r_dir[0].abs(),
+            "blue should bend more: b_x={} r_x={}",
+            b_dir[0],
+            r_dir[0]
+        );
+    }
+
+    #[test]
+    fn snell_refract_rgb_tir_occurs_in_correct_order() {
+        // Near the critical angle for glass→air (≈41.1°), blue TIRs first
+        // because n_blue > n_green > n_red, so θ_c_blue < θ_c_red.
+        // At 41°: red may pass but blue TIRs.
+        let angle_rad = 41.0_f32.to_radians();
+        let incident = [angle_rad.sin(), -angle_rad.cos(), 0.0];
+        let normal = [0.0, 1.0, 0.0];
+        let n1 = dispersive_n_rgb(1.52, 4.61e-15); // glass
+        let n2 = [1.0; 3]; // air
+        let result = snell_refract_rgb(incident, normal, n1, n2);
+        // Blue (highest n) hits TIR first; red (lowest n) is most likely to pass.
+        // At minimum, blue should TIR while red does not (or both TIR).
+        let red_tir = result[0].is_none();
+        let blue_tir = result[2].is_none();
+        if !red_tir {
+            assert!(blue_tir, "blue TIR should occur before or with red");
+        }
+    }
+
+    // --- fresnel_reflectance_rgb / transmittance_rgb ---
+
+    #[test]
+    fn fresnel_reflectance_rgb_sums_to_reasonable_range() {
+        let n1 = [1.0; 3];
+        let n2 = dispersive_n_rgb(1.52, 4.61e-15);
+        let r = fresnel_reflectance_rgb(1.0, n1, n2);
+        for &ri in &r {
+            assert!((0.0..=1.0).contains(&ri), "reflectance out of range: {ri}");
+        }
+    }
+
+    #[test]
+    fn fresnel_transmittance_rgb_complements_reflectance() {
+        let n1 = [1.0; 3];
+        let n2 = dispersive_n_rgb(1.52, 4.61e-15);
+        let r = fresnel_reflectance_rgb(0.8, n1, n2);
+        let t = fresnel_transmittance_rgb(0.8, n1, n2);
+        for ch in 0..3 {
+            assert!(
+                (r[ch] + t[ch] - 1.0).abs() < 1e-5,
+                "R+T != 1 on channel {ch}"
+            );
+        }
     }
 }
