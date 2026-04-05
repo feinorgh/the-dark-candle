@@ -92,11 +92,18 @@ terrain detail.
 - **Valley fog** — temperature-inversion fog accumulation in low terrain
 - **Cloud shadows** — projected onto terrain from cloud layer
 
-### 💡 Lighting & Optics
+### 💡 Lighting & Optics (Phase 12 — all tiers complete)
 - **Sunlight** — directional from orbital position with seasonal variation
 - **Ambient occlusion** — voxel-space AO for chunk meshes
 - **Thermal glow** — incandescent materials emit light based on temperature
-- **Refraction & absorption** — wavelength-dependent light transport through materials
+- **Beer-Lambert RGB absorption** — per-channel light attenuation through transparent media (water tints blue, glass near-neutral)
+- **Per-voxel sunlight** — `ChunkLightMap` top-down column propagation with material absorption
+- **Refraction (Snell's law)** — light bends at refractive boundaries; n from `MaterialData.refractive_index`
+- **Fresnel equations** — angle-dependent reflection/transmission at every interface; TIR above critical angle
+- **Refractive DDA raymarcher** — `dda_march_ray_refractive` traces bending rays through n-boundaries with TIR bounces
+- **Chromatic dispersion** — Cauchy equation n(λ) = A + B/λ²; per-channel (R/G/B) refraction separates white light into a spectrum; borosilicate glass B = 4.61 × 10⁻¹⁵ m², quartz B = 3.40 × 10⁻¹⁵ m²
+- **Local Mie scattering** — forward-peaked voxel-scale scattering for steam (β = 50 m⁻¹, g = 0.85) and ash (β = 20 m⁻¹, g = 0.65); Henyey-Greenstein phase function
+- **Caustics** — analytical Jacobian factor C = (n₂/n₁)² × (cos θ₁/cos θ₂); stratified photon-beam tracer; Gaussian KDE irradiance estimation
 
 ### 🦎 Creatures & AI
 - **Biology system** — metabolism, body temperature, hydration, energy
@@ -208,7 +215,7 @@ cargo run --release --bin worldgen -- \
 ### Run Tests
 
 ```bash
-cargo test --lib                 # 1372+ unit tests
+cargo test --lib                 # 1590+ unit tests
 cargo test --test simulations    # Physics simulation scenarios
 cargo test --test validate_assets  # Asset loading validation
 ```
@@ -227,7 +234,7 @@ The codebase is organised into focused ECS modules:
 | `building/` | Structural construction: part/recipe RON assets, joint stress model, load-path analysis, player placement, demolition, crafting |
 | `bodies/` | Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK, locomotion gaits, player embodiment, injury system |
 | `planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, rendering |
-| `lighting/` | Sun cycle, atmospheric sky (Bevy Atmosphere component), light maps, volumetric clouds, distance fog |
+| `lighting/` | Sun cycle, atmospheric sky (Bevy Atmosphere component), light maps, volumetric clouds, distance fog, optics (Snell's law, Fresnel, TIR), chromatic dispersion, local Mie scattering, caustics |
 | `weather/` | Particle emitters, wind advection, snow/rain accumulation |
 | `biology/` | Metabolism, body temperature, hydration, energy systems |
 | `behavior/` | Behaviour trees, AI decision-making |
@@ -242,7 +249,7 @@ The codebase is organised into focused ECS modules:
 | `camera/` | First-person camera controller |
 | `map/` | In-game map overlay: local discovery map + global planet map |
 
-**177 source files · ~58K lines of Rust · 1500+ tests**
+**182 source files · ~76K lines of Rust · 1590+ tests**
 
 ### Data-Driven Design
 
@@ -285,18 +292,18 @@ pipeline is functional and produces visually compelling worlds. The voxel engine
 physics, chemistry, entity body, and structural construction systems are tested
 and working at the simulation level.
 
-Current completed phases (1–11):
+Current completed phases (1–12):
 - Terrain detail & world generation (8 scene presets, geological depth, hydraulic erosion) ✅
 - Physics: LBM gas, FLIP/PIC fluid, AMR fluid coupling, atmosphere ✅
 - Atmosphere & weather: orbital sun, sky scattering, volumetric clouds, rain/snow ✅
-- Lighting: sunlight, fog, cloud shadows, thermal glow ✅
+- Lighting & optics: sunlight, fog, cloud shadows, thermal glow, Snell/Fresnel refraction, chromatic dispersion, local Mie scattering, caustics ✅
 - Entity bodies: articulated skeleton, IK, tissue colliders, locomotion, injury ✅
 - Buildings & structural construction: parts, joints, stress analysis, crafting ✅
 
 Current focus areas:
-- Connecting planetary generation to the in-game voxel world
-- Expanding the creature AI and ecology systems
-- Performance optimisation for real-time gameplay
+- Phase 13: Electricity & Magnetism (conductivity, resistance networks, resistive heating, lightning)
+- Phase 14: Nuclear Physics & Radiation (decay chains, ionising dose model, shielding)
+- Gameplay systems: crafting UI, build mode preview, inventory UI, NPC spawning & ecology
 
 ---
 
