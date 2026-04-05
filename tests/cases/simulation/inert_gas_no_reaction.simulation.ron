@@ -31,4 +31,12 @@ SimulationScenario(
         // Interior temperature should equilibrate well below the hot spot
         RegionAvgTempLt(min: (1, 1, 1), max: (4, 4, 4), threshold: 1000.0),
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/inert_gas_no_reaction.mp4",
+        view: Slice(axis: Y, depth: 3),
+        color_mode: Material,
+        fps: 30,
+        scale: 16,
+    )),
 )

@@ -9,8 +9,8 @@
 
 use bevy::prelude::*;
 
-use super::parts::PlacedPart;
 use super::joints::Joint;
+use super::parts::PlacedPart;
 
 // ---------------------------------------------------------------------------
 // Debris component

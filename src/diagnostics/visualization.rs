@@ -14,6 +14,7 @@ use image::{Rgb, RgbImage};
 use serde::Deserialize;
 
 use crate::data::MaterialRegistry;
+use crate::diagnostics::font;
 use crate::world::voxel::{MaterialId, Voxel};
 
 /// Which axis to slice along when using `ViewMode::Slice`.
@@ -570,6 +571,79 @@ pub fn render_frame_lit(
             light,
         ),
     }
+}
+
+/// Render a frame with a two-line info overlay appended below the grid image.
+///
+/// `overlay` is `Some((time_line, scale_line))` where:
+/// - `time_line` — formatted simulation time, e.g. `"t = 1500.0 s"`
+/// - `scale_line` — playback-speed label, e.g. `"x10 slow-mo"` or `"x0.01 timelapse"`
+///
+/// The overlay strip is a dark band added to the **bottom** of the image so
+/// the grid render itself is never cropped. For `Perspective` views the strip
+/// is appended to the rendered `height`; for `Slice`/`TopDown` views it is
+/// appended to the square `(size * scale)` frame.
+///
+/// Passing `None` is equivalent to calling [`render_frame`].
+pub fn render_frame_with_overlay(
+    voxels: &[Voxel],
+    size: usize,
+    registry: &MaterialRegistry,
+    view: &ViewMode,
+    color_mode: &ColorMode,
+    scale: u32,
+    overlay: Option<(&str, &str)>,
+) -> RgbImage {
+    let base = render_frame(voxels, size, registry, view, color_mode, scale);
+    let Some((time_line, scale_line)) = overlay else {
+        return base;
+    };
+    append_overlay(base, time_line, scale_line, scale)
+}
+
+/// Append a two-line text strip to the bottom of `base`.
+fn append_overlay(base: RgbImage, line1: &str, line2: &str, img_scale: u32) -> RgbImage {
+    let ts = font::text_scale_for(img_scale);
+    let pad: u32 = 3;
+    let line_h = font::GLYPH_H * ts;
+    let strip_h = 2 * line_h + 3 * pad;
+
+    let w = base.width();
+    let base_h = base.height();
+    let mut img = RgbImage::new(w, base_h + strip_h);
+
+    // Copy the base image into the upper portion.
+    for y in 0..base_h {
+        for x in 0..w {
+            img.put_pixel(x, y, *base.get_pixel(x, y));
+        }
+    }
+
+    // Fill the overlay strip with a dark background.
+    let bg = Rgb([18u8, 18, 18]);
+    for y in base_h..(base_h + strip_h) {
+        for x in 0..w {
+            img.put_pixel(x, y, bg);
+        }
+    }
+
+    // Line 1 — simulation time (white).
+    let y1 = base_h + pad;
+    font::draw_text(&mut img, line1, pad, y1, ts, [255, 255, 255]);
+
+    // Line 2 — playback speed (amber).
+    let y2 = base_h + pad + line_h + pad;
+    font::draw_text(&mut img, line2, pad, y2, ts, [255, 200, 60]);
+
+    img
+}
+
+/// Height (in pixels) that `render_frame_with_overlay` adds to the base frame.
+///
+/// Use this to pre-compute the correct `height` for the video encoder before
+/// the first frame is rendered.
+pub fn overlay_strip_height(img_scale: u32) -> u32 {
+    font::overlay_strip_height(font::text_scale_for(img_scale))
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@
 use bevy::prelude::*;
 
 use crate::data::MaterialRegistry;
-use crate::world::chunk::{Chunk, CHUNK_SIZE};
+use crate::world::chunk::{CHUNK_SIZE, Chunk};
 use crate::world::raycast::dda_march_ray_refractive;
 use crate::world::voxel::{MaterialId, Voxel};
 
@@ -227,10 +227,7 @@ mod tests {
         let map = propagate_refraction(&grid, size, sun, n_fn);
         // Pure air — transmittance should remain 1.0 everywhere.
         for &t in &map.transmittance {
-            assert!(
-                (t - 1.0).abs() < 1e-5,
-                "air should not attenuate, got {t}"
-            );
+            assert!((t - 1.0).abs() < 1e-5, "air should not attenuate, got {t}");
         }
     }
 

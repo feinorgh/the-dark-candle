@@ -69,4 +69,12 @@ SimulationScenario(
         // No chemical reactions in this thermal-only scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/stone_melting_to_lava.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Incandescence,
+        fps: 60,
+        scale: 8,
+    )),
 )

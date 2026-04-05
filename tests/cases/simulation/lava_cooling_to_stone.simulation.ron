@@ -74,4 +74,13 @@ SimulationScenario(
         // No chemical reactions in this thermal-only scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/lava_cooling_to_stone.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Incandescence,
+        fps: 60,
+        scale: 8,
+        time_scale: 0.25,
+    )),
 )

@@ -76,4 +76,12 @@ SimulationScenario(
         // No reactions — pure calorimetry scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/heat_capacity_comparison.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Temperature(min_k: 280.0, max_k: 1100.0),
+        fps: 30,
+        scale: 8,
+    )),
 )

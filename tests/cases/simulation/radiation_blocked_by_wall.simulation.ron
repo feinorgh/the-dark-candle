@@ -43,4 +43,12 @@ SimulationScenario(
         // Pure thermal scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/radiation_blocked_by_wall.mp4",
+        view: Slice(axis: Y, depth: 6),
+        color_mode: Temperature(min_k: 280.0, max_k: 1600.0),
+        fps: 30,
+        scale: 6,
+    )),
 )

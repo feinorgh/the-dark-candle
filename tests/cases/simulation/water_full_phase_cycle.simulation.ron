@@ -75,4 +75,12 @@ SimulationScenario(
         // No chemical reactions — pure H₂O phase physics
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/water_full_phase_cycle.mp4",
+        view: Slice(axis: Y, depth: 3),
+        color_mode: Material,
+        fps: 30,
+        scale: 16,
+    )),
 )

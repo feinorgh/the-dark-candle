@@ -30,20 +30,15 @@ pub struct RecipeIngredient {
 }
 
 /// Optional tool class required to execute the recipe.
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub enum ToolClass {
     Axe,
     Pickaxe,
     Hammer,
     Furnace,
     Anvil,
+    #[default]
     None,
-}
-
-impl Default for ToolClass {
-    fn default() -> Self {
-        ToolClass::None
-    }
 }
 
 /// Processing conditions required by this recipe.

@@ -73,4 +73,13 @@ SimulationScenario(
         // Reactions must have fired (both pyrolysis and combustion)
         TotalReactionsGt(min_count: 5),
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/wood_pyrolysis_charcoal_combustion.mp4",
+        view: Slice(axis: Y, depth: 4),
+        color_mode: Material,
+        fps: 30,
+        scale: 8,
+        time_scale: 10.0,
+    )),
 )

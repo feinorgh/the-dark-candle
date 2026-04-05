@@ -78,4 +78,13 @@ SimulationScenario(
         // Many reactions must have fired
         TotalReactionsGt(min_count: 20),
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/wildfire_propagation.mp4",
+        view: Slice(axis: Y, depth: 1),
+        color_mode: Material,
+        fps: 30,
+        scale: 8,
+        time_scale: 20.0,
+    )),
 )

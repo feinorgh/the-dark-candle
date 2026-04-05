@@ -88,7 +88,13 @@ impl Inventory {
     }
 
     /// Remove `quantity` units of `item`. Returns units actually removed.
-    pub fn remove_item(&mut self, item: &str, quantity: u32, unit_weight_kg: f32, unit_volume_m3: f32) -> u32 {
+    pub fn remove_item(
+        &mut self,
+        item: &str,
+        quantity: u32,
+        unit_weight_kg: f32,
+        unit_volume_m3: f32,
+    ) -> u32 {
         let held = self.stacks.get_mut(item);
         let Some(held) = held else { return 0 };
         let actual = quantity.min(*held);

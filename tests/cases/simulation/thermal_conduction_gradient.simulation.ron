@@ -86,4 +86,12 @@ SimulationScenario(
         // No chemistry in this pure-thermal scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/thermal_conduction_gradient.mp4",
+        view: Slice(axis: Y, depth: 6),
+        color_mode: Temperature(min_k: 280.0, max_k: 1300.0),
+        fps: 30,
+        scale: 6,
+    )),
 )

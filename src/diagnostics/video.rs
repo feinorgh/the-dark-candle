@@ -32,6 +32,24 @@ pub struct VideoConfig {
     /// Pixel scale factor per voxel (default: 4).
     #[serde(default = "default_scale")]
     pub scale: u32,
+    /// Playback time-scale multiplier (default: 1.0).
+    ///
+    /// Controls how many simulation ticks map to each output video frame,
+    /// letting fast processes be stretched into slow-motion and slow processes
+    /// compressed into a time-lapse:
+    ///
+    /// - `> 1.0` — **slow-motion**: each tick emits `time_scale` frames.
+    ///   A combustion scenario with 30 ticks and `time_scale: 10.0` yields a
+    ///   300-frame (10 s at 30 fps) video instead of 1 s.
+    /// - `= 1.0` — **1:1** (default): one frame per simulation tick.
+    /// - `< 1.0` — **time-lapse**: one frame every `1/time_scale` ticks.
+    ///   A freezing scenario with 25 000 ticks and `time_scale: 0.04` yields
+    ///   a 1 000-frame video.
+    ///
+    /// The current simulation time and this label are burned into every frame
+    /// as a HUD overlay so viewers always know the playback speed.
+    #[serde(default = "default_time_scale")]
+    pub time_scale: f32,
 }
 
 fn default_fps() -> u32 {
@@ -40,6 +58,10 @@ fn default_fps() -> u32 {
 
 fn default_scale() -> u32 {
     4
+}
+
+fn default_time_scale() -> f32 {
+    1.0
 }
 
 /// Active encoder state. Created by [`FrameEncoder::new`] and consumed by
@@ -240,5 +262,19 @@ mod tests {
         assert_eq!(config.fps, 30);
         assert_eq!(config.scale, 4);
         assert_eq!(config.color_mode, ColorMode::Material);
+        assert_eq!(config.time_scale, 1.0);
+    }
+
+    #[test]
+    fn video_config_time_scale_roundtrip() {
+        let ron_str = r#"(
+            path: "slow.mp4",
+            fps: 60,
+            scale: 8,
+            time_scale: 10.0,
+        )"#;
+        let config: VideoConfig = ron::from_str(ron_str).unwrap();
+        assert_eq!(config.time_scale, 10.0);
+        assert_eq!(config.fps, 60);
     }
 }

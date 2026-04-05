@@ -51,4 +51,13 @@ SimulationScenario(
         // Interior temperature should be significantly above ambient
         RegionAvgTempGt(min: (2, 2, 2), max: (5, 5, 5), threshold: 300.0),
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/oxyhydrogen_combustion.mp4",
+        view: Slice(axis: Y, depth: 4),
+        color_mode: Temperature(min_k: 280.0, max_k: 5000.0),
+        fps: 30,
+        scale: 8,
+        time_scale: 10.0,
+    )),
 )

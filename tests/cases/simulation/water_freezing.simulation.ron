@@ -77,4 +77,13 @@ SimulationScenario(
         // No chemical reactions should fire (pure thermal scenario)
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/water_freezing.mp4",
+        view: Slice(axis: Y, depth: 6),
+        color_mode: Material,
+        fps: 30,
+        scale: 6,
+        time_scale: 0.04,
+    )),
 )

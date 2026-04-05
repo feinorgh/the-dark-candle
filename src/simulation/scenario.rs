@@ -19,7 +19,7 @@ use crate::chemistry::reactions::ReactionData;
 use crate::data::{MaterialData, MaterialRegistry};
 use crate::diagnostics::state_dump::{dump_grid_state, dump_to_ron};
 use crate::diagnostics::video::{FrameEncoder, VideoConfig};
-use crate::diagnostics::visualization::render_frame;
+use crate::diagnostics::visualization::{overlay_strip_height, render_frame_with_overlay};
 use crate::simulation::assertions::{Assertion, evaluate};
 use crate::simulation::geometry::{Region, apply_regions};
 use crate::simulation::{SimulationStats, simulate_tick};
@@ -437,11 +437,22 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
     // 5. Run simulation
     let mut stats = SimulationStats::default();
     let mut converged_at: Option<u32> = None;
+    // Fractional frame accumulator for time_scale-based emission.
+    // Starts at 1.0 so the very first tick always produces at least one frame.
+    let mut frame_accum: f32 = 1.0;
 
     // Set up optional video encoder
     let mut video_encoder = scenario.emit_video.as_ref().and_then(|vc| {
-        let dim = (size as u32) * vc.scale;
-        match FrameEncoder::new(&vc.path, dim, dim, vc.fps) {
+        let base_w = match &vc.view {
+            crate::diagnostics::visualization::ViewMode::Perspective { width, .. } => *width,
+            _ => (size as u32) * vc.scale,
+        };
+        let base_h = match &vc.view {
+            crate::diagnostics::visualization::ViewMode::Perspective { height, .. } => *height,
+            _ => (size as u32) * vc.scale,
+        };
+        let enc_h = base_h + overlay_strip_height(vc.scale);
+        match FrameEncoder::new(&vc.path, base_w, enc_h, vc.fps) {
             Ok(enc) => Some(enc),
             Err(e) => {
                 eprintln!("  Warning: failed to create video encoder: {e}");
@@ -472,12 +483,32 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
         let tick = simulate_tick(&mut voxels, size, &rules, &registry, scenario.dt);
         stats.accumulate(&tick);
 
-        // Capture video frame (if configured)
+        // Capture video frame(s) for this tick.
         if let (Some(vc), Some(enc)) = (&scenario.emit_video, video_encoder.as_mut()) {
-            let frame = render_frame(&voxels, size, &registry, &vc.view, &vc.color_mode, vc.scale);
-            if let Err(e) = enc.push_frame(&frame) {
-                eprintln!("  Warning: video frame {tick_num} failed: {e}");
-                video_encoder = None; // stop trying
+            frame_accum += vc.time_scale;
+            let frames_this_tick = frame_accum as u32;
+            frame_accum -= frames_this_tick as f32;
+
+            if frames_this_tick > 0 {
+                let sim_time_s = (tick_num as f64 + 1.0) * scenario.dt as f64;
+                let line1 = format_sim_time(sim_time_s);
+                let line2 = format_time_scale(vc.time_scale);
+                let frame = render_frame_with_overlay(
+                    &voxels,
+                    size,
+                    &registry,
+                    &vc.view,
+                    &vc.color_mode,
+                    vc.scale,
+                    Some((&line1, &line2)),
+                );
+                for _ in 0..frames_this_tick {
+                    if let Err(e) = enc.push_frame(&frame) {
+                        eprintln!("  Warning: video frame {tick_num} failed: {e}");
+                        video_encoder = None;
+                        break;
+                    }
+                }
             }
         }
 
@@ -492,6 +523,26 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
                 break;
             }
         }
+    }
+
+    // Ensure the very last simulation state is always captured in the video,
+    // even when time_scale < 1.0 left a non-zero fractional residual.
+    if let (Some(vc), Some(enc)) = (&scenario.emit_video, video_encoder.as_mut())
+        && frame_accum > 0.0
+    {
+        let sim_time_s = scenario.ticks as f64 * scenario.dt as f64;
+        let line1 = format_sim_time(sim_time_s);
+        let line2 = format_time_scale(vc.time_scale);
+        let frame = render_frame_with_overlay(
+            &voxels,
+            size,
+            &registry,
+            &vc.view,
+            &vc.color_mode,
+            vc.scale,
+            Some((&line1, &line2)),
+        );
+        let _ = enc.push_frame(&frame);
     }
 
     // Finalize video
@@ -555,6 +606,44 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
             actual_ticks,
             failures.join("\n  ")
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overlay formatting helpers
+// ---------------------------------------------------------------------------
+
+/// Format a simulation elapsed time into the most human-readable unit.
+fn format_sim_time(seconds: f64) -> String {
+    let abs = seconds.abs();
+    if abs < 120.0 {
+        format!("t = {:.1} s", seconds)
+    } else if abs < 7_200.0 {
+        format!("t = {:.1} min", seconds / 60.0)
+    } else if abs < 172_800.0 {
+        format!("t = {:.1} h", seconds / 3_600.0)
+    } else {
+        format!("t = {:.2} d", seconds / 86_400.0)
+    }
+}
+
+/// Build a short playback-speed label for the given `time_scale`.
+fn format_time_scale(ts: f32) -> String {
+    if ts >= 2.0 {
+        if ts >= 10.0 {
+            format!("x{:.0} slow-mo", ts)
+        } else {
+            format!("x{:.1} slow-mo", ts)
+        }
+    } else if ts <= 0.5 {
+        let inv = 1.0 / ts;
+        if inv >= 10.0 {
+            format!("x{:.0} timelapse", inv)
+        } else {
+            format!("x{:.1} timelapse", inv)
+        }
+    } else {
+        "x1 (real-time)".to_string()
     }
 }
 

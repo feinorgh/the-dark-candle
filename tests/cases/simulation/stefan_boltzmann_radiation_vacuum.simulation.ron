@@ -83,4 +83,12 @@ SimulationScenario(
         // No chemistry — pure radiative heat transfer scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/stefan_boltzmann_radiation_vacuum.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Incandescence,
+        fps: 30,
+        scale: 8,
+    )),
 )

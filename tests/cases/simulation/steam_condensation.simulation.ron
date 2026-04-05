@@ -71,4 +71,13 @@ SimulationScenario(
         // No chemical reactions in this thermal-only scenario
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/steam_condensation.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Temperature(min_k: 280.0, max_k: 460.0),
+        fps: 60,
+        scale: 8,
+        time_scale: 0.5,
+    )),
 )

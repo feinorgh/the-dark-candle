@@ -23,10 +23,10 @@ use crate::building::crafting::RecipeData;
 use crate::building::demolition::process_demolitions;
 use crate::building::joints::cleanup_broken_joints;
 use crate::building::parts::PartData;
-use crate::building::placement::{toggle_build_mode, rotate_selection, BuildMode};
+use crate::building::placement::{BuildMode, rotate_selection, toggle_build_mode};
 use crate::building::stress::{
-    accumulate_self_weight, apply_wind_loading, despawn_unsupported_parts,
-    mark_ground_anchors, propagate_stress_and_break, StressTick,
+    StressTick, accumulate_self_weight, apply_wind_loading, despawn_unsupported_parts,
+    mark_ground_anchors, propagate_stress_and_break,
 };
 
 pub struct BuildingPlugin;

@@ -12,6 +12,7 @@
 // 3. **Screenshot capture** — captures the rendered frame as a PNG file on
 //    demand (F12 key) and saves to `screenshots/` directory.
 
+pub mod font;
 pub mod frame_budget;
 pub mod state_dump;
 pub mod system_timings;

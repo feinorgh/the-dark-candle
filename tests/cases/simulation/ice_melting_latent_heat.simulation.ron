@@ -73,4 +73,12 @@ SimulationScenario(
         // No chemical reactions (pure thermal transition)
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/ice_melting_latent_heat.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Temperature(min_k: 240.0, max_k: 290.0),
+        fps: 30,
+        scale: 8,
+    )),
 )

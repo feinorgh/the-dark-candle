@@ -21,10 +21,7 @@ use bevy::prelude::*;
 
 use crate::physics::constants::GRAVITY;
 
-use super::{
-    joints::Joint,
-    parts::PlacedPart,
-};
+use super::{joints::Joint, parts::PlacedPart};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -61,6 +58,7 @@ pub struct GroundAnchor;
 /// Uses the part's `Transform` to check if its bottom face is at or below
 /// ground level (y ≤ 0). A full implementation would raytrace into the
 /// chunk voxel grid; this is a simplified height-based check.
+#[allow(clippy::type_complexity)]
 pub fn mark_ground_anchors(
     mut commands: Commands,
     query: Query<(Entity, &Transform), (With<PlacedPart>, Without<GroundAnchor>)>,
@@ -119,7 +117,9 @@ pub fn apply_wind_loading(
         let vy = pos.y.floor() as i32;
         let vz = pos.z.floor() as i32;
         let coord = crate::world::chunk::ChunkCoord::from_voxel_pos(vx, vy, vz);
-        let Some(grid) = lbm.get(&coord) else { continue };
+        let Some(grid) = lbm.get(&coord) else {
+            continue;
+        };
         let chunk_size = crate::world::chunk::CHUNK_SIZE as i32;
         let origin = coord.world_origin();
         let lx = (vx - origin.x).clamp(0, chunk_size - 1) as usize;
@@ -184,9 +184,7 @@ pub fn despawn_unsupported_parts(
     'outer: for part_entity in &part_query {
         // Check if any live joint still connects this part.
         for joint in &joint_query {
-            if !joint.broken
-                && (joint.part_a == part_entity || joint.part_b == part_entity)
-            {
+            if !joint.broken && (joint.part_a == part_entity || joint.part_b == part_entity) {
                 continue 'outer; // Still connected.
             }
         }
@@ -202,7 +200,7 @@ pub fn despawn_unsupported_parts(
 /// Increment the stress tick counter; return true when analysis should run.
 pub fn should_run_stress(mut tick: ResMut<StressTick>) -> bool {
     tick.0 = tick.0.wrapping_add(1);
-    tick.0 % STRESS_TICK_INTERVAL == 0
+    tick.0.is_multiple_of(STRESS_TICK_INTERVAL)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +217,7 @@ mod tests {
         let mut fires = 0u32;
         for _ in 0..(STRESS_TICK_INTERVAL * 3) {
             tick.0 = tick.0.wrapping_add(1);
-            if tick.0 % STRESS_TICK_INTERVAL == 0 {
+            if tick.0.is_multiple_of(STRESS_TICK_INTERVAL) {
                 fires += 1;
             }
         }

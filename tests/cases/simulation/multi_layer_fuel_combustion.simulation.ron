@@ -92,4 +92,12 @@ SimulationScenario(
         // Many reactions must have fired
         TotalReactionsGt(min_count: 30),
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/multi_layer_fuel_combustion.mp4",
+        view: Slice(axis: Z, depth: 5),
+        color_mode: Material,
+        fps: 30,
+        scale: 8,
+    )),
 )

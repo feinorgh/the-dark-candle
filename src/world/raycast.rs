@@ -767,9 +767,7 @@ where
         dist_remaining -= hit.t;
 
         // Try to refract.
-        if let Some(refracted_dir) =
-            snell_refract(cur_dir, normal_toward_incident, cur_n, new_n)
-        {
+        if let Some(refracted_dir) = snell_refract(cur_dir, normal_toward_incident, cur_n, new_n) {
             // Successful refraction — continue with the refracted ray.
             total_transmittance *= t;
             cur_n = new_n;
@@ -1369,8 +1367,7 @@ mod tests {
         let grid = make_grid(size);
         let origin = [8.0, 8.0, 0.5];
         let dir = [0.0, 0.0, 1.0];
-        let result =
-            dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, |m| refractive_n(m));
+        let result = dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, refractive_n);
         // Should produce segments with the same direction throughout.
         assert!(!result.segments.is_empty());
         for seg in &result.segments {
@@ -1389,8 +1386,7 @@ mod tests {
         let grid = make_refractive_slab(size, 6, 10);
         let origin = [8.0, 0.5, 8.0];
         let dir = [0.0, 1.0, 0.0]; // Straight up into slab.
-        let result =
-            dda_march_ray_refractive(&grid, size, origin, dir, 15.0, 4, |m| refractive_n(m));
+        let result = dda_march_ray_refractive(&grid, size, origin, dir, 15.0, 4, refractive_n);
         // All segments should point in the +Y direction.
         for seg in &result.segments {
             assert!(
@@ -1416,8 +1412,7 @@ mod tests {
         let d = 1.0_f32 / 2.0_f32.sqrt();
         let dir = [0.0, d, d];
         let origin = [8.0, 0.5, 8.0];
-        let result =
-            dda_march_ray_refractive(&grid, size, origin, dir, 20.0, 4, |m| refractive_n(m));
+        let result = dda_march_ray_refractive(&grid, size, origin, dir, 20.0, 4, refractive_n);
         // Find a segment inside the glass (n ≈ 1.52).
         let glass_segs: Vec<_> = result.segments.iter().filter(|s| s.n > 1.4).collect();
         // Must have at least one glass segment.
@@ -1444,8 +1439,7 @@ mod tests {
         let d = (60.0_f32.to_radians()).sin();
         let dir = [d, (60.0_f32.to_radians()).cos(), 0.0]; // 60° from Y-normal.
         let origin = [16.0, 16.0, 16.0];
-        let result =
-            dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, |m| refractive_n(m));
+        let result = dda_march_ray_refractive(&grid, size, origin, dir, 10.0, 4, refractive_n);
         // With TIR all segments should remain at n ≈ 1.52.
         for seg in &result.segments {
             assert!(

@@ -67,12 +67,7 @@ const P0_AIR: f32 = 101_325.0;
 /// let refracted = snell_refract([0.0, -1.0, 0.0], [0.0, 1.0, 0.0], 1.0, 1.33);
 /// assert!(refracted.is_some()); // no TIR going into denser medium
 /// ```
-pub fn snell_refract(
-    incident: [f32; 3],
-    normal: [f32; 3],
-    n1: f32,
-    n2: f32,
-) -> Option<[f32; 3]> {
+pub fn snell_refract(incident: [f32; 3], normal: [f32; 3], n1: f32, n2: f32) -> Option<[f32; 3]> {
     // cos θ₁ = −(incident · normal)  (incident points toward surface)
     let cos_i = -(dot(incident, normal));
     let ratio = n1 / n2;
@@ -260,7 +255,11 @@ pub fn cauchy_n_rgb(a: f32, b: f32) -> [f32; 3] {
     const R_M: f32 = 680e-9;
     const G_M: f32 = 550e-9;
     const B_M: f32 = 440e-9;
-    [cauchy_n(R_M, a, b), cauchy_n(G_M, a, b), cauchy_n(B_M, a, b)]
+    [
+        cauchy_n(R_M, a, b),
+        cauchy_n(G_M, a, b),
+        cauchy_n(B_M, a, b),
+    ]
 }
 
 // ---------------------------------------------------------------------------

@@ -75,4 +75,12 @@ SimulationScenario(
         // No chemical reactions
         NoReactions,
     ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/quartz_melting_to_glass.mp4",
+        view: Slice(axis: Y, depth: 5),
+        color_mode: Temperature(min_k: 280.0, max_k: 2100.0),
+        fps: 60,
+        scale: 8,
+    )),
 )

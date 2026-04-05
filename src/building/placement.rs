@@ -72,7 +72,11 @@ pub enum PlacementResult {
 ///
 /// Returns the grid-aligned centre of the voxel the position falls in.
 pub fn snap_to_grid(pos: Vec3) -> Vec3 {
-    Vec3::new(pos.x.floor() + 0.5, pos.y.floor() + 0.5, pos.z.floor() + 0.5)
+    Vec3::new(
+        pos.x.floor() + 0.5,
+        pos.y.floor() + 0.5,
+        pos.z.floor() + 0.5,
+    )
 }
 
 /// Check whether a part can be placed at `grid_pos`.
@@ -111,10 +115,10 @@ pub fn validate_placement(
     }
 
     // Rule 3 — inventory check.
-    if let Some(inv) = inventory {
-        if inv.count(material_name) == 0 {
-            return PlacementResult::NoMaterial;
-        }
+    if let Some(inv) = inventory
+        && inv.count(material_name) == 0
+    {
+        return PlacementResult::NoMaterial;
     }
 
     PlacementResult::Valid
@@ -125,10 +129,7 @@ pub fn validate_placement(
 // ---------------------------------------------------------------------------
 
 /// Toggle build mode on/off when the player presses B.
-pub fn toggle_build_mode(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut build_mode: ResMut<BuildMode>,
-) {
+pub fn toggle_build_mode(keyboard: Res<ButtonInput<KeyCode>>, mut build_mode: ResMut<BuildMode>) {
     if keyboard.just_pressed(KeyCode::KeyB) {
         *build_mode = match &*build_mode {
             BuildMode::Inactive => BuildMode::Active {
@@ -142,10 +143,7 @@ pub fn toggle_build_mode(
 }
 
 /// Rotate the selected part 90° when R is pressed (in build mode).
-pub fn rotate_selection(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut build_mode: ResMut<BuildMode>,
-) {
+pub fn rotate_selection(keyboard: Res<ButtonInput<KeyCode>>, mut build_mode: ResMut<BuildMode>) {
     if !keyboard.just_pressed(KeyCode::KeyR) {
         return;
     }
