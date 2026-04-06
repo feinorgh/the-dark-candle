@@ -90,6 +90,33 @@ material_source: Inline([
 
 Use `Inline(...)` when you need a completely isolated test that must not depend on external data files.
 
+### Emissive Materials
+
+Materials can actively emit light and heat via three optional fields on `MaterialData`:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `emission_power` | `Option<f32>` | `None` | Total radiant exitance in W/m². `None` = passive material. |
+| `emission_color` | `Option<[f32; 3]>` | `None` | Visible glow color (RGB 0–1). `None` = warm white `(1.0, 0.85, 0.7)`. |
+| `emission_spectrum` | `Option<EmissionSpectrum>` | `None` | Band distribution fractions (should sum to 1.0). `None` = LED-like default. |
+
+**`EmissionSpectrum`** distributes emitted power across four wavelength bands:
+
+```ron
+EmissionSpectrum(
+    uv: 0.0,           // 280–380 nm  (UV lamps, fluorescence — future)
+    visible: 0.85,      // 380–700 nm  (rendered via emission_color)
+    near_ir: 0.10,      // 700–1400 nm (night vision, IR scanners — future)
+    thermal_ir: 0.05,   // 1.4–15 µm   (heat transfer, thermal cameras)
+)
+```
+
+**Thermal coupling:** Each tick, emissive voxels inject heat into their 6 face-adjacent neighbors: `ΔT = emission_power × (near_ir + thermal_ir) × dt / (ρ × Cₚ × dx) / 6`.
+
+**Built-in emissive materials:** `LedPanelWarm` (id 111, 5000 W/m²), `LedPanelCool` (id 112, 5000 W/m²), `IrEmitter` (id 113, 2000 W/m² near-IR).
+
+Note: `emission_power` (active source, W/m²) is independent of `emissivity` (0–1, passive Stefan-Boltzmann radiation). Incandescent objects (e.g. molten iron at 1800 K) glow via temperature alone — no emission fields needed.
+
 ### Ambient Schedule
 
 Controls how the ambient temperature changes over the simulation.
@@ -195,7 +222,7 @@ RandomHeightmap(
 ```ron
 CornellBox(origin: (0, 0, 0), interior_size: 10, wall_thickness: 1)
 ```
-Use with `voxel_scale: 0.0555` for physically accurate 55.5 mm/voxel resolution (10 voxels = 555 mm interior). Heat the ceiling light port with a `HeatRegion` targeting the air gap.
+Use with `voxel_scale: 0.0555` for physically accurate 55.5 mm/voxel resolution (10 voxels = 555 mm interior). Light the ceiling port by filling it with an emissive material (e.g. `LedPanelWarm`) instead of a `HeatRegion`.
 
 ### Ignition (Initial Perturbations)
 

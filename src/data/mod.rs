@@ -56,6 +56,56 @@ fn default_albedo() -> f32 {
     0.3
 }
 
+/// Spectral power distribution across physical wavelength bands.
+///
+/// Each field is the fraction of total `emission_power` emitted in that band.
+/// Values should sum to 1.0.  Phase 1 uses `visible` (rendering) and
+/// `thermal_ir` + `near_ir` (heat transfer).  `uv` and `near_ir` are stored
+/// for future systems (fluorescence, night-vision goggles, IR scanners).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct EmissionSpectrum {
+    /// UV band (280–380 nm). Fluorescence excitation, germicidal lamps.
+    #[serde(default)]
+    pub uv: f32,
+    /// Visible band (380–700 nm). Determines rendered glow via `emission_color`.
+    #[serde(default = "EmissionSpectrum::default_visible")]
+    pub visible: f32,
+    /// Near-IR band (700–1 400 nm). Night-vision devices, IR remote LEDs.
+    #[serde(default = "EmissionSpectrum::default_near_ir")]
+    pub near_ir: f32,
+    /// Thermal IR band (1.4–15 µm). Radiative heat transfer, thermal cameras.
+    #[serde(default = "EmissionSpectrum::default_thermal_ir")]
+    pub thermal_ir: f32,
+}
+
+impl EmissionSpectrum {
+    fn default_visible() -> f32 {
+        0.85
+    }
+    fn default_near_ir() -> f32 {
+        0.10
+    }
+    fn default_thermal_ir() -> f32 {
+        0.05
+    }
+
+    /// Fraction of power that contributes to heating (near-IR + thermal IR).
+    pub fn heating_fraction(&self) -> f32 {
+        self.near_ir + self.thermal_ir
+    }
+}
+
+impl Default for EmissionSpectrum {
+    fn default() -> Self {
+        Self {
+            uv: 0.0,
+            visible: 0.85,
+            near_ir: 0.10,
+            thermal_ir: 0.05,
+        }
+    }
+}
+
 /// Physical and chemical properties of a material, loaded from `.material.ron`.
 /// The `id` field maps to `MaterialId` in the voxel system.
 ///
@@ -204,6 +254,23 @@ pub struct MaterialData {
     #[serde(default = "default_albedo")]
     pub albedo: f32,
 
+    // --- Active emission properties (SI) ---
+    /// Total radiant exitance in W/m² (power emitted per unit surface area).
+    /// `None` = not an active emitter (default).  Independent of `emissivity`
+    /// which governs passive Stefan-Boltzmann radiation.
+    /// Warm-white LED panel ≈ 5 000, 60 W incandescent bulb surface ≈ 7 000.
+    #[serde(default)]
+    pub emission_power: Option<f32>,
+    /// Visible emission colour (RGB, 0.0–1.0).  Determines the rendered glow
+    /// colour.  `None` = warm white default `[1.0, 0.93, 0.84]`.
+    #[serde(default)]
+    pub emission_color: Option<[f32; 3]>,
+    /// Spectral power distribution across UV / visible / near-IR / thermal-IR
+    /// bands.  Each field is a fraction of `emission_power` (should sum to 1.0).
+    /// `None` = LED-like default (85 % visible, 10 % near-IR, 5 % thermal-IR).
+    #[serde(default)]
+    pub emission_spectrum: Option<EmissionSpectrum>,
+
     // --- Phase transition targets ---
     /// Material name this becomes when heated above melting_point (solid → liquid).
     #[serde(default)]
@@ -220,6 +287,24 @@ pub struct MaterialData {
 }
 
 impl MaterialData {
+    /// Default warm-white emission colour (~3000 K correlated colour temperature).
+    const DEFAULT_EMISSION_COLOR: [f32; 3] = [1.0, 0.93, 0.84];
+
+    /// Whether this material is an active light emitter.
+    pub fn is_emissive(&self) -> bool {
+        matches!(self.emission_power, Some(p) if p > 0.0)
+    }
+
+    /// Resolved emission colour: explicit `emission_color` or warm-white default.
+    pub fn resolved_emission_color(&self) -> [f32; 3] {
+        self.emission_color.unwrap_or(Self::DEFAULT_EMISSION_COLOR)
+    }
+
+    /// Resolved emission spectrum: explicit or LED-like default.
+    pub fn resolved_emission_spectrum(&self) -> EmissionSpectrum {
+        self.emission_spectrum.unwrap_or_default()
+    }
+
     /// Get per-channel RGB absorption coefficients for light transport.
     ///
     /// Returns `Some([α_R, α_G, α_B])` for transparent/semi-transparent

@@ -260,6 +260,10 @@ pub fn simulate_tick_dx(
         v.temperature += delta;
     }
 
+    // 2c. Active emissive material heating — constant-power sources (LEDs, etc.)
+    //     inject thermal energy into face-adjacent neighbors each tick.
+    apply_emissive_heating(voxels, size, dt, dx, registry);
+
     // 3. State transitions
     let transitions = apply_transitions(voxels, registry);
 
@@ -280,6 +284,86 @@ pub fn simulate_tick_dx(
         max_temp,
         max_pressure,
         max_pressure_delta,
+    }
+}
+
+/// Inject thermal energy from active emissive materials into face-adjacent
+/// neighbors.  Each emissive surface voxel distributes its heating power
+/// equally among its non-air face neighbors.
+///
+/// Power delivered per neighbor per tick:
+///   ΔT = (emission_power × heating_fraction × face_area × dt) / (ρ × Cp × V)
+///
+/// where `face_area = dx²` and `V = dx³`, so this simplifies to:
+///   ΔT = (emission_power × heating_fraction × dt) / (ρ × Cp × dx)
+fn apply_emissive_heating(
+    voxels: &mut [Voxel],
+    size: usize,
+    dt: f32,
+    dx: f32,
+    registry: &MaterialRegistry,
+) {
+    let n = voxels.len();
+    let mut deltas = vec![0.0_f32; n];
+
+    for z in 0..size {
+        for y in 0..size {
+            for x in 0..size {
+                let idx = z * size * size + y * size + x;
+                let v = &voxels[idx];
+                if v.material.is_air() {
+                    continue;
+                }
+                let mat = match registry.get(v.material) {
+                    Some(m) => m,
+                    None => continue,
+                };
+                let power = match mat.emission_power {
+                    Some(p) if p > 0.0 => p,
+                    _ => continue,
+                };
+
+                let heating_frac = mat.resolved_emission_spectrum().heating_fraction();
+                if heating_frac <= 0.0 {
+                    continue;
+                }
+
+                // Distribute to face-adjacent neighbors.
+                for &(dx_o, dy_o, dz_o) in &NEIGHBORS {
+                    let nx = x as i32 + dx_o;
+                    let ny = y as i32 + dy_o;
+                    let nz = z as i32 + dz_o;
+                    if nx < 0 || ny < 0 || nz < 0 {
+                        continue;
+                    }
+                    let (ux, uy, uz) = (nx as usize, ny as usize, nz as usize);
+                    if ux >= size || uy >= size || uz >= size {
+                        continue;
+                    }
+                    let nidx = uz * size * size + uy * size + ux;
+                    let nv = &voxels[nidx];
+                    if nv.material.is_air() {
+                        continue;
+                    }
+                    let nmat = match registry.get(nv.material) {
+                        Some(m) => m,
+                        None => continue,
+                    };
+                    if nmat.density <= 0.0 || nmat.specific_heat_capacity <= 0.0 {
+                        continue;
+                    }
+                    // ΔT = P × f_heat × dt / (ρ × Cp × dx) distributed over 6 faces.
+                    let dt_neighbor = power * heating_frac * dt
+                        / (nmat.density * nmat.specific_heat_capacity * dx)
+                        / 6.0;
+                    deltas[nidx] += dt_neighbor;
+                }
+            }
+        }
+    }
+
+    for (v, &d) in voxels.iter_mut().zip(deltas.iter()) {
+        v.temperature += d;
     }
 }
 

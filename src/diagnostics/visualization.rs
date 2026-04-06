@@ -175,51 +175,70 @@ fn voxel_color(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMod
     }
 }
 
-/// Return the HDR emissive color for a voxel (incandescence mode only).
+/// Return the HDR emissive color for a voxel.
 ///
-/// This is the self-luminous contribution from hot materials — it should be
-/// added to the final pixel color *after* Lambertian shading, not multiplied
-/// by it. Returns `[0, 0, 0]` for cold voxels or non-incandescence modes.
+/// Combines two sources of self-luminous glow:
 ///
-/// Computed directly from the incandescence ramp × Stefan-Boltzmann T⁴
-/// scaling, independent of the material base color. This avoids negative
-/// emissive values that occurred with the old subtraction approach.
-fn voxel_emissive(voxel: &Voxel, _registry: &MaterialRegistry, color_mode: &ColorMode) -> [f32; 3] {
-    const GLOW_THRESHOLD: f32 = 800.0;
-
-    if !matches!(color_mode, ColorMode::Incandescence) || voxel.material.is_air() {
-        return [0.0; 3];
-    }
-    let temp = voxel.temperature;
-    if temp < GLOW_THRESHOLD {
+/// 1. **Temperature-based incandescence** (≥800 K): dark red → yellow-white
+///    ramp with T⁴ intensity.  Active only in `Incandescence` color mode.
+///
+/// 2. **Material emission** (active emitters like LEDs): uses `emission_power`
+///    and `emission_color` from `MaterialData`.  Active in **all** color modes.
+///
+/// The result is added to the final pixel *after* Lambertian shading (additive,
+/// not multiplicative).  Returns `[0, 0, 0]` for non-emitting cold voxels.
+fn voxel_emissive(voxel: &Voxel, registry: &MaterialRegistry, color_mode: &ColorMode) -> [f32; 3] {
+    if voxel.material.is_air() {
         return [0.0; 3];
     }
 
-    // Incandescence ramp: dark red → cherry red → orange → yellow-white
-    // (mirrors meshing::incandescence_color but outputs pure HDR emissive)
-    let (r, g, b) = if temp < 1200.0 {
-        let t = (temp - 800.0) / 400.0;
-        (0.3 + 0.4 * t, 0.02 * t, 0.0)
-    } else if temp < 1500.0 {
-        let t = (temp - 1200.0) / 300.0;
-        (0.7 + 0.3 * t, 0.02 + 0.28 * t, 0.0)
-    } else if temp < 1800.0 {
-        let t = (temp - 1500.0) / 300.0;
-        (1.0, 0.3 + 0.4 * t, 0.1 * t)
-    } else {
-        (
-            1.0,
-            0.7 + 0.3 * ((temp - 1800.0) / 500.0).min(1.0),
-            0.1 + 0.9 * ((temp - 1800.0) / 500.0).min(1.0),
-        )
-    };
+    let mut emissive = [0.0_f32; 3];
 
-    // HDR intensity via Stefan-Boltzmann T⁴ scaling. The 0.15 coefficient
-    // gives subtle glow at 800K and dramatic brightness at 2000K+.
-    let t_norm = temp / 1000.0;
-    let intensity = t_norm * t_norm * t_norm * t_norm * 0.15;
+    // 1. Temperature-based incandescence (Incandescence mode only).
+    if matches!(color_mode, ColorMode::Incandescence) {
+        const GLOW_THRESHOLD: f32 = 800.0;
+        let temp = voxel.temperature;
+        if temp >= GLOW_THRESHOLD {
+            let (r, g, b) = if temp < 1200.0 {
+                let t = (temp - 800.0) / 400.0;
+                (0.3 + 0.4 * t, 0.02 * t, 0.0)
+            } else if temp < 1500.0 {
+                let t = (temp - 1200.0) / 300.0;
+                (0.7 + 0.3 * t, 0.02 + 0.28 * t, 0.0)
+            } else if temp < 1800.0 {
+                let t = (temp - 1500.0) / 300.0;
+                (1.0, 0.3 + 0.4 * t, 0.1 * t)
+            } else {
+                (
+                    1.0,
+                    0.7 + 0.3 * ((temp - 1800.0) / 500.0).min(1.0),
+                    0.1 + 0.9 * ((temp - 1800.0) / 500.0).min(1.0),
+                )
+            };
+            let t_norm = temp / 1000.0;
+            let intensity = t_norm * t_norm * t_norm * t_norm * 0.15;
+            emissive[0] += r * intensity;
+            emissive[1] += g * intensity;
+            emissive[2] += b * intensity;
+        }
+    }
 
-    [r * intensity, g * intensity, b * intensity]
+    // 2. Material-based emission (all color modes).
+    if let Some((mat, power)) = registry
+        .get(voxel.material)
+        .and_then(|m| m.emission_power.filter(|&p| p > 0.0).map(|p| (m, p)))
+    {
+        let color = mat.resolved_emission_color();
+        let spectrum = mat.resolved_emission_spectrum();
+        // Scale visible emission to a perceptual HDR range.
+        // 5000 W/m² (typical LED panel) → intensity ≈ 0.5.
+        let intensity = (power * spectrum.visible / 10_000.0).min(2.0);
+        emissive[0] += color[0] * intensity;
+        emissive[1] += color[1] * intensity;
+        emissive[2] += color[2] * intensity;
+    }
+
+    emissive
 }
 
 /// Index into a flat `size³` voxel array.

@@ -95,6 +95,28 @@ pub fn incandescence_color(base: [f32; 4], temperature: f32) -> [f32; 4] {
     [cr * scale, cg * scale, cb * scale, base[3]]
 }
 
+/// Like [`incandescence_color`] but also applies material-based emission glow
+/// for active emitters (LEDs, light panels).  The material emission is additive
+/// on top of the temperature-based incandescence.
+pub fn incandescence_color_with_emission(
+    base: [f32; 4],
+    temperature: f32,
+    mat: &crate::data::MaterialData,
+) -> [f32; 4] {
+    let mut result = incandescence_color(base, temperature);
+
+    if let Some(power) = mat.emission_power.filter(|&p| p > 0.0) {
+        let color = mat.resolved_emission_color();
+        let spectrum = mat.resolved_emission_spectrum();
+        let intensity = (power * spectrum.visible / 10_000.0).min(2.0);
+        result[0] += color[0] * intensity;
+        result[1] += color[1] * intensity;
+        result[2] += color[2] * intensity;
+    }
+
+    result
+}
+
 /// Map temperature to a debug heatmap color (blue→cyan→green→yellow→red).
 fn thermal_heatmap_color(temperature: f32) -> [f32; 4] {
     let min_k = 250.0_f32;

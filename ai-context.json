@@ -757,7 +757,13 @@
       "paths": [
         "src/simulation/",
         "tests/simulations.rs",
-        "tests/cases/simulation/"
+        "tests/cases/simulation/",
+        "assets/data/materials/plaster_white.material.ron",
+        "assets/data/materials/plaster_red.material.ron",
+        "assets/data/materials/plaster_green.material.ron",
+        "assets/data/materials/led_panel_warm.material.ron",
+        "assets/data/materials/led_panel_cool.material.ron",
+        "assets/data/materials/ir_emitter.material.ron"
       ],
       "implements": [
         "simulate_tick() \u2014 mod.rs:174 (wraps simulate_tick_dx with dx=1.0)",
@@ -1511,6 +1517,42 @@
       ],
       "notes": "35+ unit tests across new modules. glass.material.ron cauchy_b=4.61e-15 (borosilicate), quartz=3.4e-15. Scenarios: glass_prism_dispersion.simulation.ron, underwater_caustics.simulation.ron.",
       "uncertain": false
+    },
+    {
+      "name": "3D perspective simulation video rendering",
+      "status": "complete",
+      "paths": [
+        "src/diagnostics/visualization.rs",
+        "src/simulation/scenario.rs"
+      ],
+      "notes": "SceneLight in VideoConfig, render_frame_lit_with_overlay() with Lambertian shading, shadow rays, Reinhard tonemapping. All 22 scenarios use Perspective view at 640x480."
+    },
+    {
+      "name": "Cornell box geometry & plaster materials",
+      "status": "complete",
+      "paths": [
+        "src/simulation/geometry.rs",
+        "src/simulation/scenario.rs",
+        "assets/data/materials/plaster_white.material.ron",
+        "assets/data/materials/plaster_red.material.ron",
+        "assets/data/materials/plaster_green.material.ron",
+        "tests/cases/simulation/cornell_box_demo.simulation.ron"
+      ],
+      "notes": "CornellBox Region variant with 5 walls (floor/ceiling/back=white, left=red, right=green) + ceiling light port. Real 555mm dimensions via voxel_scale=0.0555. Material IDs: PlasterWhite=108, PlasterRed=109, PlasterGreen=110."
+    },
+    {
+      "name": "Emissive materials (spectral power distribution)",
+      "status": "complete",
+      "paths": [
+        "src/data/mod.rs",
+        "src/simulation/mod.rs",
+        "src/diagnostics/visualization.rs",
+        "src/world/meshing.rs",
+        "assets/data/materials/led_panel_warm.material.ron",
+        "assets/data/materials/led_panel_cool.material.ron",
+        "assets/data/materials/ir_emitter.material.ron"
+      ],
+      "notes": "EmissionSpectrum with UV/visible/near-IR/thermal-IR bands on MaterialData. Active emission (W/m\u00b2) independent of passive emissivity. Thermal coupling injects heat to neighbors. Visual rendering in all color modes. Material IDs: LedPanelWarm=111, LedPanelCool=112, IrEmitter=113."
     }
   ],
   "tech_debt": [

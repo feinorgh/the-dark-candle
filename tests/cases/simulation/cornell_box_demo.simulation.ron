@@ -1,6 +1,6 @@
 SimulationScenario(
     name: "Cornell box demo",
-    description: "Standard Cornell box (555 mm interior) with two classic objects — a tall stone block and a short iron block — demonstrating the reusable CornellBox geometry. The ceiling light port radiates into the scene, warming the objects via radiation across the air gap.",
+    description: "Standard Cornell box (555 mm interior) with two classic objects — a tall stone block and a short iron block. The ceiling light port uses an emissive LED panel material that radiates warmth into the scene.",
 
     grid_size: 12,
     voxel_scale: 0.0555,
@@ -16,6 +16,10 @@ SimulationScenario(
         // Includes centered ceiling light opening (~130×105 mm, matching original).
         CornellBox(origin: (0, 0, 0), interior_size: 10, wall_thickness: 1),
 
+        // Warm-white LED panel filling the ceiling light port.
+        // The CornellBox carves a 2×1 opening at y=11, x=[5,6], z=5.
+        Fill(material: "LedPanelWarm", min: (5, 11, 5), max: (6, 11, 5)),
+
         // Tall block (left-rear) — stone, ~3×6×3 voxels ≈ 167×333×167 mm
         Fill(material: "Stone", min: (2, 1, 1), max: (4, 6, 3)),
 
@@ -23,11 +27,7 @@ SimulationScenario(
         Fill(material: "Iron", min: (7, 1, 5), max: (9, 3, 7)),
     ],
 
-    ignition: [
-        // Heat the ceiling light port to 500 K (bright radiant source).
-        // The CornellBox carves a 2×1 voxel opening at y=11, x=[5,6], z=5.
-        HeatRegion(min: (5, 11, 5), max: (6, 11, 5), temperature: 500.0),
-    ],
+    ignition: [],
 
     dt: 0.5,
     ticks: 200,
