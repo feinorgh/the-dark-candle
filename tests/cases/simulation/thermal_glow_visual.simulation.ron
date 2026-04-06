@@ -27,11 +27,13 @@ SimulationScenario(
     reaction_source: FromAssets,
 
     regions: [
-        // Fill entire grid with iron
-        Fill(
+        // Stone ground floor for visual grounding
+        Layer(material: "Stone", y: 0),
+        // Iron sphere — the thermal subject
+        Sphere(
             material: "Iron",
-            min: (0, 0, 0),
-            max: (15, 15, 15),
+            center: (8, 8, 8),
+            radius: 7.0,
         ),
     ],
 
@@ -81,9 +83,21 @@ SimulationScenario(
     emit_dump: None,
     emit_video: Some(VideoConfig(
         path: "test_output/thermal_glow_heatmap.mp4",
-        view: Slice(axis: Y, depth: 8),
+        view: Perspective(
+            eye: (24.0, 18.0, 24.0),
+            target: (8.0, 7.0, 8.0),
+            fov_degrees: 50.0,
+            width: 640,
+            height: 480,
+        ),
         color_mode: Temperature(min_k: 280.0, max_k: 2100.0),
         fps: 30,
         scale: 8,
+        light: Some(SceneLight(
+            direction: (-0.4, -0.8, -0.3),
+            color: (1.0, 0.9, 0.8),
+            intensity: 0.5,
+            ambient: 0.08,
+        )),
     )),
 )

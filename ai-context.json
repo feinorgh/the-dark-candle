@@ -97,7 +97,7 @@
       {
         "name": "diagnostics",
         "path": "src/diagnostics/",
-        "responsibility": "F3 frame budget overlay (EMA FPS/frame time), F11 ECS state dump (RON), F12 screenshot, per-system timing, video capture (ffmpeg/PNG fallback), software raymarching visualization"
+        "responsibility": "F3 frame budget overlay (EMA FPS/frame time), F11 ECS state dump (RON), F12 screenshot, per-system timing, video capture (ffmpeg/PNG fallback), software raymarching visualization with Perspective/Slice/TopDown views and configurable SceneLight"
       },
       {
         "name": "camera",
@@ -1573,7 +1573,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "7d4c614bdc4dac83d339afaf8fd655a813215d25",
+    "generated_from_commit": "4959826",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

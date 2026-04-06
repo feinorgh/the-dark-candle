@@ -78,9 +78,21 @@ SimulationScenario(
 
     emit_video: Some(VideoConfig(
         path: "test_output/quartz_melting_to_glass.mp4",
-        view: Slice(axis: Y, depth: 5),
+        view: Perspective(
+            eye: (15.0, 10.0, 15.0),
+            target: (5.0, 5.0, 5.0),
+            fov_degrees: 50.0,
+            width: 640,
+            height: 480,
+        ),
         color_mode: Temperature(min_k: 280.0, max_k: 2100.0),
         fps: 60,
         scale: 8,
+        light: Some(SceneLight(
+            direction: (-0.4, -0.8, -0.3),
+            color: (1.0, 0.9, 0.8),
+            intensity: 0.5,
+            ambient: 0.08,
+        )),
     )),
 )

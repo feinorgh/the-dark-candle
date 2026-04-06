@@ -19,7 +19,7 @@ use crate::chemistry::reactions::ReactionData;
 use crate::data::{MaterialData, MaterialRegistry};
 use crate::diagnostics::state_dump::{dump_grid_state, dump_to_ron};
 use crate::diagnostics::video::{FrameEncoder, VideoConfig};
-use crate::diagnostics::visualization::{overlay_strip_height, render_frame_with_overlay};
+use crate::diagnostics::visualization::{overlay_strip_height, render_frame_lit_with_overlay};
 use crate::simulation::assertions::{Assertion, evaluate};
 use crate::simulation::geometry::{Region, apply_regions};
 use crate::simulation::{SimulationStats, simulate_tick};
@@ -493,7 +493,7 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
                 let sim_time_s = (tick_num as f64 + 1.0) * scenario.dt as f64;
                 let line1 = format_sim_time(sim_time_s);
                 let line2 = format_time_scale(vc.time_scale);
-                let frame = render_frame_with_overlay(
+                let frame = render_frame_lit_with_overlay(
                     &voxels,
                     size,
                     &registry,
@@ -501,6 +501,7 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
                     &vc.color_mode,
                     vc.scale,
                     Some((&line1, &line2)),
+                    vc.light.as_ref(),
                 );
                 for _ in 0..frames_this_tick {
                     if let Err(e) = enc.push_frame(&frame) {
@@ -533,7 +534,7 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
         let sim_time_s = scenario.ticks as f64 * scenario.dt as f64;
         let line1 = format_sim_time(sim_time_s);
         let line2 = format_time_scale(vc.time_scale);
-        let frame = render_frame_with_overlay(
+        let frame = render_frame_lit_with_overlay(
             &voxels,
             size,
             &registry,
@@ -541,6 +542,7 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
             &vc.color_mode,
             vc.scale,
             Some((&line1, &line2)),
+            vc.light.as_ref(),
         );
         let _ = enc.push_frame(&frame);
     }

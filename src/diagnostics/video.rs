@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use image::RgbImage;
 use serde::Deserialize;
 
-use super::visualization::{ColorMode, ViewMode};
+use super::visualization::{ColorMode, SceneLight, ViewMode};
 
 /// Full video output configuration, embeddable in `SimulationScenario`.
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -50,6 +50,12 @@ pub struct VideoConfig {
     /// as a HUD overlay so viewers always know the playback speed.
     #[serde(default = "default_time_scale")]
     pub time_scale: f32,
+    /// Optional directional light for `Perspective` views.
+    ///
+    /// When `None`, uses the default `SceneLight` (upper-left sun, 0.15
+    /// ambient). Ignored by `Slice` and `TopDown` views.
+    #[serde(default)]
+    pub light: Option<SceneLight>,
 }
 
 fn default_fps() -> u32 {

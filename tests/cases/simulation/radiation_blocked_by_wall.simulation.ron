@@ -46,9 +46,21 @@ SimulationScenario(
 
     emit_video: Some(VideoConfig(
         path: "test_output/radiation_blocked_by_wall.mp4",
-        view: Slice(axis: Y, depth: 6),
+        view: Perspective(
+            eye: (18.0, 12.0, 18.0),
+            target: (6.0, 6.0, 6.0),
+            fov_degrees: 50.0,
+            width: 640,
+            height: 480,
+        ),
         color_mode: Temperature(min_k: 280.0, max_k: 1600.0),
         fps: 30,
         scale: 6,
+        light: Some(SceneLight(
+            direction: (-0.4, -0.8, -0.3),
+            color: (1.0, 0.95, 0.9),
+            intensity: 0.6,
+            ambient: 0.08,
+        )),
     )),
 )

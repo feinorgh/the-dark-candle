@@ -78,10 +78,22 @@ SimulationScenario(
 
     emit_video: Some(VideoConfig(
         path: "test_output/glass_prism_dispersion.mp4",
-        view: Slice(axis: Y, depth: 5),
+        view: Perspective(
+            eye: (15.0, 10.0, 15.0),
+            target: (5.0, 5.0, 5.0),
+            fov_degrees: 50.0,
+            width: 640,
+            height: 480,
+        ),
         color_mode: Material,
         fps: 30,
         scale: 32,
         time_scale: 1.0,
+        light: Some(SceneLight(
+            direction: (-0.5, -0.7, -0.4),
+            color: (1.0, 1.0, 1.0),
+            intensity: 1.2,
+            ambient: 0.15,
+        )),
     )),
 )

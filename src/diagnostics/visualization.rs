@@ -594,7 +594,37 @@ pub fn render_frame_with_overlay(
     scale: u32,
     overlay: Option<(&str, &str)>,
 ) -> RgbImage {
-    let base = render_frame(voxels, size, registry, view, color_mode, scale);
+    render_frame_lit_with_overlay(
+        voxels, size, registry, view, color_mode, scale, overlay, None,
+    )
+}
+
+/// Like [`render_frame_with_overlay`] but with an explicit scene light.
+///
+/// When `light` is `None`, the default `SceneLight` is used (matches
+/// `render_frame` behaviour). When `Some`, the provided light is passed
+/// through to `render_frame_lit` for `Perspective` views.
+#[allow(clippy::too_many_arguments)]
+pub fn render_frame_lit_with_overlay(
+    voxels: &[Voxel],
+    size: usize,
+    registry: &MaterialRegistry,
+    view: &ViewMode,
+    color_mode: &ColorMode,
+    scale: u32,
+    overlay: Option<(&str, &str)>,
+    light: Option<&SceneLight>,
+) -> RgbImage {
+    let default_light = SceneLight::default();
+    let base = render_frame_lit(
+        voxels,
+        size,
+        registry,
+        view,
+        color_mode,
+        scale,
+        light.unwrap_or(&default_light),
+    );
     let Some((time_line, scale_line)) = overlay else {
         return base;
     };

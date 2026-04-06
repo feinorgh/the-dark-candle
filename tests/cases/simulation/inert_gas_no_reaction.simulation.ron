@@ -34,9 +34,21 @@ SimulationScenario(
 
     emit_video: Some(VideoConfig(
         path: "test_output/inert_gas_no_reaction.mp4",
-        view: Slice(axis: Y, depth: 3),
+        view: Perspective(
+            eye: (9.0, 6.0, 9.0),
+            target: (3.0, 3.0, 3.0),
+            fov_degrees: 55.0,
+            width: 640,
+            height: 480,
+        ),
         color_mode: Material,
         fps: 30,
         scale: 16,
+        light: Some(SceneLight(
+            direction: (-0.4, -0.8, -0.3),
+            color: (1.0, 0.95, 0.9),
+            intensity: 1.0,
+            ambient: 0.15,
+        )),
     )),
 )
