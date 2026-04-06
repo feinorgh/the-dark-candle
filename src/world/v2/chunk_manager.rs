@@ -12,10 +12,11 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 
 use crate::camera::FpsCamera;
 use crate::world::chunk::CHUNK_SIZE;
+use crate::world::chunk_manager::SharedTerrainGen;
 use crate::world::lod::MaterialColorMap;
 use crate::world::meshing::{ChunkMesh, ChunkMeshMarker, chunk_mesh_to_bevy_mesh};
 use crate::world::planet::PlanetConfig;
-use crate::world::terrain::SphericalTerrainGenerator;
+use crate::world::terrain::UnifiedTerrainGenerator;
 use crate::world::v2::cubed_sphere::{CubeSphereCoord, world_pos_to_coord};
 use crate::world::v2::greedy_mesh::{self, NeighborSlices};
 use crate::world::v2::terrain_gen::generate_v2_chunk;
@@ -28,9 +29,13 @@ const MAX_COLLECTS_PER_FRAME: usize = 32;
 
 // ── Resources ─────────────────────────────────────────────────────────────
 
-/// Thread-safe handle to the spherical terrain generator for V2 async tasks.
+/// Thread-safe handle to the terrain generator for V2 async tasks.
+///
+/// Wraps `Arc<UnifiedTerrainGenerator>` so that both the plain spherical
+/// generator and the planetary (tectonic/biome-aware) generator can be used
+/// without changing the dispatch path.
 #[derive(Resource, Clone)]
-pub struct V2TerrainGen(pub Arc<SphericalTerrainGenerator>);
+pub struct V2TerrainGen(pub Arc<UnifiedTerrainGenerator>);
 
 /// Chunk load radius in chunk units for the V2 pipeline.
 #[derive(Resource)]
@@ -297,30 +302,34 @@ fn v2_diagnostics(
     );
 }
 
-/// Extract the spherical terrain generator from SharedTerrainGen and wrap it
-/// as a V2TerrainGen resource.
+/// Clone the unified terrain generator from SharedTerrainGen into V2TerrainGen.
+///
+/// This ensures V2 always sees the same generator as the rest of the world
+/// pipeline, including the planetary sampler when `--planet` is active.
 fn v2_init_terrain_gen(
     mut commands: Commands,
-    shared: Option<Res<crate::world::chunk_manager::SharedTerrainGen>>,
+    shared: Option<Res<SharedTerrainGen>>,
     planet: Res<PlanetConfig>,
 ) {
-    if let Some(shared) = shared
-        && shared.0.spherical().is_some()
-    {
-        let tgen = SphericalTerrainGenerator::new(planet.clone());
-        commands.insert_resource(V2TerrainGen(Arc::new(tgen)));
-        info!("V2 pipeline: initialized terrain generator (spherical mode)");
+    if let Some(shared) = shared {
+        commands.insert_resource(V2TerrainGen(shared.0.clone()));
+        info!("V2 pipeline: initialized terrain generator from SharedTerrainGen");
         return;
     }
-    // Fallback: create from PlanetConfig directly
+    // Fallback when SharedTerrainGen isn't ready yet: create from PlanetConfig.
+    use crate::world::terrain::SphericalTerrainGenerator;
     let tgen = SphericalTerrainGenerator::new(planet.clone());
-    commands.insert_resource(V2TerrainGen(Arc::new(tgen)));
-    info!("V2 pipeline: initialized terrain generator from PlanetConfig");
+    let unified = Arc::new(crate::world::terrain::UnifiedTerrainGenerator::Spherical(
+        Box::new(tgen),
+    ));
+    commands.insert_resource(V2TerrainGen(unified));
+    info!("V2 pipeline: initialized terrain generator from PlanetConfig (fallback)");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
     use crate::world::v2::cubed_sphere::CubeSphereCoord;
 
     #[test]
@@ -399,7 +408,9 @@ mod tests {
             ..Default::default()
         };
 
-        let tgen = Arc::new(SphericalTerrainGenerator::new(planet.clone()));
+        let tgen = Arc::new(UnifiedTerrainGenerator::Spherical(Box::new(
+            SphericalTerrainGenerator::new(planet.clone()),
+        )));
         app.insert_resource(planet);
         app.insert_resource(V2TerrainGen(tgen));
         app.insert_resource(V2LoadRadius {

@@ -156,12 +156,12 @@ fn apply_planet_config_from_asset(
     terrain_res.0 = generator;
 
     let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(shared_generator));
+    let shared_arc = Arc::new(shared_generator);
+    *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
     // Rebuild the V2 terrain generator if the V2 pipeline is active.
     if let Some(mut v2) = v2_gen {
-        let tgen = terrain::SphericalTerrainGenerator::new(planet_config.clone());
-        v2.0 = Arc::new(tgen);
+        v2.0 = shared_arc;
         info!("V2 pipeline: rebuilt terrain generator from updated PlanetConfig");
     }
 
@@ -190,11 +190,11 @@ fn rebuild_terrain_on_config_change(
     terrain_res.0 = generator;
 
     let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(shared_generator));
+    let shared_arc = Arc::new(shared_generator);
+    *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
     if let Some(mut v2) = v2_gen {
-        let tgen = terrain::SphericalTerrainGenerator::new((*planet_config).clone());
-        v2.0 = Arc::new(tgen);
+        v2.0 = shared_arc;
     }
 }
 
@@ -208,6 +208,7 @@ fn rebuild_terrain_gen_if_planetary(
     planet_config: Res<PlanetConfig>,
     mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
     mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
+    v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
 ) {
     let Some(planetary) = planetary else {
         return;
@@ -225,11 +226,14 @@ fn rebuild_terrain_gen_if_planetary(
         sampler,
     )));
     terrain_res.0 = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    *shared_gen = chunk_manager::SharedTerrainGen(unified);
-    // NOTE: V2TerrainGen (SphericalTerrainGenerator) does not yet have a
-    // PlanetaryData-aware constructor. V2 chunk generation will use PlanetConfig
-    // noise only until SphericalTerrainGenerator gains planetary biome support.
-    // See TERRAIN-006 in issues.json.
+    *shared_gen = chunk_manager::SharedTerrainGen(unified.clone());
+
+    // Propagate the planetary generator to the V2 pipeline so V2 chunk
+    // generation uses tectonic surface heights (fixes TERRAIN-007).
+    if let Some(mut v2) = v2_gen {
+        v2.0 = unified;
+        info!("V2 pipeline: rebuilt terrain generator with PlanetaryTerrainSampler");
+    }
 }
 
 /// Populates `MaterialColorMap` from `MaterialRegistry` once after startup.

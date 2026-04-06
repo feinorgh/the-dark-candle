@@ -338,6 +338,37 @@ impl PlanetaryTerrainSampler {
         biome_data
     }
 
+    /// Determine the material at a radial position using `PlanetConfig`-based
+    /// logic (same rules as `SphericalTerrainGenerator::material_at_radius`).
+    ///
+    /// Used by the V2 pipeline to assign voxel materials when the planetary
+    /// sampler is active. The result respects sea level and soil depth from
+    /// `planet_config` but does not use per-cell biome data.
+    pub fn material_at_radius(
+        &self,
+        r: f64,
+        surface_r: f64,
+        world_x: f64,
+        world_y: f64,
+        world_z: f64,
+    ) -> crate::world::voxel::MaterialId {
+        use crate::world::terrain::SphericalTerrainGenerator;
+        use std::cell::RefCell;
+        thread_local! {
+            static MAT_GEN: RefCell<Option<SphericalTerrainGenerator>> = const { RefCell::new(None) };
+        }
+        MAT_GEN.with(|g| {
+            let mut borrow = g.borrow_mut();
+            if borrow.is_none() {
+                *borrow = Some(SphericalTerrainGenerator::new(self.planet_config.clone()));
+            }
+            borrow
+                .as_ref()
+                .unwrap()
+                .material_at_radius(r, surface_r, world_x, world_y, world_z)
+        })
+    }
+
     /// Sample the cave noise at a world position using the PlanetConfig parameters.
     fn planet_config_cave_sample(&self, wx: f64, wy: f64, wz: f64) -> bool {
         // Reuse the PlanetConfig noise via the existing SphericalTerrainGenerator.

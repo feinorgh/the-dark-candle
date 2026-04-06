@@ -521,7 +521,7 @@
   {
     "id": "TERRAIN-007",
     "title": "V2TerrainGen not updated when PlanetaryData changes",
-    "status": "open",
+    "status": "resolved",
     "category": "terrain",
     "severity": "medium",
     "description": "rebuild_terrain_gen_if_planetary() updates SharedTerrainGen and TerrainGeneratorRes but does not update V2TerrainGen (SphericalTerrainGenerator in V2WorldPlugin). Planet config changes applied at runtime or via apply_planet_config_from_asset do not propagate to the V2 rendering path. This means --planet mode always uses default noise parameters regardless of PlanetaryData.",
@@ -532,6 +532,8 @@
     ],
     "related_issues": [
       "TERRAIN-006"
-    ]
+    ],
+    "resolution": "Changed V2TerrainGen to hold Arc<UnifiedTerrainGenerator> instead of Arc<SphericalTerrainGenerator>. Updated generate_v2_chunk to accept &UnifiedTerrainGenerator (using planet_config() and sample_surface_radius_at()). Updated rebuild_terrain_gen_if_planetary to propagate the planetary Arc to V2TerrainGen. Added PlanetaryTerrainSampler::material_at_radius() delegating to its internal SphericalTerrainGenerator. Added planet_config() and material_at_radius() to UnifiedTerrainGenerator. All terrain generators (SharedTerrainGen, V2TerrainGen) now share the same Arc and are always in sync.",
+    "resolution_commit": "9f1bd04"
   }
 ]

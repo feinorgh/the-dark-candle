@@ -1019,6 +1019,39 @@ impl UnifiedTerrainGenerator {
             Self::Flat(_) => 0.0,
         }
     }
+
+    /// Return a reference to the active `PlanetConfig`.
+    ///
+    /// Panics if called on a `Flat` generator, which has no `PlanetConfig`.
+    pub fn planet_config(&self) -> &PlanetConfig {
+        match self {
+            Self::Spherical(g) => g.planet(),
+            Self::Planetary(g) => &g.planet_config,
+            Self::Flat(_) => panic!("planet_config() called on a Flat terrain generator"),
+        }
+    }
+
+    /// Determine the material at a radial position for spherical/planetary modes.
+    ///
+    /// Delegates to `SphericalTerrainGenerator::material_at_radius` for
+    /// `Spherical`, and to `PlanetaryTerrainSampler::material_at_radius` for
+    /// `Planetary` (uses `PlanetConfig`-derived rules, not per-cell biome data).
+    ///
+    /// Panics if called on a `Flat` generator.
+    pub fn material_at_radius(
+        &self,
+        r: f64,
+        surface_r: f64,
+        world_x: f64,
+        world_y: f64,
+        world_z: f64,
+    ) -> crate::world::voxel::MaterialId {
+        match self {
+            Self::Spherical(g) => g.material_at_radius(r, surface_r, world_x, world_y, world_z),
+            Self::Planetary(g) => g.material_at_radius(r, surface_r, world_x, world_y, world_z),
+            Self::Flat(_) => panic!("material_at_radius() called on a Flat terrain generator"),
+        }
+    }
 }
 
 #[cfg(test)]

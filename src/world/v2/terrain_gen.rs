@@ -11,7 +11,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::world::chunk::{CHUNK_SIZE, CHUNK_VOLUME};
-use crate::world::terrain::{SphericalTerrainGenerator, terrain_density};
+use crate::world::terrain::{UnifiedTerrainGenerator, terrain_density};
 use crate::world::v2::cubed_sphere::CubeSphereCoord;
 use crate::world::voxel::{MaterialId, Voxel};
 
@@ -32,7 +32,7 @@ pub fn generate_v2_chunk(
     coord: CubeSphereCoord,
     mean_radius: f64,
     face_chunks_per_edge: f64,
-    tgen: &SphericalTerrainGenerator,
+    tgen: &UnifiedTerrainGenerator,
 ) -> V2ChunkData {
     let cs = CHUNK_SIZE;
     let half = cs as f32 / 2.0;
@@ -47,8 +47,8 @@ pub fn generate_v2_chunk(
             let local = Vec3::new(lx as f32 + 0.5 - half, 0.0, lz as f32 + 0.5 - half);
             let world = center + rotation * local;
             let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
-            let (lat, lon) = tgen.planet().lat_lon(wpos);
-            surface_cache[lz][lx] = tgen.sample_surface_radius(lat, lon);
+            let (lat, lon) = tgen.planet_config().lat_lon(wpos);
+            surface_cache[lz][lx] = tgen.sample_surface_radius_at(lat, lon);
         }
     }
 
@@ -65,7 +65,7 @@ pub fn generate_v2_chunk(
             max_surface = max_surface.max(sr);
         }
     }
-    let sea = tgen.planet().sea_level_radius;
+    let sea = tgen.planet_config().sea_level_radius;
 
     let mut voxels = vec![Voxel::default(); CHUNK_VOLUME];
 
@@ -120,9 +120,10 @@ pub fn generate_v2_chunk(
 mod tests {
     use super::*;
     use crate::world::planet::PlanetConfig;
+    use crate::world::terrain::SphericalTerrainGenerator;
     use crate::world::v2::cubed_sphere::CubeFace;
 
-    fn small_planet_gen() -> (SphericalTerrainGenerator, PlanetConfig) {
+    fn small_planet_gen() -> (UnifiedTerrainGenerator, PlanetConfig) {
         let cfg = PlanetConfig {
             mean_radius: 200.0,
             sea_level_radius: 190.0,
@@ -131,7 +132,9 @@ mod tests {
             cave_threshold: -999.0,
             ..Default::default()
         };
-        let tgen = SphericalTerrainGenerator::new(cfg.clone());
+        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
+            cfg.clone(),
+        )));
         (tgen, cfg)
     }
 

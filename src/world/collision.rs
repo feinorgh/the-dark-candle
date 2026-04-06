@@ -28,11 +28,11 @@ pub fn terrain_spawn_height(
 /// `ground_height_radial` — it works without loaded chunks.
 pub fn ground_height_from_terrain_gen(
     world_pos: Vec3,
-    terrain_gen: &super::terrain::SphericalTerrainGenerator,
+    terrain_gen: &super::terrain::UnifiedTerrainGenerator,
 ) -> f32 {
     let pos = DVec3::new(world_pos.x as f64, world_pos.y as f64, world_pos.z as f64);
-    let (lat, lon) = terrain_gen.planet().lat_lon(pos);
-    let surface_r = terrain_gen.sample_surface_radius(lat, lon);
+    let (lat, lon) = terrain_gen.planet_config().lat_lon(pos);
+    let surface_r = terrain_gen.sample_surface_radius_at(lat, lon);
     surface_r as f32 + 1.0 // +1 to stand on top of the voxel
 }
 
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn ground_height_from_terrain_gen_near_surface() {
         use super::super::planet::PlanetConfig;
-        use super::super::terrain::SphericalTerrainGenerator;
+        use super::super::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
 
         let planet = PlanetConfig {
             mean_radius: 32000.0,
@@ -75,7 +75,8 @@ mod tests {
             ..Default::default()
         };
 
-        let tgen = SphericalTerrainGenerator::new(planet);
+        let tgen =
+            UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
         // Position on +X axis at the surface
         let pos = Vec3::new(32000.0, 0.0, 0.0);
         let h = ground_height_from_terrain_gen(pos, &tgen);
@@ -86,13 +87,14 @@ mod tests {
     #[test]
     fn ground_height_from_terrain_gen_is_deterministic() {
         use super::super::planet::PlanetConfig;
-        use super::super::terrain::SphericalTerrainGenerator;
+        use super::super::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
 
         let planet = PlanetConfig {
             mean_radius: 32000.0,
             ..Default::default()
         };
-        let tgen = SphericalTerrainGenerator::new(planet);
+        let tgen =
+            UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
 
         let pos = Vec3::new(20000.0, 15000.0, 10000.0);
         let h1 = ground_height_from_terrain_gen(pos, &tgen);
