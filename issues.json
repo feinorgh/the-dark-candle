@@ -489,5 +489,49 @@
     "related_commits": [],
     "resolution": "Fixed melting_point: None \u2192 melting_point: Some(1473.0) in lava.material.ron. Lava now solidifies to stone at 1473K.",
     "notes": "frozen_into: Some(\"Stone\") was already correctly set; only melting_point was missing."
+  },
+  {
+    "id": "TERRAIN-006",
+    "title": "Spherical planet terrain appears flat at ground level due to wrong noise frequency units",
+    "category": "terrain",
+    "severity": "high",
+    "status": "open",
+    "affected_files": [
+      "src/world/noise.rs",
+      "src/world/scene_presets.rs",
+      "assets/data/planet_config.ron"
+    ],
+    "description": "In spherical terrain mode, noise is sampled as perlin.get([lon * freq, lat * freq]) where lon/lat are in radians. The SphericalPlanet preset and NoiseConfig defaults use frequencies tuned for flat terrain (world-meters), not radians. With mean_radius=32000m, 1 radian = 32km at the surface. fbm_base_freq=0.005 produces features at 1/0.005 * 32km = 6400km wavelength, while the entire planet circumference is only ~201km. From ground level (visibility ~500m), the terrain is completely flat because all noise features are thousands of km wide. micro_freq=0.15 gives 213km features with only 3m amplitude -- undetectable at ground level. The frequencies need to be scaled by mean_radius (roughly 2000x) to produce ground-level terrain variation.",
+    "suspected_cause": "Flat-terrain NoiseConfig defaults (fbm_base_freq=0.005, ridged_base_freq=0.008, micro_freq=0.15) are reused unchanged for spherical terrain, but spherical terrain samples noise in radians while flat terrain samples in meters. Correct frequencies for a 32km planet: fbm_base_freq ~2.0-5.0, ridged_base_freq ~3.0-6.0, micro_freq ~100-200 (for ~200m ground-level features), warp_strength ~0.1-0.3 radians.",
+    "resolution": null
+  },
+  {
+    "id": "SKY-002",
+    "title": "Bevy Atmosphere shader incompatible with spherical-world coordinates -- sky appears black in planet mode",
+    "category": "rendering",
+    "severity": "high",
+    "status": "open",
+    "affected_files": [
+      "src/camera/mod.rs"
+    ],
+    "description": "Bevy's built-in Atmosphere component (bevy::pbr::Atmosphere) is designed for flat/local worlds where camera.Y = altitude above planet surface. Its get_view_position() shader function computes: world_pos = camera_world_position + vec3(0, bottom_radius, 0). In flat mode this correctly gives r = bottom_radius + altitude. But in spherical planet mode the camera is at 3D position e.g. (22628, 22628, 0) (radius 32001.7m from origin). After the Y offset: world_pos = (22628, 54628, 0), r = 59100m, simulated altitude = 27100m. At 27km simulated altitude the Rayleigh optical depth is ~0.002 (near-vacuum), so the sky is essentially black with only the sun disc visible. The Bevy shader source even contains: // NOTE: this means that if your world is actually spherical, this will be wrong. Bevy's built-in Atmosphere cannot be used for spherical-planet worlds without a custom sky rendering solution.",
+    "suspected_cause": "Bevy Atmosphere shader adds (0, bottom_radius, 0) to camera world position, assuming flat-world convention (Y = altitude). For spherical planets where |camera_pos| = bottom_radius + altitude, this offset displaces the camera to an incorrect position in atmosphere space (altitude ~27km instead of ~2m), making the atmosphere appear as near-vacuum. Fix requires either a custom sky render pass that uses correct spherical geometry, or transforming the camera position into atmosphere-local coordinates before it reaches the shader.",
+    "resolution": null
+  },
+  {
+    "id": "TERRAIN-007",
+    "title": "V2TerrainGen not updated when PlanetaryData changes",
+    "status": "open",
+    "category": "terrain",
+    "severity": "medium",
+    "description": "rebuild_terrain_gen_if_planetary() updates SharedTerrainGen and TerrainGeneratorRes but does not update V2TerrainGen (SphericalTerrainGenerator in V2WorldPlugin). Planet config changes applied at runtime or via apply_planet_config_from_asset do not propagate to the V2 rendering path. This means --planet mode always uses default noise parameters regardless of PlanetaryData.",
+    "suspected_cause": "SphericalTerrainGenerator lacks a new_planetary() constructor. V2WorldPlugin initialises its own generator independently. Introduced during V1 pipeline removal.",
+    "affected_files": [
+      "src/world/mod.rs",
+      "src/world/v2/chunk_manager.rs"
+    ],
+    "related_issues": [
+      "TERRAIN-006"
+    ]
   }
 ]

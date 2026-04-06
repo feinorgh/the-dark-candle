@@ -8,11 +8,8 @@ use crate::biology::health::Health;
 use crate::game_state::GameState;
 use crate::hud::{FallTracker, Player};
 use crate::physics::constants;
-use crate::world::chunk::Chunk;
-use crate::world::chunk_manager::{ChunkMap, TerrainGeneratorRes};
-use crate::world::collision::{
-    ground_height_at, ground_height_from_terrain_gen, ground_height_radial,
-};
+use crate::world::chunk_manager::TerrainGeneratorRes;
+use crate::world::collision::ground_height_from_terrain_gen;
 use crate::world::planet::PlanetConfig;
 use crate::world::v2::chunk_manager::V2TerrainGen;
 
@@ -478,15 +475,10 @@ fn camera_move(
 
 /// Apply gravity and ground collision to the camera.
 ///
-/// Flat mode:  gravity is -Y, ground check scans vertical voxel columns.
-/// Spherical mode: gravity is radial (toward planet center), ground check
-///   uses `ground_height_radial` which scans along the radial direction.
-///   In V2 pipeline mode, falls back to terrain-gen sampling when V1 chunks
-///   are unavailable.
+/// Gravity is radial (toward planet center). Ground check uses the V2 terrain
+/// generator to sample the surface radius without requiring loaded chunks.
 fn camera_gravity(
     time: Res<Time>,
-    chunk_map: Option<Res<ChunkMap>>,
-    chunks: Query<&Chunk>,
     planet: Res<PlanetConfig>,
     v2_gen: Option<Res<V2TerrainGen>>,
     mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
@@ -506,26 +498,17 @@ fn camera_gravity(
         // Radial gravity: pull toward planet center.
         let local_up = local_up_from_position(pos);
 
-        // Apply gravity along the radial direction.
         cam.vertical_velocity -= constants::GRAVITY * dt;
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
-        // Move along the radial direction (positive = outward = up).
         transform.translation += local_up * cam.vertical_velocity * dt;
 
-        // Radial ground collision — try V1 chunks first, fall back to terrain gen.
-        let ground_r = chunk_map
+        let ground_r = v2_gen
             .as_ref()
-            .and_then(|cm| ground_height_radial(pos, cm, &chunks))
-            .or_else(|| {
-                v2_gen
-                    .as_ref()
-                    .map(|tg| ground_height_from_terrain_gen(pos, &tg.0))
-            });
+            .map(|tg| ground_height_from_terrain_gen(pos, &tg.0));
 
         if let Some(ground_r) = ground_r {
             let feet_r = transform.translation.length() - EYE_HEIGHT;
             if feet_r <= ground_r {
-                // Place player on the surface at the correct radial distance.
                 let up = transform.translation.normalize_or(Vec3::Y);
                 transform.translation = up * (ground_r + EYE_HEIGHT);
                 cam.vertical_velocity = 0.0;
@@ -537,27 +520,12 @@ fn camera_gravity(
             cam.grounded = false;
         }
     } else {
-        // Flat mode: Y-axis gravity.
+        // Flat mode: Y-axis gravity with no terrain collision (flat mode is
+        // no longer supported in V2; player floats until spherical mode is used).
         cam.vertical_velocity -= constants::GRAVITY * dt;
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
         transform.translation.y += cam.vertical_velocity * dt;
-
-        // Flat ground collision (V1 chunks only — V2 is always spherical).
-        let ground_y = chunk_map
-            .as_ref()
-            .and_then(|cm| ground_height_at(pos.x, pos.z, cm, &chunks));
-        if let Some(ground_y) = ground_y {
-            let feet_y = transform.translation.y - EYE_HEIGHT;
-            if feet_y <= ground_y {
-                transform.translation.y = ground_y + EYE_HEIGHT;
-                cam.vertical_velocity = 0.0;
-                cam.grounded = true;
-            } else {
-                cam.grounded = false;
-            }
-        } else {
-            cam.grounded = false;
-        }
+        cam.grounded = false;
     }
 }
 

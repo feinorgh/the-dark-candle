@@ -6,7 +6,7 @@
 // detail where it matters, compact storage elsewhere.
 
 use bevy::prelude::*;
-use bevy_common_assets::ron::RonAssetPlugin;
+use bevy::reflect::TypePath;
 use serde::Deserialize;
 
 use super::chunk::{CHUNK_SIZE, Chunk};
@@ -53,17 +53,6 @@ impl Default for SubdivisionConfig {
             refine_damage_gradients: false,
             damage_gradient_threshold: 0.2,
         }
-    }
-}
-
-pub struct RefinementPlugin;
-
-impl Plugin for RefinementPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(RonAssetPlugin::<SubdivisionConfig>::new(&[
-            "subdivision_config.ron",
-        ]))
-        .insert_resource(SubdivisionConfig::default());
     }
 }
 

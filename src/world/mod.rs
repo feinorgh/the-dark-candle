@@ -22,11 +22,8 @@ use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use std::sync::Arc;
 
-use chunk_manager::ChunkManagerPlugin;
-use meshing::MeshingPlugin;
 use planet::PlanetConfig;
 use planetary_sampler::PlanetaryTerrainSampler;
-use refinement::RefinementPlugin;
 
 /// Handle to the `planet_config.ron` asset so we can poll for load completion.
 #[derive(Resource)]
@@ -64,13 +61,6 @@ pub enum WorldSet {
 #[derive(Resource, Clone)]
 pub struct PlanetaryData(pub Arc<crate::planet::PlanetData>);
 
-/// Selects which rendering pipeline the world module uses.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PipelineVersion {
-    V1,
-    V2,
-}
-
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -92,37 +82,19 @@ impl Plugin for WorldPlugin {
             .load::<PlanetConfig>("data/planet_config.ron");
         app.insert_resource(PlanetConfigHandle(handle));
 
-        let pipeline = app
-            .world()
-            .get_resource::<PipelineVersion>()
-            .copied()
-            .unwrap_or(PipelineVersion::V2);
-
         app.insert_resource(lod::LodConfig::default())
             .insert_resource(lod::MaterialColorMap::from_defaults());
 
-        match pipeline {
-            PipelineVersion::V1 => {
-                app.add_plugins(ChunkManagerPlugin)
-                    .add_plugins(MeshingPlugin)
-                    .add_plugins(RefinementPlugin);
-            }
-            PipelineVersion::V2 => {
-                // Initialize shared resources that apply_planet_config_from_asset needs,
-                // but skip the V1 chunk management and meshing systems.
-                let planet = app
-                    .world()
-                    .get_resource::<PlanetConfig>()
-                    .cloned()
-                    .unwrap_or_default();
-                let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
-                let shared_generator =
-                    terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
-                app.insert_resource(chunk_manager::TerrainGeneratorRes(generator))
-                    .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(shared_generator)))
-                    .add_plugins(v2::chunk_manager::V2WorldPlugin);
-            }
-        }
+        let planet = app
+            .world()
+            .get_resource::<PlanetConfig>()
+            .cloned()
+            .unwrap_or_default();
+        let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+        let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+        app.insert_resource(chunk_manager::TerrainGeneratorRes(generator))
+            .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(shared_generator)))
+            .add_plugins(v2::chunk_manager::V2WorldPlugin);
 
         app.add_systems(Update, sync_color_map_from_registry)
             .add_systems(Update, apply_planet_config_from_asset)
@@ -235,6 +207,7 @@ fn rebuild_terrain_gen_if_planetary(
     planetary: Option<Res<PlanetaryData>>,
     planet_config: Res<PlanetConfig>,
     mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
+    mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
 ) {
     let Some(planetary) = planetary else {
         return;
@@ -248,9 +221,15 @@ fn rebuild_terrain_gen_if_planetary(
     );
 
     let sampler = PlanetaryTerrainSampler::new(planetary.0.clone(), planet_config.clone());
-    *shared_gen = chunk_manager::SharedTerrainGen(Arc::new(
-        terrain::UnifiedTerrainGenerator::Planetary(Box::new(sampler)),
-    ));
+    let unified = Arc::new(terrain::UnifiedTerrainGenerator::Planetary(Box::new(
+        sampler,
+    )));
+    terrain_res.0 = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    *shared_gen = chunk_manager::SharedTerrainGen(unified);
+    // NOTE: V2TerrainGen (SphericalTerrainGenerator) does not yet have a
+    // PlanetaryData-aware constructor. V2 chunk generation will use PlanetConfig
+    // noise only until SphericalTerrainGenerator gains planetary biome support.
+    // See TERRAIN-006 in issues.json.
 }
 
 /// Populates `MaterialColorMap` from `MaterialRegistry` once after startup.

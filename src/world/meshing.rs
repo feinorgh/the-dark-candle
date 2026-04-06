@@ -11,17 +11,14 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{AsyncComputeTaskPool, Task};
+use bevy::tasks::Task;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::chunk::{CHUNK_SIZE, Chunk, ChunkOctree};
-use super::chunk_manager::ChunkMap;
-use super::lod::{LodConfig, LodLevel, MaterialColorMap, chunk_lod_level_with_hysteresis};
+use super::lod::{LodLevel, MaterialColorMap};
 use super::octree::OctreeNode;
 use super::voxel::{MaterialId, Voxel};
-use crate::chemistry::runtime::ChunkActivity;
 use crate::lighting::light_map::{ChunkLightMap, apply_light_map};
 
 /// Output of the meshing pass for a single chunk.
@@ -755,14 +752,8 @@ pub struct LodTransition {
     pub factor: f32,
 }
 
-/// Duration of an LOD transition in seconds.
-const LOD_TRANSITION_DURATION: f32 = 0.4;
-
-/// Maximum number of mesh tasks dispatched in a single frame to limit
-/// the cost of snapshotting voxel data on the main thread.
-const MAX_MESH_DISPATCHES_PER_FRAME: usize = 32;
-
 /// Result from an async mesh computation.
+#[allow(dead_code)]
 struct ChunkMeshResult {
     mesh: ChunkMesh,
     lod_level: u8,
@@ -771,6 +762,7 @@ struct ChunkMeshResult {
 /// Component holding a pending async mesh task along with dispatch-time
 /// metadata needed when the result is applied.
 #[derive(Component)]
+#[allow(dead_code)]
 pub struct MeshTask {
     task: Task<ChunkMeshResult>,
     previous_level: LodLevel,
@@ -780,6 +772,7 @@ pub struct MeshTask {
 
 /// Compute the mesh stride for a given LOD level.
 /// L0 = 1 (full 32³), L1 = 2 (16³), L2 = 4 (8³), etc.
+#[allow(dead_code)]
 fn lod_step(level: LodLevel) -> usize {
     let step = 1usize << level.0;
     step.min(CHUNK_SIZE / 2) // Don't go below 2³
@@ -793,6 +786,7 @@ fn lod_step(level: LodLevel) -> usize {
 ///
 /// `neighbors` carries the 6 face-adjacent chunk snapshots needed to eliminate
 /// seam gaps at chunk boundaries.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn generate_chunk_mesh(
     chunk: &Chunk,
@@ -840,342 +834,6 @@ fn generate_chunk_mesh(
     mesh
 }
 
-/// System: dispatches async mesh generation tasks for dirty or LOD-changed chunks.
-///
-/// Computes per-chunk LOD from camera distance (fast, stays on main thread),
-/// snapshots voxel data and the 6 face-adjacent neighbor chunks (to eliminate
-/// boundary seams), and spawns `AsyncComputeTaskPool` tasks. At most
-/// `MAX_MESH_DISPATCHES_PER_FRAME` tasks are dispatched per frame to limit the
-/// cost of snapshotting voxel data.
-///
-/// A `ParamSet` is used because both the mutable chunk query and the read-only
-/// neighbor query access the `Chunk` component — Bevy requires them to be
-/// disjoint in the type system, and `ParamSet` enforces that only one is
-/// accessed at a time.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn dispatch_mesh_tasks(
-    mut commands: Commands,
-    lod_config: Option<Res<LodConfig>>,
-    color_map: Option<Res<MaterialColorMap>>,
-    thermal_mode: Option<Res<ThermalVisionMode>>,
-    chunk_map: Res<ChunkMap>,
-    planet: Res<super::planet::PlanetConfig>,
-    camera_q: Query<&Transform, With<Camera3d>>,
-    mut chunk_queries: ParamSet<(
-        // p0: mutable query for the chunks we are dispatching mesh tasks for.
-        Query<
-            (
-                Entity,
-                &mut Chunk,
-                &super::chunk::ChunkCoord,
-                Option<&ChunkOctree>,
-                Option<&ChunkLod>,
-                Option<&ChunkLightMap>,
-                Has<ChunkMeshMarker>,
-            ),
-            Without<MeshTask>,
-        >,
-        // p1: read-only query to snapshot neighbor voxel data.
-        Query<(&super::chunk::ChunkCoord, &Chunk)>,
-    )>,
-) {
-    let default_config = LodConfig::default();
-    let config = lod_config.as_deref().unwrap_or(&default_config);
-    let thermal_vision = thermal_mode.as_ref().is_some_and(|m| m.0);
-    let spherical = planet.is_spherical();
-    let (camera_pos, camera_forward) = camera_q
-        .iter()
-        .next()
-        .map(|t| (t.translation, t.forward().as_vec3()))
-        .unwrap_or((Vec3::ZERO, Vec3::NEG_Z));
-
-    // Phase 1: Arc-snapshot all loaded chunk voxels for neighbor lookups.
-    // With Arc<Vec<Voxel>>, this is O(1) per chunk (ref-count bump, no memcpy).
-    let neighbor_snapshots: HashMap<super::chunk::ChunkCoord, Arc<Vec<Voxel>>> = chunk_queries
-        .p1()
-        .iter()
-        .map(|(coord, chunk)| (*coord, chunk.flat_snapshot()))
-        .collect();
-
-    let pool = AsyncComputeTaskPool::get();
-
-    // Phase 2a: collect dirty/LOD-changed chunks and sort by distance to camera
-    // so the closest chunks get meshed first (faster visible terrain).
-    struct MeshCandidate {
-        entity: Entity,
-        dist_sq: f32,
-        in_frustum: bool,
-        new_level: LodLevel,
-        lod_changed: bool,
-        had_mesh: bool,
-    }
-    let mut candidates: Vec<MeshCandidate> = Vec::new();
-    for (entity, chunk, coord, _octree, current_lod, _light_map, had_mesh) in
-        chunk_queries.p0().iter()
-    {
-        let current_level = current_lod.map(|l| l.0).unwrap_or(LodLevel(0));
-        let new_level = chunk_lod_level_with_hysteresis(coord, camera_pos, current_level, config);
-        let lod_changed = if had_mesh {
-            new_level != current_level
-        } else {
-            current_lod.is_some() && new_level != current_level
-        };
-
-        if !chunk.is_dirty() && !lod_changed {
-            continue;
-        }
-
-        let center = coord.world_center();
-        let dist_sq = (center - camera_pos).length_squared();
-        let dot = (center - camera_pos)
-            .normalize_or_zero()
-            .dot(camera_forward);
-        candidates.push(MeshCandidate {
-            entity,
-            dist_sq,
-            in_frustum: dot > 0.0,
-            new_level,
-            lod_changed,
-            had_mesh,
-        });
-    }
-    // Sort: visible chunks first, then by distance.
-    candidates.sort_unstable_by(|a, b| {
-        b.in_frustum.cmp(&a.in_frustum).then_with(|| {
-            a.dist_sq
-                .partial_cmp(&b.dist_sq)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-    });
-
-    // Phase 2b: dispatch closest N chunks for meshing.
-    let mut p0 = chunk_queries.p0();
-    for c in candidates.into_iter().take(MAX_MESH_DISPATCHES_PER_FRAME) {
-        let Ok((_, mut chunk, coord, octree, _current_lod, light_map, _had_mesh)) =
-            p0.get_mut(c.entity)
-        else {
-            continue;
-        };
-
-        let step = lod_step(c.new_level);
-
-        // Arc-clone: O(1), shares backing allocation with the world chunk.
-        let voxel_snapshot = chunk.flat_snapshot();
-        let chunk_coord = chunk.coord;
-        let octree_snapshot = octree.map(|o| ChunkOctree(o.0.clone()));
-        let color_map_clone = color_map.as_deref().cloned();
-        let light_map_clone = light_map.cloned();
-        let lod_level = c.new_level.0;
-
-        // Collect the 6 face-neighbor snapshots to eliminate boundary seams.
-        // If a neighbor is registered in ChunkMap but has no snapshot (still
-        // generating), defer this chunk — it will be re-dirtied when the
-        // neighbor arrives via collect_terrain_results().
-        let mut has_incomplete_neighbor = false;
-        let neighbors = {
-            let snap =
-                |dx: i32, dy: i32, dz: i32, incomplete: &mut bool| -> Option<Arc<Vec<Voxel>>> {
-                    let nc =
-                        super::chunk::ChunkCoord::new(coord.x + dx, coord.y + dy, coord.z + dz);
-                    if let Some(data) = neighbor_snapshots.get(&nc) {
-                        return Some(Arc::clone(data));
-                    }
-                    // Neighbor in ChunkMap but no snapshot yet → still generating.
-                    if chunk_map.contains(&nc) {
-                        *incomplete = true;
-                    }
-                    // Not in ChunkMap at all → world edge, AIR is correct.
-                    None
-                };
-            NeighborVoxels {
-                px: snap(1, 0, 0, &mut has_incomplete_neighbor),
-                nx: snap(-1, 0, 0, &mut has_incomplete_neighbor),
-                py: snap(0, 1, 0, &mut has_incomplete_neighbor),
-                ny: snap(0, -1, 0, &mut has_incomplete_neighbor),
-                pz: snap(0, 0, 1, &mut has_incomplete_neighbor),
-                nz: snap(0, 0, -1, &mut has_incomplete_neighbor),
-            }
-        };
-
-        // Defer meshing if any loaded neighbor lacks voxel data — we'd produce
-        // seams that need immediate re-meshing anyway. The chunk stays dirty so
-        // it will be picked up next frame.
-        if has_incomplete_neighbor {
-            continue;
-        }
-
-        chunk.clear_dirty();
-
-        let task = pool.spawn(async move {
-            let snap_chunk = Chunk::from_snapshot(chunk_coord, voxel_snapshot);
-            let mesh = generate_chunk_mesh(
-                &snap_chunk,
-                octree_snapshot.as_ref(),
-                step,
-                &neighbors,
-                color_map_clone.as_ref(),
-                thermal_vision,
-                light_map_clone.as_ref(),
-                spherical,
-            );
-            ChunkMeshResult { mesh, lod_level }
-        });
-
-        commands.entity(c.entity).insert(MeshTask {
-            task,
-            previous_level: c.new_level,
-            lod_changed: c.lod_changed,
-            had_mesh: c.had_mesh,
-        });
-    }
-}
-
-/// System: collects completed async mesh tasks and applies the results.
-///
-/// Polls each pending `MeshTask`. On completion, converts the `ChunkMesh` into
-/// a Bevy `Mesh` asset, inserts rendering components, and removes the task.
-#[allow(clippy::type_complexity)]
-pub(super) fn collect_mesh_results(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut task_q: Query<(Entity, &mut MeshTask, Option<&ChunkActivity>)>,
-) {
-    // Default material for chunk meshes (vertex colored, no emissive).
-    let chunk_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        ..default()
-    });
-
-    let mut collected = 0usize;
-    for (entity, mut mesh_task, activity) in task_q.iter_mut() {
-        if collected >= super::chunk_manager::MAX_MESH_COLLECTS_PER_FRAME {
-            break;
-        }
-        let Some(result) = future::block_on(future::poll_once(&mut mesh_task.task)) else {
-            continue;
-        };
-        collected += 1;
-
-        let new_level = LodLevel(result.lod_level);
-        let lod_changed = mesh_task.lod_changed;
-        let had_mesh = mesh_task.had_mesh;
-        let previous_level = mesh_task.previous_level;
-
-        if result.mesh.is_empty() {
-            if had_mesh {
-                commands
-                    .entity(entity)
-                    .remove::<Mesh3d>()
-                    .remove::<MeshMaterial3d<StandardMaterial>>()
-                    .remove::<ChunkMeshMarker>()
-                    .insert(ChunkLod(new_level));
-            } else {
-                commands.entity(entity).insert(ChunkLod(new_level));
-            }
-        } else {
-            let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
-            let mesh_handle = meshes.add(bevy_mesh);
-            let mat = chunk_emissive_material(activity, &mut materials, &chunk_material);
-            let mut cmds = commands.entity(entity);
-            cmds.insert(Mesh3d(mesh_handle))
-                .insert(ChunkLod(new_level))
-                .insert(MeshMaterial3d(mat));
-
-            if !had_mesh {
-                cmds.insert(ChunkMeshMarker);
-            }
-
-            if lod_changed {
-                cmds.insert(LodTransition {
-                    previous_level,
-                    factor: 0.0,
-                });
-            }
-        }
-
-        // Remove the task component so the entity can be re-dispatched later.
-        commands.entity(entity).remove::<MeshTask>();
-    }
-}
-
-/// System: advances LOD transitions and applies opacity fade.
-///
-/// Each frame, `factor` is advanced toward 1.0. During the transition,
-/// the chunk's `StandardMaterial` alpha is scaled by the blend factor
-/// using a Hermite smoothstep for visual smoothness. When the transition
-/// completes, full opacity is restored and the component is removed.
-pub fn tick_lod_transitions(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut query: Query<(
-        Entity,
-        &mut LodTransition,
-        Option<&MeshMaterial3d<StandardMaterial>>,
-    )>,
-) {
-    let dt = time.delta_secs();
-
-    for (entity, mut transition, mat_handle) in query.iter_mut() {
-        transition.factor += dt / LOD_TRANSITION_DURATION;
-
-        if transition.factor >= 1.0 {
-            // Transition complete — restore full opacity and clean up.
-            if let Some(mat_h) = mat_handle
-                && let Some(mat) = materials.get_mut(&mat_h.0)
-            {
-                mat.base_color = Color::WHITE;
-                mat.alpha_mode = AlphaMode::Opaque;
-            }
-            commands.entity(entity).remove::<LodTransition>();
-        } else {
-            // Hermite smoothstep for perceptually smooth fade.
-            let t = transition.factor;
-            let alpha = t * t * (3.0 - 2.0 * t);
-            if let Some(mat_h) = mat_handle
-                && let Some(mat) = materials.get_mut(&mat_h.0)
-            {
-                mat.base_color = Color::srgba(1.0, 1.0, 1.0, alpha);
-                mat.alpha_mode = AlphaMode::Blend;
-            }
-        }
-    }
-}
-
-/// Select an emissive or default material based on chunk thermal activity.
-/// Hot chunks (max temp > 800 K) get a self-illuminating material for bloom.
-fn chunk_emissive_material(
-    activity: Option<&ChunkActivity>,
-    materials: &mut Assets<StandardMaterial>,
-    default_material: &Handle<StandardMaterial>,
-) -> Handle<StandardMaterial> {
-    let max_temp = activity.map(|a| a.last_max_temp).unwrap_or(0.0);
-    if max_temp < GLOW_THRESHOLD {
-        return default_material.clone();
-    }
-
-    // Emissive intensity scales with T⁴ (Stefan-Boltzmann), normalized to
-    // a visually comfortable range.
-    let t_norm = max_temp / 1000.0;
-    let intensity = (t_norm * t_norm * t_norm * t_norm * 0.05).min(50.0);
-
-    // Incandescent color for the emissive channel
-    let (r, g, b) = if max_temp < 1200.0 {
-        (0.7 * intensity, 0.05 * intensity, 0.0)
-    } else if max_temp < 1500.0 {
-        (1.0 * intensity, 0.3 * intensity, 0.02 * intensity)
-    } else {
-        (1.0 * intensity, 0.7 * intensity, 0.3 * intensity)
-    };
-
-    materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: LinearRgba::rgb(r, g, b),
-        ..default()
-    })
-}
-
 /// System: toggle thermal vision mode with the T key. Marks all chunks dirty
 /// so they remesh with the new color mode.
 pub fn toggle_thermal_vision(
@@ -1194,27 +852,9 @@ pub fn toggle_thermal_vision(
     }
 }
 
-/// Plugin that registers the chunk meshing system.
-pub struct MeshingPlugin;
-
-impl Plugin for MeshingPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<ThermalVisionMode>().add_systems(
-            Update,
-            (
-                (dispatch_mesh_tasks, collect_mesh_results).chain(),
-                tick_lod_transitions,
-                toggle_thermal_vision,
-            )
-                .in_set(super::WorldSet::Meshing),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::chunk::ChunkCoord;
-    use super::super::planet::PlanetConfig;
     use super::*;
 
     #[test]
@@ -1606,68 +1246,6 @@ mod tests {
                 "Heatmap alpha should always be 1.0"
             );
         }
-    }
-
-    // --- Async meshing dispatch/collect tests ---
-
-    #[test]
-    fn dispatch_respects_budget() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.init_resource::<ThermalVisionMode>();
-        app.init_resource::<ChunkMap>();
-        app.insert_resource(LodConfig::default());
-        app.insert_resource(MaterialColorMap::from_defaults());
-        app.insert_resource(PlanetConfig::default());
-        app.add_systems(Update, dispatch_mesh_tasks);
-
-        // Spawn more dirty chunks than the per-frame budget.
-        let count = MAX_MESH_DISPATCHES_PER_FRAME + 4;
-        for i in 0..count as i32 {
-            let chunk = Chunk::new_filled(ChunkCoord::new(i, 0, 0), MaterialId::STONE);
-            app.world_mut().spawn((chunk, ChunkCoord::new(i, 0, 0)));
-        }
-
-        app.update();
-
-        let task_count = app
-            .world_mut()
-            .query::<&MeshTask>()
-            .iter(app.world())
-            .count();
-        assert_eq!(
-            task_count, MAX_MESH_DISPATCHES_PER_FRAME,
-            "Should dispatch exactly {} tasks, got {}",
-            MAX_MESH_DISPATCHES_PER_FRAME, task_count,
-        );
-    }
-
-    #[test]
-    fn clean_chunks_not_dispatched() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.init_resource::<ThermalVisionMode>();
-        app.init_resource::<ChunkMap>();
-        app.insert_resource(LodConfig::default());
-        app.insert_resource(MaterialColorMap::from_defaults());
-        app.insert_resource(PlanetConfig::default());
-        app.add_systems(Update, dispatch_mesh_tasks);
-
-        // Spawn clean (non-dirty) chunks.
-        for i in 0..4i32 {
-            let mut chunk = Chunk::new_filled(ChunkCoord::new(i, 0, 0), MaterialId::STONE);
-            chunk.clear_dirty();
-            app.world_mut().spawn((chunk, ChunkCoord::new(i, 0, 0)));
-        }
-
-        app.update();
-
-        let task_count = app
-            .world_mut()
-            .query::<&MeshTask>()
-            .iter(app.world())
-            .count();
-        assert_eq!(task_count, 0, "Clean chunks should not be dispatched");
     }
 
     #[test]
