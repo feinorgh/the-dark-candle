@@ -493,7 +493,14 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
             );
         }
 
-        let tick = simulate_tick_dx(&mut voxels, size, &rules, &registry, scenario.dt, scenario.voxel_scale);
+        let tick = simulate_tick_dx(
+            &mut voxels,
+            size,
+            &rules,
+            &registry,
+            scenario.dt,
+            scenario.voxel_scale,
+        );
         stats.accumulate(&tick);
 
         // Capture video frame(s) for this tick.

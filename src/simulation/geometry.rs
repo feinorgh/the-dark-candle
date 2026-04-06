@@ -337,10 +337,8 @@ fn apply_one(
                 for z in oz..ez {
                     for x in ox..ex {
                         // Leave the light opening as air
-                        let in_light = x >= light_x0
-                            && x < light_x1
-                            && z >= light_z0
-                            && z < light_z1;
+                        let in_light =
+                            x >= light_x0 && x < light_x1 && z >= light_z0 && z < light_z1;
                         if !in_light {
                             set(x, y, z, white);
                         }

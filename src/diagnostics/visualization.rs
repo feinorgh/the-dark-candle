@@ -393,11 +393,35 @@ fn render_perspective(
                 let n_dot_l = blended.dot(light_dir.scale(-1.0)).max(0.0);
 
                 // Beer-Lambert shadow: per-channel transmittance to light.
-                let hit_pos = [hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5];
+                // Start the shadow ray from the entry face of the hit voxel
+                // (not the voxel center) to avoid self-shadowing thick walls.
+                let face_offset = [
+                    if face_n[0] > 0.5 {
+                        1.0
+                    } else if face_n[0] < -0.5 {
+                        0.0
+                    } else {
+                        0.5
+                    },
+                    if face_n[1] > 0.5 {
+                        1.0
+                    } else if face_n[1] < -0.5 {
+                        0.0
+                    } else {
+                        0.5
+                    },
+                    if face_n[2] > 0.5 {
+                        1.0
+                    } else if face_n[2] < -0.5 {
+                        0.0
+                    } else {
+                        0.5
+                    },
+                ];
                 let shadow_origin = [
-                    hit_pos[0] + to_light[0] * 0.5,
-                    hit_pos[1] + to_light[1] * 0.5,
-                    hit_pos[2] + to_light[2] * 0.5,
+                    hit.x as f32 + face_offset[0] + face_n[0] * 0.01,
+                    hit.y as f32 + face_offset[1] + face_n[1] * 0.01,
+                    hit.z as f32 + face_offset[2] + face_n[2] * 0.01,
                 ];
                 let shadow_rgb = match raycast::dda_march_ray_attenuated(
                     voxels,
