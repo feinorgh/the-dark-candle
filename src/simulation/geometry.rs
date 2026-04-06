@@ -80,6 +80,28 @@ pub enum Region {
         y_max: usize,
         seed: u64,
     },
+
+    /// Standard Cornell box: 5-wall enclosure with colored plaster surfaces.
+    ///
+    /// Generates floor, ceiling, back wall (PlasterWhite), left wall
+    /// (PlasterRed), right wall (PlasterGreen). The front face (min-Z) is
+    /// left open for the camera to look through.
+    ///
+    /// A centered rectangular opening is cut into the ceiling to match the
+    /// original Cornell box light port (~23% of box width). Scenarios heat
+    /// this air gap via `HeatRegion` to create a radiating ceiling light.
+    ///
+    /// Requires "PlasterWhite", "PlasterRed", "PlasterGreen" in the material
+    /// registry (use `material_source: FromAssets`).
+    CornellBox {
+        /// Grid position of the box's minimum corner (inclusive).
+        origin: (usize, usize, usize),
+        /// Number of interior voxels per edge. The total extent along each
+        /// axis is `interior_size + 2 * wall_thickness`.
+        interior_size: usize,
+        /// Thickness of each wall in voxels.
+        wall_thickness: usize,
+    },
 }
 
 /// 3D index into a flat `size³` array.
@@ -265,6 +287,94 @@ fn apply_one(
                 }
             }
         }
+
+        Region::CornellBox {
+            origin,
+            interior_size,
+            wall_thickness,
+        } => {
+            let white = resolve("PlasterWhite", registry)?;
+            let red = resolve("PlasterRed", registry)?;
+            let green = resolve("PlasterGreen", registry)?;
+
+            let t = *wall_thickness;
+            let inner = *interior_size;
+            let (ox, oy, oz) = *origin;
+
+            // Total extent along each axis.
+            let ex = ox + inner + 2 * t; // exclusive end X
+            let ey = oy + inner + 2 * t; // exclusive end Y
+            // Z extent: wall_thickness (back) + interior + open front (no front wall)
+            let ez = oz + inner + t; // exclusive end Z (no front wall)
+
+            // Helper: set voxel if within grid bounds.
+            let mut set = |x: usize, y: usize, z: usize, mat: MaterialId| {
+                if x < size && y < size && z < size {
+                    voxels[idx(x, y, z, size)].material = mat;
+                }
+            };
+
+            // Floor (y = oy..oy+t), full XZ extent including front opening
+            for y in oy..oy + t {
+                for z in oz..ez {
+                    for x in ox..ex {
+                        set(x, y, z, white);
+                    }
+                }
+            }
+
+            // Ceiling (y = oy+t+inner..ey), full XZ extent including front opening
+            // — with a centered light opening (~23% of interior, matching the
+            // original Cornell box 130×105 mm port in a 555 mm box).
+            let light_size_x = (inner * 23 / 100).max(1);
+            let light_size_z = (inner * 19 / 100).max(1);
+            let light_x0 = ox + t + (inner - light_size_x) / 2;
+            let light_x1 = light_x0 + light_size_x;
+            let light_z0 = oz + t + (inner - light_size_z) / 2;
+            let light_z1 = light_z0 + light_size_z;
+
+            for y in (oy + t + inner)..ey {
+                for z in oz..ez {
+                    for x in ox..ex {
+                        // Leave the light opening as air
+                        let in_light = x >= light_x0
+                            && x < light_x1
+                            && z >= light_z0
+                            && z < light_z1;
+                        if !in_light {
+                            set(x, y, z, white);
+                        }
+                    }
+                }
+            }
+
+            // Back wall (z = oz..oz+t), full XY extent
+            for z in oz..oz + t {
+                for y in oy..ey {
+                    for x in ox..ex {
+                        set(x, y, z, white);
+                    }
+                }
+            }
+
+            // Left wall (x = ox..ox+t), red — extends to front opening
+            for z in oz..ez {
+                for y in oy..ey {
+                    for x in ox..ox + t {
+                        set(x, y, z, red);
+                    }
+                }
+            }
+
+            // Right wall (x = ox+t+inner..ex), green — extends to front opening
+            for z in oz..ez {
+                for y in oy..ey {
+                    for x in (ox + t + inner)..ex {
+                        set(x, y, z, green);
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -297,6 +407,30 @@ mod tests {
             name: "Water".into(),
             default_phase: Phase::Liquid,
             density: 1000.0,
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 108,
+            name: "PlasterWhite".into(),
+            default_phase: Phase::Solid,
+            density: 1700.0,
+            color: [0.95, 0.95, 0.95],
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 109,
+            name: "PlasterRed".into(),
+            default_phase: Phase::Solid,
+            density: 1700.0,
+            color: [0.65, 0.05, 0.05],
+            ..Default::default()
+        });
+        reg.insert(MaterialData {
+            id: 110,
+            name: "PlasterGreen".into(),
+            default_phase: Phase::Solid,
+            density: 1700.0,
+            color: [0.12, 0.45, 0.15],
             ..Default::default()
         });
         reg
@@ -520,5 +654,91 @@ mod tests {
             .zip(v2.iter())
             .any(|(a, b)| a.material != b.material);
         assert!(differ, "different seeds should produce different terrain");
+    }
+
+    #[test]
+    fn cornell_box_creates_five_walls() {
+        let size = 14;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        let reg = test_registry();
+
+        let regions = vec![Region::CornellBox {
+            origin: (0, 0, 0),
+            interior_size: 10,
+            wall_thickness: 1,
+        }];
+        apply_regions(&mut voxels, size, &regions, &reg).unwrap();
+
+        let white = MaterialId(108);
+        let red = MaterialId(109);
+        let green = MaterialId(110);
+
+        // Floor (y=0)
+        assert_eq!(voxels[idx(5, 0, 5, size)].material, white);
+        // Ceiling (y=11) — away from light opening
+        assert_eq!(voxels[idx(2, 11, 2, size)].material, white);
+        // Ceiling light opening is air (centered ~23%×19% of interior)
+        assert_eq!(
+            voxels[idx(5, 11, 5, size)].material,
+            MaterialId::AIR,
+            "ceiling light opening should be air"
+        );
+        // Back wall (z=0)
+        assert_eq!(voxels[idx(5, 5, 0, size)].material, white);
+        // Left wall (x=0) — red
+        assert_eq!(voxels[idx(0, 5, 5, size)].material, red);
+        // Right wall (x=11) — green
+        assert_eq!(voxels[idx(11, 5, 5, size)].material, green);
+        // Interior should be air
+        assert_eq!(voxels[idx(5, 5, 5, size)].material, MaterialId::AIR);
+    }
+
+    #[test]
+    fn cornell_box_front_is_open() {
+        let size = 14;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        let reg = test_registry();
+
+        let regions = vec![Region::CornellBox {
+            origin: (0, 0, 0),
+            interior_size: 10,
+            wall_thickness: 1,
+        }];
+        apply_regions(&mut voxels, size, &regions, &reg).unwrap();
+
+        // The front face (max-Z edge of box, z = interior_size + thickness - 1 = 10)
+        // should be air for interior Y/X positions.
+        assert_eq!(
+            voxels[idx(5, 5, 10, size)].material,
+            MaterialId::AIR,
+            "front face should be open"
+        );
+    }
+
+    #[test]
+    fn cornell_box_with_offset_origin() {
+        let size = 16;
+        let mut voxels = vec![Voxel::new(MaterialId::AIR); size * size * size];
+        let reg = test_registry();
+
+        let regions = vec![Region::CornellBox {
+            origin: (2, 2, 2),
+            interior_size: 8,
+            wall_thickness: 1,
+        }];
+        apply_regions(&mut voxels, size, &regions, &reg).unwrap();
+
+        let white = MaterialId(108);
+        let red = MaterialId(109);
+        let green = MaterialId(110);
+
+        // Floor at y=2
+        assert_eq!(voxels[idx(5, 2, 5, size)].material, white);
+        // Left wall at x=2
+        assert_eq!(voxels[idx(2, 5, 5, size)].material, red);
+        // Right wall at x=11
+        assert_eq!(voxels[idx(11, 5, 5, size)].material, green);
+        // Pre-origin should be air
+        assert_eq!(voxels[idx(1, 1, 1, size)].material, MaterialId::AIR);
     }
 }

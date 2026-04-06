@@ -57,6 +57,7 @@ A `.simulation.ron` file is a RON-serialized `SimulationScenario` struct. All fi
 | `ignition` | list | no | `[]` | Temperature perturbations applied after geometry setup |
 | `ticks` | integer | yes | — | Maximum number of simulation ticks to run |
 | `dt` | float | yes | — | Timestep per tick in seconds |
+| `voxel_scale` | float | no | `1.0` | Physical edge length of one voxel in meters. Set smaller for sub-meter grids (e.g. `0.0555` for ~55.5 mm/voxel Cornell box). Passed to physics as `dx`. |
 | `stop_condition` | enum | no | `FixedTicks` | When to stop (see below) |
 | `assertions` | list | yes | — | Checks evaluated after the simulation completes |
 
@@ -189,6 +190,12 @@ RandomHeightmap(
     seed: 42,
 )
 ```
+
+**`CornellBox`** — Standard Cornell box (555 mm interior) with five plaster walls and a centered ceiling light port (~130×105 mm, matching the original). Left wall is PlasterRed, right wall is PlasterGreen, floor/ceiling/back are PlasterWhite. The front face (min-Z) is open for the camera. Requires `material_source: FromAssets` to resolve plaster material names.
+```ron
+CornellBox(origin: (0, 0, 0), interior_size: 10, wall_thickness: 1)
+```
+Use with `voxel_scale: 0.0555` for physically accurate 55.5 mm/voxel resolution (10 voxels = 555 mm interior). Heat the ceiling light port with a `HeatRegion` targeting the air gap.
 
 ### Ignition (Initial Perturbations)
 

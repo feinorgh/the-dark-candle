@@ -22,7 +22,7 @@ use crate::diagnostics::video::{FrameEncoder, VideoConfig};
 use crate::diagnostics::visualization::{overlay_strip_height, render_frame_lit_with_overlay};
 use crate::simulation::assertions::{Assertion, evaluate};
 use crate::simulation::geometry::{Region, apply_regions};
-use crate::simulation::{SimulationStats, simulate_tick};
+use crate::simulation::{SimulationStats, simulate_tick_dx};
 use crate::world::voxel::Voxel;
 
 /// Where to load materials from.
@@ -155,6 +155,15 @@ pub struct SimulationScenario {
     /// Timestep in seconds per tick.
     pub dt: f32,
 
+    /// Physical edge length of one voxel in meters (default 1.0).
+    ///
+    /// Set to a smaller value for sub-meter resolution grids (e.g. 0.0555
+    /// for a Cornell box where each voxel ≈ 55.5 mm). This value is passed
+    /// to `simulate_tick_dx` as the `dx` parameter, scaling thermal
+    /// diffusion, radiation view factors, and pressure correctly.
+    #[serde(default = "default_voxel_scale")]
+    pub voxel_scale: f32,
+
     /// When to stop the simulation (default: FixedTicks).
     #[serde(default)]
     pub stop_condition: StopCondition,
@@ -184,6 +193,10 @@ fn default_ambient_temperature() -> f32 {
 
 fn default_ambient_pressure() -> f32 {
     101_325.0
+}
+
+fn default_voxel_scale() -> f32 {
+    1.0
 }
 
 /// 3D index into a flat `size³` array.
@@ -480,7 +493,7 @@ pub fn run_scenario(scenario: &SimulationScenario) -> Result<(), String> {
             );
         }
 
-        let tick = simulate_tick(&mut voxels, size, &rules, &registry, scenario.dt);
+        let tick = simulate_tick_dx(&mut voxels, size, &rules, &registry, scenario.dt, scenario.voxel_scale);
         stats.accumulate(&tick);
 
         // Capture video frame(s) for this tick.
@@ -697,6 +710,7 @@ mod tests {
             ignition: vec![],
             ticks: 10,
             dt: 1.0,
+            voxel_scale: 1.0,
             stop_condition: StopCondition::FixedTicks,
             assertions: vec![Assertion::NoReactions],
             emit_dump: None,
@@ -721,6 +735,7 @@ mod tests {
             ignition: vec![],
             ticks: 1,
             dt: 1.0,
+            voxel_scale: 1.0,
             stop_condition: StopCondition::FixedTicks,
             assertions: vec![Assertion::MaterialCountGt {
                 material: "Stone".into(),
@@ -761,6 +776,7 @@ mod tests {
             ignition: vec![],
             ticks: 1000,
             dt: 1.0,
+            voxel_scale: 1.0,
             stop_condition: StopCondition::UntilAllPass,
             assertions: vec![Assertion::NoReactions],
             emit_dump: None,

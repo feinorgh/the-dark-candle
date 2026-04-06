@@ -1,0 +1,63 @@
+SimulationScenario(
+    name: "Cornell box demo",
+    description: "Standard Cornell box (555 mm interior) with two classic objects — a tall stone block and a short iron block — demonstrating the reusable CornellBox geometry. The ceiling light port radiates into the scene, warming the objects via radiation across the air gap.",
+
+    grid_size: 12,
+    voxel_scale: 0.0555,
+
+    ambient_temperature: 293.15,
+    ambient_pressure: 101325.0,
+
+    material_source: FromAssets,
+    reaction_source: FromAssets,
+
+    regions: [
+        // Standard Cornell box: 10-voxel interior (555 mm), 1-voxel walls.
+        // Includes centered ceiling light opening (~130×105 mm, matching original).
+        CornellBox(origin: (0, 0, 0), interior_size: 10, wall_thickness: 1),
+
+        // Tall block (left-rear) — stone, ~3×6×3 voxels ≈ 167×333×167 mm
+        Fill(material: "Stone", min: (2, 1, 1), max: (4, 6, 3)),
+
+        // Short block (right-front) — iron, ~3×3×3 voxels ≈ 167×167×167 mm
+        Fill(material: "Iron", min: (7, 1, 5), max: (9, 3, 7)),
+    ],
+
+    ignition: [
+        // Heat the ceiling light port to 500 K (bright radiant source).
+        // The CornellBox carves a 2×1 voxel opening at y=11, x=[5,6], z=5.
+        HeatRegion(min: (5, 11, 5), max: (6, 11, 5), temperature: 500.0),
+    ],
+
+    dt: 0.5,
+    ticks: 200,
+
+    assertions: [
+        // Iron block should warm above ambient via radiation from ceiling light
+        RegionAvgTempGt(min: (7, 1, 5), max: (9, 3, 7), threshold: 293.0),
+
+        // No chemical reactions expected
+        NoReactions,
+    ],
+
+    emit_video: Some(VideoConfig(
+        path: "test_output/cornell_box_demo.mp4",
+        view: Perspective(
+            // Camera looks through the open front (high-Z side) into the box
+            eye: (6.0, 7.0, 16.0),
+            target: (6.0, 5.0, 4.0),
+            fov_degrees: 50.0,
+            width: 640,
+            height: 480,
+        ),
+        color_mode: Temperature(min_k: 288.0, max_k: 520.0),
+        fps: 30,
+        scale: 6,
+        light: Some(SceneLight(
+            direction: (-0.3, -0.9, -0.2),
+            color: (1.0, 0.98, 0.95),
+            intensity: 0.5,
+            ambient: 0.1,
+        )),
+    )),
+)
