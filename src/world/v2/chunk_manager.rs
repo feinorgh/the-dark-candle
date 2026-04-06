@@ -304,14 +304,27 @@ fn v2_diagnostics(
 
 /// Clone the unified terrain generator from SharedTerrainGen into V2TerrainGen.
 ///
-/// This ensures V2 always sees the same generator as the rest of the world
-/// pipeline, including the planetary sampler when `--planet` is active.
+/// V2 only supports spherical and planetary terrain modes.  Flat-mode
+/// generators are skipped — the resource is not inserted, which prevents
+/// `v2_update_chunks` from running (it has a `resource_exists::<V2TerrainGen>`
+/// condition).  Flat mode lost its V1 rendering pipeline; until a V2 flat
+/// mode is implemented no terrain will appear for those presets.
 fn v2_init_terrain_gen(
     mut commands: Commands,
     shared: Option<Res<SharedTerrainGen>>,
     planet: Res<PlanetConfig>,
 ) {
     if let Some(shared) = shared {
+        if matches!(
+            shared.0.as_ref(),
+            crate::world::terrain::UnifiedTerrainGenerator::Flat(_)
+        ) {
+            warn!(
+                "V2 pipeline: flat terrain mode is not supported; \
+                 V2 rendering disabled for this preset"
+            );
+            return;
+        }
         commands.insert_resource(V2TerrainGen(shared.0.clone()));
         info!("V2 pipeline: initialized terrain generator from SharedTerrainGen");
         return;

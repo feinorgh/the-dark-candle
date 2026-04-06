@@ -159,10 +159,16 @@ fn apply_planet_config_from_asset(
     let shared_arc = Arc::new(shared_generator);
     *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
-    // Rebuild the V2 terrain generator if the V2 pipeline is active.
+    // Rebuild the V2 terrain generator if the V2 pipeline is active
+    // (only spherical/planetary modes are supported by V2).
     if let Some(mut v2) = v2_gen {
-        v2.0 = shared_arc;
-        info!("V2 pipeline: rebuilt terrain generator from updated PlanetConfig");
+        if !matches!(
+            shared_arc.as_ref(),
+            terrain::UnifiedTerrainGenerator::Flat(_)
+        ) {
+            v2.0 = shared_arc;
+            info!("V2 pipeline: rebuilt terrain generator from updated PlanetConfig");
+        }
     }
 
     *done = true;
@@ -194,11 +200,14 @@ fn rebuild_terrain_on_config_change(
     *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
     if let Some(mut v2) = v2_gen {
-        v2.0 = shared_arc;
+        if !matches!(
+            shared_arc.as_ref(),
+            terrain::UnifiedTerrainGenerator::Flat(_)
+        ) {
+            v2.0 = shared_arc;
+        }
     }
 }
-
-/// If `PlanetaryData` is present at startup, rebuild `SharedTerrainGen` with a
 /// `PlanetaryTerrainSampler` that uses the real tectonic/biome data.
 ///
 /// This runs once in `PostStartup` after all plugins have been built, so that

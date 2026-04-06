@@ -12,9 +12,13 @@ See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
 ## Current State
 
 The terrain generator (`src/world/terrain.rs`) supports three modes via
-`UnifiedTerrainGenerator`: **Flat** (2D heightmap), **Spherical** (Phase 8
-radial planet), and **Planetary** (Phase 8 + geodesic `PlanetData` integration,
-activated by `--planet`). All three share the same async chunk pipeline.
+`UnifiedTerrainGenerator`: **Flat** (2D heightmap, data-only — no active
+rendering pipeline), **Spherical** (Phase 8 radial planet), and **Planetary**
+(Phase 8 + geodesic `PlanetData` integration, activated by `--planet`).
+Spherical and Planetary modes are rendered by the **V2 cubed-sphere pipeline**
+(`src/world/v2/`). Flat mode retains its data structures and terrain algorithms
+but has no active rendering pipeline — flat presets (e.g. `valley_river`) will
+not display terrain until a V2 flat mode is implemented.
 
 ### Noise pipeline (current)
 
@@ -71,10 +75,10 @@ the natural smoothing that rainfall creates over time.
 
 The following presets are available via `--scene <name>`:
 
-| Preset | Terrain type | Notes |
-|--------|-------------|-------|
-| `valley_river` | Flat | Eroded valleys with river channels and hydraulic erosion |
-| `spherical_planet` | Planetary | 32 km radius planet; aliases: `planet`, `spherical` |
+| Preset | Terrain type | Rendering | Notes |
+|--------|-------------|-----------|-------|
+| `valley_river` | Flat | ⚠️ No V2 support | Eroded valleys with river channels — data only, not rendered |
+| `spherical_planet` | Planetary | ✅ V2 cubed-sphere | 32 km radius planet; aliases: `planet`, `spherical` |
 
 The `spherical_planet` preset is also activated automatically by `--planet`.
 

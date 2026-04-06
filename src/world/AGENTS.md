@@ -1,6 +1,8 @@
 # World Module
 
-Voxel world infrastructure: types, chunk storage, terrain generation (NoiseStack noise engine, biome integration, scene presets), Surface Nets meshing, erosion (D8 valley carving + hydraulic), collision queries, and planetary terrain sampling.
+Voxel world infrastructure: types, chunk storage, terrain generation (NoiseStack noise engine, biome integration, scene presets), greedy meshing, erosion (D8 valley carving + hydraulic), collision queries, and planetary terrain sampling.
+
+The active rendering pipeline is the **V2 cubed-sphere system** (`src/world/v2/`) which uses `CubeSphereCoord` addressing and greedy meshing. The V1 Cartesian chunk pipeline has been removed.
 
 ## Spatial Mapping
 
@@ -12,7 +14,7 @@ Voxel world infrastructure: types, chunk storage, terrain generation (NoiseStack
 |------|---------|
 | `voxel.rs` | `MaterialId` (28 types), `Voxel` type |
 | `chunk.rs` | `Chunk` (32³ flat array), `ChunkCoord` |
-| `chunk_manager.rs` | `ChunkMap`, cylindrical chunk loading |
+| `chunk_manager.rs` | Shared resource types: `ChunkMap`, `SharedTerrainGen`, `TerrainGeneratorRes`, `ChunkLoadRadius`, `PendingChunks` |
 | `noise.rs` | `NoiseStack` — composable FBM, ridged fractal, domain warping, terrain selector, micro-detail, continent masks |
 | `biome_map.rs` | `EnvironmentMap` — deterministic temperature/moisture, slope/altitude surface material selection |
 | `terrain.rs` | Unified terrain generator (flat/spherical/planetary), geological strata, ore veins, multi-scale caves |
@@ -20,7 +22,7 @@ Voxel world infrastructure: types, chunk storage, terrain generation (NoiseStack
 | `erosion.rs` | D8 valley carving + hydraulic erosion (droplet, grid, combined modes), repose slippage |
 | `planet.rs` | `PlanetConfig`, `NoiseConfig`, `HydraulicErosionConfig`, terrain mode enum |
 | `planetary_sampler.rs` | `PlanetaryTerrainSampler` — IDW interpolation from geodesic cells to voxel chunks |
-| `meshing.rs` | Surface Nets mesh extraction + per-material vertex coloring |
+| `meshing.rs` | Surface Nets mesh algorithm library (used internally by V2 greedy mesher) + per-material vertex coloring |
 | `collision.rs` | Ground height queries for camera/entity gravity |
 | `raycast.rs` | Discrete 3D grid ray march (26 directions), surface-voxel detection |
 
@@ -211,24 +213,28 @@ radiative heat transfer visibility checks; designed to be extended for Phase 11 
 
 - Voxel is 16 bytes (MaterialId:2 + temperature:f32 + pressure:f32 + damage:f32 + 2 padding). Keep it compact — no strings or heap allocations.
 - `is_solid()` returns true for everything except air. Water is "not air" but also not structural (see physics/integrity).
-- Surface Nets meshing expects the chunk plus a 1-voxel border from neighbors for seamless edges.
+- Surface Nets mesh algorithm is retained for internal use (density-field isosurface). The V2 pipeline uses greedy meshing for output. `meshing.rs` algorithms are called via `chunk_mesh_to_bevy_mesh`.
 - Pressure is in **Pascals** (101325 Pa = 1 atm). Do NOT use atmospheres.
 - Temperature is in **Kelvin** (288.15 K = 15 °C). Do NOT use Celsius or Fahrenheit.
 
 ## Meshing
 
-Surface Nets mesh extraction from voxel data. Supports both flat chunks and octrees.
+`meshing.rs` provides the Surface Nets algorithm library and the
+`chunk_mesh_to_bevy_mesh` function used by the V2 pipeline to convert
+`V2ChunkData` into Bevy `Mesh` assets.  The old V1 dispatch systems
+(`dispatch_mesh_tasks`, `collect_mesh_results`) have been removed.
 
 ### Functions
 
 | Function | Input | Purpose |
 |----------|-------|---------|
-| `generate_mesh(chunk)` | `&Chunk` | Standard flat-array meshing at full 32³ resolution |
-| `generate_mesh_from_octree(tree, size)` | `&OctreeNode<Voxel>` | Mesh from octree, identical results to flat at base resolution |
+| `generate_mesh(chunk)` | `&Chunk` | Flat-array Surface Nets meshing at full 32³ resolution |
 | `generate_mesh_lod(chunk, lod_step)` | `&Chunk, usize` | Reduced-resolution meshing (step=2 → 16³, step=4 → 8³) |
-| `generate_mesh_from_octree_lod(tree, size, lod_step)` | `&OctreeNode<Voxel>` | LOD meshing from octree |
+| `chunk_mesh_to_bevy_mesh(data)` | `&V2ChunkData` | **Primary V2 entry point** — produces Bevy `Mesh` from cubed-sphere chunk |
 
-All four delegate to `generate_mesh_generic()` — a closure-parameterized Surface Nets implementation. The sampling function determines where voxel data comes from.
+All Surface Nets paths delegate to `generate_mesh_generic()` — a
+closure-parameterised implementation; the sampling function determines
+where voxel data comes from.
 
 ## Octree (SVO) Subsystem
 

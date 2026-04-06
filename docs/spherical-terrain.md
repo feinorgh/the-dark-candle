@@ -3,9 +3,10 @@
 Transform the flat-plane terrain into a spherical planetary model. The planet is
 a sphere centered at world origin `(0, 0, 0)` with configurable radius. Surface
 features come from noise sampled in spherical coordinates. Geological layers
-(core → mantle → crust) are defined by radial bands. The existing Cartesian
-chunk/octree/meshing/LOD pipeline is preserved — only the terrain function, chunk
-loader, gravity direction, and altitude-dependent systems change.
+(core → mantle → crust) are defined by radial bands. The rendering pipeline
+uses the **V2 cubed-sphere system** (`src/world/v2/`) — six cube faces mapped
+to a sphere with greedy-meshed 32³ chunks loaded in radial shells. The original
+V1 Cartesian pipeline has been removed.
 
 See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
 [terrain-generation.md](terrain-generation.md) (detail & world-gen options).
@@ -15,9 +16,11 @@ See also: [ROADMAP.md](ROADMAP.md) (project-level phasing),
 ## Design
 
 - **Planet center at origin.** All radial math is trivial: `distance = length(pos)`.
-- **Keep Cartesian chunks.** The 32³ chunk grid, octree, SVO, Surface Nets meshing,
-  and LOD system are coordinate-agnostic. They see local voxel data and don't care
-  about planet geometry.
+- **Cubed-sphere chunk grid.** The V2 pipeline uses `CubeSphereCoord` (face,
+  u, v, layer) to address chunks on the six cube faces mapped to the sphere.
+  Each chunk is still 32³ voxels; only the coordinate addressing and chunk
+  loader know about the sphere geometry. Greedy meshing and voxel simulation
+  are coordinate-agnostic.
 - **Spherical noise sampling.** Convert world position `(x, y, z)` → unit direction
   → `(lat, lon)` via `atan2`. Noise at `(lat, lon)` produces surface radius
   displacement. No pole distortion because noise is sampled on a sphere, not

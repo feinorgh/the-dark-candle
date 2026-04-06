@@ -228,8 +228,9 @@ Depends on Phases 3–6 (physics, entities, biology, behavior).
 
 Spherical planet centered at origin with configurable radius. Surface noise
 in spherical coordinates, shell-based chunk loading, radial apparent gravity
-(gravitational + centrifugal). Default 32 km radius. Cartesian chunk/LOD
-pipeline preserved.
+(gravitational + centrifugal). Default 32 km radius. Rendered by the **V2
+cubed-sphere pipeline** (`src/world/v2/`); the V1 Cartesian pipeline has been
+removed.
 
 **Planetary terrain connection (completed):** The `--planet` CLI flag runs the
 full geodesic pipeline (tectonics → biomes → geology) before the game starts,
@@ -625,16 +626,21 @@ Full design: **[valley-river-milestone.md](valley-river-milestone.md)**
 5. **No ECS bundles** — Bevy 0.18 deprecated them. Spawn component tuples.
 6. **Deterministic simulation** — FNV-1a hash for jitter, no `rand` crate.
    FixedUpdate for physics. Reproducible for debugging.
-7. **Surface Nets** — fewer artifacts than Marching Cubes, good for organic terrain.
+7. **Greedy meshing** — combines coplanar faces of the same material into larger
+   quads, reducing draw calls significantly. Surface Nets is retained in the
+   codebase for the density-field isosurface representation but is no longer the
+   primary mesh output path.
 8. **Utility AI** — more emergent than behavior trees, scales with complex needs.
 9. **Self-contained physics models** — AMR, LBM, FLIP each have their own
    types/step/plugin/octree_bridge. Couple through voxel data, not shared state.
 10. **Rust edition 2024** — enables `let` chains, `gen` keyword reservation,
     and other modern Rust features. Minimum Rust version ≥ 1.85.
-11. **Spherical planet, Cartesian chunks** — the world is a planet-sized sphere,
-    but the chunk grid remains Cartesian. Only the terrain function, chunk loader,
-    and gravity know about the sphere. Meshing, octree, LOD, and simulation
-    systems are coordinate-agnostic by design.
+11. **Spherical planet, cubed-sphere chunks** — the world is a planet-sized
+    sphere rendered via the V2 cubed-sphere pipeline (`CubeSphereCoord`: face,
+    u, v, layer). Each chunk is still 32³ voxels. Only the terrain function,
+    chunk loader, and gravity know about the sphere. Greedy meshing and
+    simulation systems are coordinate-agnostic by design. The V1 Cartesian
+    chunk pipeline has been removed.
 12. **Real apparent gravity** — local “down” is the resultant of gravitational
     attraction toward the planet center and centrifugal force from rotation. This
     vector defines ground detection, slope physics, buoyancy direction, and fluid
