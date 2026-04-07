@@ -219,6 +219,9 @@ pub struct PlanetData {
     pub volcanic_activity: Vec<f32>,
     /// Accumulated fault stress per cell (0.0–1.0).
     pub fault_stress: Vec<f32>,
+    /// Tectonic strain per cell (0.0–1.0). Accumulated from boundary forces
+    /// and diffused inward; drives continental rifting when high enough.
+    pub strain: Vec<f32>,
     /// Celestial system: star, moons, rings, and orbital mechanics.
     pub celestial: CelestialSystem,
     // ── Phase 5: biome & geology ──────────────────────────────────────────
@@ -254,6 +257,7 @@ impl PlanetData {
             boundary_type: vec![BoundaryType::default(); n],
             volcanic_activity: vec![0.0; n],
             fault_stress: vec![0.0; n],
+            strain: vec![0.0; n],
             celestial,
             temperature_k: vec![0.0; n],
             precipitation_mm: vec![0.0; n],

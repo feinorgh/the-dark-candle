@@ -132,7 +132,7 @@
       {
         "name": "planet",
         "path": "src/planet/",
-        "responsibility": "Standalone planetary generation pipeline: icosahedral geodesic grid, tectonic simulation, astronomical impact events, celestial mechanics (star/moons/rings/Keplerian orbits), static climate model, biome classification, geological rock/ore assignment. Used by the worldgen binary and planned for future game integration."
+        "responsibility": "Standalone planetary generation pipeline: icosahedral geodesic grid, tectonic simulation with malleable plate deformation (per-cell strain field, continental rifting, plate suturing, deformation-zone orogeny), astronomical impact events, celestial mechanics (star/moons/rings/Keplerian orbits), static climate model, biome classification, geological rock/ore assignment. Used by the worldgen binary and planned for future game integration."
       },
       {
         "name": "map",
@@ -1615,7 +1615,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "4959826",
+    "generated_from_commit": "de8c7ac2d4502a7c0ad8f306debdf6f56fbe8dff",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

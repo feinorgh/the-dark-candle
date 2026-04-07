@@ -535,5 +535,24 @@
     ],
     "resolution": "Changed V2TerrainGen to hold Arc<UnifiedTerrainGenerator> instead of Arc<SphericalTerrainGenerator>. Updated generate_v2_chunk to accept &UnifiedTerrainGenerator (using planet_config() and sample_surface_radius_at()). Updated rebuild_terrain_gen_if_planetary to propagate the planetary Arc to V2TerrainGen. Added PlanetaryTerrainSampler::material_at_radius() delegating to its internal SphericalTerrainGenerator. Added planet_config() and material_at_radius() to UnifiedTerrainGenerator. All terrain generators (SharedTerrainGen, V2TerrainGen) now share the same Arc and are always in sync.",
     "resolution_commit": "9f1bd04"
+  },
+  {
+    "id": "TECT-001",
+    "title": "Overflow in accel_perturb_seed when plate index is large",
+    "category": "tectonics",
+    "severity": "low",
+    "status": "resolved",
+    "reported": "2026-04-07",
+    "description": "The accel_perturb_seed() function used regular multiplication (plate as u64 * 0x1234...) instead of wrapping_mul, causing an arithmetic overflow panic in debug builds when plate indices exceed ~14 (possible after rifting creates new plates).",
+    "reproduction": "Run tectonic simulation with Extended mode and a seed that triggers rifting (e.g., seed 42, grid level 4).",
+    "suspected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "suspected_cause": "Regular multiply instead of wrapping_mul in hash function.",
+    "related_commits": [],
+    "resolution": "Changed to (plate as u64).wrapping_mul(...) in both accel_perturb_seed and rift_seed. Commit: de8c7ac",
+    "notes": [
+      "Pre-existing bug only exposed by the new rifting mechanic creating plate indices > 14."
+    ]
   }
 ]

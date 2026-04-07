@@ -35,6 +35,8 @@ pub enum ColourMode {
     Rock,
     /// Blue (cold) → green → red (hot).
     Temperature,
+    /// Blue (relaxed) → yellow → red (high strain).
+    Strain,
 }
 
 impl ColourMode {
@@ -48,6 +50,7 @@ impl ColourMode {
             Self::TidalAmplitude => "Tidal Amplitude",
             Self::Rock => "Surface Rock",
             Self::Temperature => "Temperature",
+            Self::Strain => "Tectonic Strain",
         }
     }
 
@@ -62,6 +65,7 @@ impl ColourMode {
             "tidal" | "tidal_amplitude" => Some(Self::TidalAmplitude),
             "rock" => Some(Self::Rock),
             "temperature" | "temp" => Some(Self::Temperature),
+            "strain" => Some(Self::Strain),
             _ => None,
         }
     }
@@ -82,6 +86,7 @@ pub(crate) fn cell_color(data: &PlanetData, cell: usize, mode: &ColourMode) -> [
         }
         ColourMode::Rock => rock_color(data.surface_rock[cell]),
         ColourMode::Temperature => temperature_color(data.temperature_k[cell]),
+        ColourMode::Strain => strain_color(data.strain[cell]),
     }
 }
 
@@ -197,6 +202,17 @@ fn temperature_color(temp_k: f32) -> [f32; 4] {
         lerp_rgb([0.10, 0.20, 0.80], [0.20, 0.80, 0.30], t * 2.0)
     } else {
         lerp_rgb([0.20, 0.80, 0.30], [0.90, 0.20, 0.10], (t - 0.5) * 2.0)
+    };
+    [rgb[0], rgb[1], rgb[2], 1.0]
+}
+
+/// Blue (relaxed, 0) → yellow (moderate, 0.5) → red (high strain / rift, 1.0).
+fn strain_color(strain: f32) -> [f32; 4] {
+    let t = strain.clamp(0.0, 1.0);
+    let rgb = if t < 0.5 {
+        lerp_rgb([0.10, 0.15, 0.60], [0.90, 0.85, 0.20], t * 2.0)
+    } else {
+        lerp_rgb([0.90, 0.85, 0.20], [0.90, 0.10, 0.05], (t - 0.5) * 2.0)
     };
     [rgb[0], rgb[1], rgb[2], 1.0]
 }
@@ -580,6 +596,7 @@ fn switch_colour_mode(
         (KeyCode::Digit6, ColourMode::TidalAmplitude),
         (KeyCode::Digit7, ColourMode::Rock),
         (KeyCode::Digit8, ColourMode::Temperature),
+        (KeyCode::Digit9, ColourMode::Strain),
     ]
     .into_iter()
     .find(|&(key, _)| keyboard.just_pressed(key))
@@ -724,6 +741,7 @@ fn apply_snapshot(
         state.data.boundary_type = snapshot.boundary_type.clone();
         state.data.crust_type = snapshot.crust_type.clone();
         state.data.volcanic_activity = snapshot.volcanic_activity.clone();
+        state.data.strain = snapshot.strain.clone();
 
         let total_frames = playback.frame_count();
         println!(
