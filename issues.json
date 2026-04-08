@@ -608,5 +608,18 @@
     "notes": [
       "On a sphere, rigid rotation preserves the Voronoi mapping for interior cells regardless of displacement magnitude."
     ]
+  },
+  {
+    "id": "TECT-005",
+    "category": "visual",
+    "severity": "medium",
+    "title": "Concentric banding/quantization artifacts in elevation terrain",
+    "description": "Deformation zones used integer BFS hop count with discrete exponential falloff (0.45^hop), producing visible concentric ring bands around convergent boundaries.",
+    "affected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "status": "resolved",
+    "resolution": "Replaced hop-based discrete falloff with continuous geodesic distance Gaussian (sigma=600km), added Laplacian smoothing passes, increased erosion to double-pass with 3% base rate.",
+    "commit": "pending"
   }
 ]

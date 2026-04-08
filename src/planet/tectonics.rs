@@ -75,7 +75,9 @@ const VOLCANIC_DECAY_BASE: f32 = 0.95;
 const FAULT_STRESS_GAIN_BASE: f32 = 0.01;
 
 /// Fraction of elevation difference diffused per reference time step.
-const EROSION_RATE_BASE: f64 = 0.02;
+/// Two passes are applied per call for improved smoothing of discrete
+/// boundary artifacts while maintaining a realistic erosion time scale.
+const EROSION_RATE_BASE: f64 = 0.03;
 
 /// Hard cap on mountain height (m).
 const MAX_ELEVATION: f64 = 9_000.0;
@@ -146,13 +148,38 @@ const SUTURE_MIN_CONTACT_FRACTION: f64 = 0.20;
 
 // ─── Deformation zone constants ──────────────────────────────────────────────
 
-/// Maximum number of cell hops that convergent boundary orogeny propagates
-/// inward from the plate boundary. Creates wide mountain belts instead of
-/// single-cell ridges.
-const DEFORMATION_ZONE_HOPS: u32 = 4;
-/// Exponential falloff per hop: force at hop N = base_rate × FALLOFF^N.
-/// 0.45 gives ~20% effect at hop 1, ~9% at hop 2, ~4% at hop 3.
-const DEFORMATION_FALLOFF: f64 = 0.45;
+/// Gaussian decay half-width for deformation zone falloff (meters).
+///
+/// Controls the width of mountain belts and foreland deformation spreading.
+/// Earth's Tibetan Plateau extends ~1000 km from the Himalayan front.
+/// σ = 600 km ⇒ 50% effect at ~500 km, <5% at ~1500 km.
+const DEFORMATION_DECAY_DIST_M: f64 = 600_000.0;
+
+/// Maximum propagation distance for deformation zones (meters).
+/// Cells beyond this receive no deformation. Set to 3σ for a <1% Gaussian
+/// tail, avoiding wasted BFS work.
+const DEFORMATION_MAX_DIST_M: f64 = 1_800_000.0;
+
+/// Minimum distance from the convergent boundary for back-arc extension
+/// onset (meters). Volcanic arcs form right at the boundary; back-arc
+/// basins develop ~200–500 km further inland (e.g., Sea of Japan is
+/// ~500 km behind the Japanese volcanic arc).
+const BACK_ARC_MIN_DIST_M: f64 = 300_000.0;
+
+/// Fraction of orogeny rate applied to foreland interior cells.
+/// Reduced from the full boundary rate because deformation attenuates as
+/// it propagates through the lithosphere.
+const FORELAND_OROGENY_FRACTION: f64 = 0.2;
+
+/// Number of Laplacian smoothing passes applied to deformation deltas
+/// after computing them from the distance field. Eliminates residual
+/// concentric banding from the discrete BFS grid traversal.
+const DEFORMATION_SMOOTH_PASSES: u32 = 3;
+
+/// Smoothing weight: fraction of the same-plate neighbour average blended
+/// into each cell per pass. 0.5 = equal weight between self and average.
+const DEFORMATION_SMOOTH_ALPHA: f64 = 0.5;
+
 /// Back-arc extension rate (m/Myr). Behind oceanic-continental subduction
 /// zones, the overriding continental plate thins and subsides, creating
 /// back-arc basins (e.g., Sea of Japan behind the Japanese island arc).
@@ -984,27 +1011,33 @@ fn update_volcanic_activity(data: &mut PlanetData, dt_scale: f64) {
     }
 }
 
-/// One diffusion pass: each cell moves toward its neighbour average.
+/// Two diffusion passes per call: each cell moves toward its neighbour
+/// average. The double pass improves smoothing of sharp boundary-force
+/// artifacts (the discrete cells at plate boundaries that receive full
+/// orogeny/trench deltas) without requiring an excessively high per-pass
+/// rate that would flatten mountains unrealistically.
+///
 /// Erosion rate scales with `dt_scale = dt_myr / REF_DT_MYR`.
 fn erode(data: &mut PlanetData, dt_scale: f64) {
     let erosion_rate = EROSION_RATE_BASE * dt_scale;
-
     let n = data.grid.cell_count();
-    let old_elev = data.elevation.clone();
 
-    for i in 0..n {
-        let id = CellId(i as u32);
-        let neighbours = data.grid.cell_neighbors(id);
-        if neighbours.is_empty() {
-            continue;
+    for _pass in 0..2 {
+        let old_elev = data.elevation.clone();
+        for i in 0..n {
+            let id = CellId(i as u32);
+            let neighbours = data.grid.cell_neighbors(id);
+            if neighbours.is_empty() {
+                continue;
+            }
+            let mean: f64 = neighbours
+                .iter()
+                .map(|&nb| old_elev[nb as usize])
+                .sum::<f64>()
+                / neighbours.len() as f64;
+            let delta = erosion_rate * (mean - old_elev[i]);
+            data.elevation[i] = (old_elev[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
         }
-        let mean: f64 = neighbours
-            .iter()
-            .map(|&nb| old_elev[nb as usize])
-            .sum::<f64>()
-            / neighbours.len() as f64;
-        let delta = erosion_rate * (mean - old_elev[i]);
-        data.elevation[i] = (old_elev[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
     }
 }
 
@@ -1080,51 +1113,60 @@ fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
 // Deformation zones — wide orogeny and back-arc extension
 // ---------------------------------------------------------------------------
 
-/// Spread convergent boundary elevation effects multiple cells inward.
+/// Spread convergent boundary elevation effects across plate interiors.
 ///
 /// Real mountain belts are hundreds of kilometres wide, not single-cell
-/// ridges. This BFS from convergent boundary cells applies decaying orogeny
-/// to interior cells within the same plate:
+/// ridges. This function propagates orogeny from convergent boundary cells
+/// inward using a **continuous distance-based Gaussian falloff**, producing
+/// smooth elevation gradients instead of discrete hop-ring bands:
+///
 /// - **Continental interior** behind convergent boundaries: uplift (foothills
 ///   and plateau formation — e.g., Tibetan Plateau behind the Himalayas).
 /// - **Continental interior** behind oceanic subduction: back-arc extension
 ///   (basin subsidence — e.g., Sea of Japan behind the Japanese arc).
+///
+/// After computing raw deltas from the distance field, several Laplacian
+/// smoothing passes are applied to eliminate any residual discrete-grid
+/// banding from the BFS traversal.
 fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
     let n = data.grid.cell_count();
-    let mut deltas = vec![0.0_f64; n];
+    let radius = data.config.radius_m;
 
-    // BFS from convergent boundary cells to spread effects inward.
-    let mut hop_distance = vec![u32::MAX; n];
-    let mut is_subduction_back_arc = vec![false; n];
+    // ── Phase 1: BFS from convergent boundaries, tracking geodesic distance ──
+    let mut dist = vec![f64::INFINITY; n];
+    let mut is_back_arc = vec![false; n];
     let mut queue = VecDeque::new();
 
     for i in 0..n {
         if data.boundary_type[i] == BoundaryType::Convergent {
-            hop_distance[i] = 0;
+            dist[i] = 0.0;
             queue.push_back(i);
 
             // Detect back-arc context: this cell is continental, but its
             // cross-plate neighbour is oceanic (subduction zone).
             if data.crust_type[i] == CrustType::Continental {
                 let id = CellId(i as u32);
-                let has_oceanic_neighbor = data.grid.cell_neighbors(id).iter().any(|&nb| {
+                is_back_arc[i] = data.grid.cell_neighbors(id).iter().any(|&nb| {
                     let nb_idx = nb as usize;
                     data.plate_id[nb_idx] != data.plate_id[i]
                         && data.crust_type[nb_idx] == CrustType::Oceanic
                 });
-                is_subduction_back_arc[i] = has_oceanic_neighbor;
             }
         }
     }
 
+    // SPFA-style BFS: edges are weighted by actual geodesic distance between
+    // cell centres (chord on the unit sphere × radius ≈ arc distance for
+    // the small angles between adjacent cells).
     while let Some(cell) = queue.pop_front() {
-        let hops = hop_distance[cell];
-        if hops >= DEFORMATION_ZONE_HOPS {
+        let d = dist[cell];
+        if d >= DEFORMATION_MAX_DIST_M {
             continue;
         }
 
         let id = CellId(cell as u32);
         let my_plate = data.plate_id[cell];
+        let pos_cell = data.grid.cell_position(id);
 
         for &nb in data.grid.cell_neighbors(id) {
             let nb_idx = nb as usize;
@@ -1132,25 +1174,66 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
             if data.plate_id[nb_idx] != my_plate {
                 continue;
             }
-            let new_hops = hops + 1;
-            if new_hops < hop_distance[nb_idx] {
-                hop_distance[nb_idx] = new_hops;
-                // Propagate back-arc context from boundary cell.
-                is_subduction_back_arc[nb_idx] = is_subduction_back_arc[cell];
-                queue.push_back(nb_idx);
 
-                let falloff = DEFORMATION_FALLOFF.powi(new_hops as i32);
-                if is_subduction_back_arc[nb_idx] && new_hops >= 2 {
-                    // Back-arc extension: subsidence behind volcanic arc.
-                    deltas[nb_idx] -= BACK_ARC_RATE * falloff * dt_myr;
-                } else {
-                    // Foreland uplift: reduced orogeny spreading inland.
-                    deltas[nb_idx] += OROGENY_RATE * 0.3 * falloff * dt_myr;
-                }
+            let pos_nb = data.grid.cell_position(CellId(nb));
+            let edge_dist = (pos_cell - pos_nb).length() * radius;
+            let new_d = d + edge_dist;
+
+            if new_d < dist[nb_idx] {
+                dist[nb_idx] = new_d;
+                // Propagate back-arc context from nearest boundary cell.
+                is_back_arc[nb_idx] = is_back_arc[cell];
+                queue.push_back(nb_idx);
             }
         }
     }
 
+    // ── Phase 2: Compute deformation deltas from the distance field ──────────
+    let two_sigma_sq = 2.0 * DEFORMATION_DECAY_DIST_M * DEFORMATION_DECAY_DIST_M;
+    let mut deltas = vec![0.0_f64; n];
+
+    for i in 0..n {
+        let d = dist[i];
+        // Skip boundary cells (d == 0, handled by apply_boundary_forces)
+        // and unreachable cells (d == INFINITY).
+        if d <= 0.0 || d == f64::INFINITY {
+            continue;
+        }
+
+        let falloff = (-d * d / two_sigma_sq).exp();
+
+        if is_back_arc[i] && d > BACK_ARC_MIN_DIST_M {
+            // Back-arc extension: subsidence behind volcanic arc.
+            deltas[i] = -BACK_ARC_RATE * falloff * dt_myr;
+        } else {
+            // Foreland uplift: orogeny spreading inland.
+            deltas[i] = OROGENY_RATE * FORELAND_OROGENY_FRACTION * falloff * dt_myr;
+        }
+    }
+
+    // ── Phase 3: Laplacian smoothing of deltas (respecting plate boundaries) ─
+    for _ in 0..DEFORMATION_SMOOTH_PASSES {
+        let prev = deltas.clone();
+        for i in 0..n {
+            let id = CellId(i as u32);
+            let my_plate = data.plate_id[i];
+            let mut sum = 0.0_f64;
+            let mut count = 0_u32;
+            for &nb in data.grid.cell_neighbors(id) {
+                if data.plate_id[nb as usize] == my_plate {
+                    sum += prev[nb as usize];
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                let avg = sum / count as f64;
+                deltas[i] = prev[i] * (1.0 - DEFORMATION_SMOOTH_ALPHA)
+                    + avg * DEFORMATION_SMOOTH_ALPHA;
+            }
+        }
+    }
+
+    // ── Phase 4: Apply to elevation ──────────────────────────────────────────
     for (elev, &delta) in data.elevation.iter_mut().zip(deltas.iter()) {
         *elev = (*elev + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
     }

@@ -932,12 +932,12 @@
         "detect_boundaries(dt_myr) \u2014 velocity dot-product classifies Convergent/Divergent/Transform",
         "apply_boundary_forces(dt_myr) \u2014 dt-scaled height changes per boundary type",
         "subduction_advance(dt_myr) \u2014 dt-scaled reassignment, plates below 1% surface protected",
-        "erode(dt_myr) \u2014 dt-scaled neighbor diffusion",
+        "erode(dt_myr) \u2014 double-pass dt-scaled neighbor diffusion",
         "compute_sea_level() \u2014 area-weighted percentile targeting 30% land"
       ],
-      "notes": "40 unit tests. Power-law plate sizes (few large oceanic, many small continental). Geological time calibrated to real SI: velocities in rad/yr, rates in per-Myr, all dt-scaled via REF_DT_MYR=10. Three configurable modes (Quick ~50 steps, Normal ~200, Extended ~600 at default 3.0 Gyr). Force-driven motion: slab-pull torque computed from oceanic convergent boundary cells (SLAB_PULL_COEFFICIENT=2e-14 rad/yr\u00b2), normalized by plate size as inverse moment of inertia. Boundary detection now precedes velocity evolution for proper force feedback. TectonicHistory captures \u2264100 snapshots (~2.5 MB/frame at level 7) for time-lapse visualization.",
+      "notes": "47 unit tests. Power-law plate sizes (few large oceanic, many small continental). Geological time calibrated to real SI: velocities in rad/yr, rates in per-Myr, all dt-scaled via REF_DT_MYR=10. Three configurable modes (Quick ~50 steps, Normal ~200, Extended ~600 at default 3.0 Gyr). Force-driven motion: slab-pull torque computed from oceanic convergent boundary cells (SLAB_PULL_COEFFICIENT=2e-14 rad/yr\u00b2), normalized by plate size as inverse moment of inertia. Boundary detection now precedes velocity evolution for proper force feedback. TectonicHistory captures \u2264100 snapshots (~2.5 MB/frame at level 7) for time-lapse visualization. Deformation zones use continuous geodesic-distance Gaussian falloff (sigma=600km) with Laplacian smoothing passes to eliminate discrete hop-ring banding.",
       "uncertain": false,
-      "description": "10-plate simulation with Voronoi growth, boundary detection, strain/rifting/suturing, slab-pull force feedback, and forward-scatter plate advection (Rodrigues rotation, same-plate material transport, trailing-edge oceanic spreading)"
+      "description": "10-plate simulation with Voronoi growth, boundary detection, strain/rifting/suturing, slab-pull force feedback, forward-scatter plate advection (Rodrigues rotation, same-plate transport, trailing-edge oceanic spreading), and continuous-distance deformation zones with Gaussian falloff"
     },
     {
       "name": "Astronomical impact events",
