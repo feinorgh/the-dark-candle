@@ -199,8 +199,22 @@ fn spawn_camera(
                 );
                 (loc.lat, loc.lon)
             } else {
-                // Default: latitude 45°, longitude 0° — a mid-latitude spawn.
-                (std::f64::consts::FRAC_PI_4, 0.0)
+                // No explicit spawn location — find land near a coastline,
+                // falling back to any land, then to a fixed default.
+                let sea = planet.sea_level_radius;
+                let seed = planet.seed as u64;
+                if let Some(pos) = find_coastline(&tg.0, sea, 5000, seed) {
+                    info!("Default spawn: coastline at {:.1}°N, {:.1}°E",
+                          pos.0.to_degrees(), pos.1.to_degrees());
+                    pos
+                } else if let Some(pos) = find_random_land(&tg.0, sea, 2000, seed) {
+                    info!("Default spawn: random land at {:.1}°N, {:.1}°E",
+                          pos.0.to_degrees(), pos.1.to_degrees());
+                    pos
+                } else {
+                    warn!("No land found, falling back to 45°N 0°E");
+                    (std::f64::consts::FRAC_PI_4, 0.0)
+                }
             };
             let surface_r = tg.0.sample_surface_radius_at(lat, lon) as f32;
             // Construct the spawn direction from lat/lon (Y-up planet, axis = Y).
@@ -320,7 +334,9 @@ fn snap_to_surface(
 
     let tgen = v2_gen.as_ref().map(|r| r.0.as_ref());
     if let Some(tg) = tgen {
-        let ground_r = ground_height_from_terrain_gen(transform.translation, tg);
+        let terrain_r = ground_height_from_terrain_gen(transform.translation, tg);
+        // Never place the player below sea level (ocean floor).
+        let ground_r = terrain_r.max(planet.sea_level_radius as f32 + 1.0);
         let up = transform.translation.normalize_or(Vec3::Y);
         transform.translation = up * (ground_r + EYE_HEIGHT);
         cam.vertical_velocity = 0.0;
@@ -532,7 +548,9 @@ fn camera_gravity(
 
         let ground_r = v2_gen
             .as_ref()
-            .map(|tg| ground_height_from_terrain_gen(pos, &tg.0));
+            .map(|tg| ground_height_from_terrain_gen(pos, &tg.0))
+            // Never let the player fall below sea level.
+            .map(|r| r.max(planet.sea_level_radius as f32 + 1.0));
 
         if let Some(ground_r) = ground_r {
             let feet_r = transform.translation.length() - EYE_HEIGHT;
