@@ -633,5 +633,17 @@
       "src/planet/tectonics.rs"
     ],
     "commit": "e10aa6c"
+  },
+  {
+    "id": "WAVE-001",
+    "category": "tectonics",
+    "severity": "medium",
+    "title": "Wave-like periodic pulse artifacts on planet surface",
+    "description": "Discrete advection shifts boundary positions each step; full boundary forces applied at new positions created parallel ridge/trench trails.",
+    "status": "resolved",
+    "resolution": "Added boundary-age temporal damping (BOUNDARY_RAMP_STEPS=5), mantle drag (MANTLE_DRAG_COEFFICIENT=0.15), and rebalanced erosion (rate 0.08, 4 passes).",
+    "affected_files": [
+      "src/planet/tectonics.rs"
+    ]
   }
 ]

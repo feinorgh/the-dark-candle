@@ -64,6 +64,9 @@ struct ScratchBuffers {
     strain_buf: Vec<f32>,
     // Boundary-force deltas
     force_deltas: Vec<f64>,
+    // How many consecutive steps each cell has been a boundary cell.
+    // Used for temporal damping of boundary forces.
+    boundary_age: Vec<u32>,
 }
 
 impl ScratchBuffers {
@@ -86,6 +89,7 @@ impl ScratchBuffers {
             erode_buf: vec![0.0; n],
             strain_buf: vec![0.0; n],
             force_deltas: vec![0.0; n],
+            boundary_age: vec![0; n],
         }
     }
 }
@@ -132,9 +136,16 @@ const VOLCANIC_DECAY_BASE: f32 = 0.95;
 const FAULT_STRESS_GAIN_BASE: f32 = 0.01;
 
 /// Fraction of elevation difference diffused per reference time step.
-/// Two passes are applied per call for improved smoothing of discrete
-/// boundary artifacts while maintaining a realistic erosion time scale.
-const EROSION_RATE_BASE: f64 = 0.03;
+/// Stronger than typical geological erosion to compensate for the discrete
+/// nature of boundary-force application: each advection step shifts boundary
+/// positions, and without adequate smoothing these leave trail-like artifacts.
+/// Four passes per call ensure gradual smoothing without flattening realistic
+/// mountain ranges.
+const EROSION_RATE_BASE: f64 = 0.08;
+
+/// Number of diffusion passes per erosion call. More passes smooth boundary
+/// trail artifacts further while keeping per-pass rate moderate.
+const EROSION_PASSES: usize = 4;
 
 /// Hard cap on mountain height (m).
 const MAX_ELEVATION: f64 = 9_000.0;
@@ -277,6 +288,30 @@ const HOTSPOT_VOLCANIC_GAIN: f32 = 0.08;
 /// Ensures hotspot positions are deterministic but independent of plate
 /// seed sequence.
 const HOTSPOT_SEED_OFFSET: u64 = 0xCAFE_BABE;
+
+// ─── Mantle drag constants ───────────────────────────────────────────────────
+
+/// Viscous drag coefficient for asthenosphere basal traction (dimensionless).
+///
+/// On Earth, mantle drag opposes plate motion with a shear stress proportional
+/// to velocity: τ_drag = -η × v / h, where η is asthenosphere viscosity
+/// (~10¹⁹ Pa·s), v is plate velocity, and h is coupling thickness (~200 km).
+/// This coefficient represents the normalized angular deceleration per step,
+/// calibrated so that a plate at max speed (~10 cm/yr) loses ~15% of its
+/// velocity per 10 Myr reference step — matching Earth's typical plate
+/// deceleration timescale of ~50–100 Myr.
+const MANTLE_DRAG_COEFFICIENT: f64 = 0.15;
+
+// ─── Boundary freshness constants ────────────────────────────────────────────
+
+/// Number of consecutive steps a cell must be at a boundary before it receives
+/// full boundary-force magnitude. Newly formed boundary cells (age 0) receive
+/// attenuated forces, ramping linearly to full strength at this age.
+///
+/// This prevents the "boundary trail" artifact: as plates advect, the boundary
+/// position shifts each step. Without ramping, each new boundary cell gets a
+/// full +8–10 m elevation pulse, leaving parallel ridges in the wake.
+const BOUNDARY_RAMP_STEPS: u32 = 5;
 
 // ─── Slab-pull force constants ───────────────────────────────────────────────
 
@@ -444,13 +479,14 @@ where
 
         precompute_boundary_normals(data, &mut scratch.boundary_normals);
         detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
+        update_boundary_age(data, &mut scratch.boundary_age);
 
         let slab_pull =
             compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
         propagate_strain(data, &mut scratch.strain_buf, dt_scale);
-        apply_boundary_forces(data, &mut scratch.force_deltas, dt_myr);
+        apply_boundary_forces(data, &mut scratch.force_deltas, &scratch.boundary_age, dt_myr);
         apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
@@ -510,13 +546,14 @@ where
 
         precompute_boundary_normals(data, &mut scratch.boundary_normals);
         detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
+        update_boundary_age(data, &mut scratch.boundary_age);
 
         let slab_pull =
             compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
         propagate_strain(data, &mut scratch.strain_buf, dt_scale);
-        apply_boundary_forces(data, &mut scratch.force_deltas, dt_myr);
+        apply_boundary_forces(data, &mut scratch.force_deltas, &scratch.boundary_age, dt_myr);
         apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
@@ -831,6 +868,14 @@ fn evolve_plate_velocities(
             plate.angular_velocity += slab_pull * dt_yr;
         }
 
+        // Viscous mantle drag: asthenosphere shear opposes plate motion.
+        // drag = -MANTLE_DRAG_COEFFICIENT × ω × dt_scale (per reference step).
+        // This provides a smooth velocity-dependent deceleration that prevents
+        // plates from accelerating indefinitely and smooths out jitter.
+        let dt_scale = dt_myr / REF_DT_MYR;
+        let drag_factor = 1.0 - (MANTLE_DRAG_COEFFICIENT * dt_scale).min(0.5);
+        plate.angular_velocity *= drag_factor;
+
         // Clamp angular speed to physical range.
         let speed = plate.angular_velocity.length();
         if speed > max_angular {
@@ -1056,22 +1101,44 @@ fn detect_boundaries(
     }
 }
 
+/// Update per-cell boundary age: increment for cells that are currently at a
+/// boundary, reset to zero for interior cells. Used by `apply_boundary_forces`
+/// to ramp force magnitude on newly formed boundaries.
+fn update_boundary_age(data: &PlanetData, boundary_age: &mut [u32]) {
+    for (age, btype) in boundary_age.iter_mut().zip(data.boundary_type.iter()) {
+        if *btype != BoundaryType::Interior {
+            *age = age.saturating_add(1);
+        } else {
+            *age = 0;
+        }
+    }
+}
+
 /// Apply height changes at boundary cells based on boundary type and the
 /// crust types of interacting plates. Height deltas scale with `dt_myr`.
+///
+/// Forces are ramped by boundary age: cells that just became boundaries
+/// (age < BOUNDARY_RAMP_STEPS) receive attenuated forces, preventing
+/// the "boundary trail" artifact from discrete advection steps.
 #[allow(clippy::needless_range_loop)] // multiple parallel arrays indexed by i
-fn apply_boundary_forces(data: &mut PlanetData, deltas: &mut [f64], dt_myr: f64) {
+fn apply_boundary_forces(
+    data: &mut PlanetData,
+    deltas: &mut [f64],
+    boundary_age: &[u32],
+    dt_myr: f64,
+) {
     let n = data.grid.cell_count();
     for d in deltas[..n].iter_mut() {
         *d = 0.0;
     }
 
     for i in 0..n {
-        match data.boundary_type[i] {
-            BoundaryType::Interior | BoundaryType::Transform => {}
+        let raw_delta = match data.boundary_type[i] {
+            BoundaryType::Interior | BoundaryType::Transform => continue,
             BoundaryType::Convergent => {
                 let neighbour_crust = dominant_neighbour_crust(data, i);
                 let my_crust = data.crust_type[i];
-                deltas[i] += match (my_crust, neighbour_crust) {
+                match (my_crust, neighbour_crust) {
                     (CrustType::Continental, CrustType::Continental) => OROGENY_RATE * dt_myr,
                     (CrustType::Continental, CrustType::Oceanic) => ARC_RATE * dt_myr,
                     (CrustType::Oceanic, CrustType::Continental) => -TRENCH_RATE * dt_myr,
@@ -1082,12 +1149,15 @@ fn apply_boundary_forces(data: &mut PlanetData, deltas: &mut [f64], dt_myr: f64)
                             -OCEAN_CONVERGENT_RATE * dt_myr
                         }
                     }
-                };
+                }
             }
-            BoundaryType::Divergent => {
-                deltas[i] -= RIFT_RATE * dt_myr;
-            }
-        }
+            BoundaryType::Divergent => -RIFT_RATE * dt_myr,
+        };
+
+        // Ramp: newly formed boundary cells receive attenuated forces.
+        let age = boundary_age[i].min(BOUNDARY_RAMP_STEPS);
+        let ramp = (age as f64 + 1.0) / (BOUNDARY_RAMP_STEPS as f64 + 1.0);
+        deltas[i] = raw_delta * ramp;
     }
 
     for (elev, &delta) in data.elevation.iter_mut().zip(deltas.iter()) {
@@ -1190,18 +1260,17 @@ fn apply_volcanic_terrain(data: &mut PlanetData, dt_myr: f64) {
     }
 }
 
-/// Two diffusion passes per call: each cell moves toward its neighbour
-/// average. The double pass improves smoothing of sharp boundary-force
-/// artifacts (the discrete cells at plate boundaries that receive full
-/// orogeny/trench deltas) without requiring an excessively high per-pass
-/// rate that would flatten mountains unrealistically.
+/// Multiple diffusion passes per call: each cell moves toward its neighbour
+/// average. Smooths sharp boundary-force artifacts from discrete advection
+/// steps without requiring an excessively high per-pass rate that would
+/// flatten mountains unrealistically.
 ///
 /// Erosion rate scales with `dt_scale = dt_myr / REF_DT_MYR`.
 fn erode(data: &mut PlanetData, buf: &mut [f64], dt_scale: f64) {
     let erosion_rate = EROSION_RATE_BASE * dt_scale;
     let n = data.grid.cell_count();
 
-    for _pass in 0..2 {
+    for _pass in 0..EROSION_PASSES {
         buf[..n].copy_from_slice(&data.elevation[..n]);
         for i in 0..n {
             let id = CellId(i as u32);
