@@ -149,6 +149,14 @@ const EROSION_RATE_BASE: f64 = 0.15;
 /// trail artifacts further while keeping per-pass rate moderate.
 const EROSION_PASSES: usize = 6;
 
+/// Elevation difference (m) at which erosion reaches full strength.
+/// Smaller values make erosion more aggressive on moderate gradients;
+/// larger values restrict strong erosion to only the sharpest features.
+/// 500 m means a fresh boundary ridge (~8-10 m per step) reaches full
+/// erosion after a few steps of neighbour averaging, while flat abyssal
+/// plains and continental shelves (~0-50 m relief) erode at <10% rate.
+const EROSION_RELIEF_SCALE: f64 = 500.0;
+
 /// Hard cap on mountain height (m).
 const MAX_ELEVATION: f64 = 9_000.0;
 /// Hard cap on ocean depth (m, negative).
@@ -1273,9 +1281,15 @@ fn apply_volcanic_terrain(data: &mut PlanetData, dt_myr: f64) {
 /// steps without requiring an excessively high per-pass rate that would
 /// flatten mountains unrealistically.
 ///
+/// Erosion is **relief-dependent**: the diffusion rate scales with the local
+/// elevation gradient (|mean_neighbour − self|). Flat regions (continental
+/// shelves, abyssal plains) barely erode; sharp ridges and fresh boundary
+/// artifacts erode strongly. This preserves the bimodal continental/oceanic
+/// elevation distribution that creates visible landmass.
+///
 /// Erosion rate scales with `dt_scale = dt_myr / REF_DT_MYR`.
 fn erode(data: &mut PlanetData, buf: &mut [f64], dt_scale: f64) {
-    let erosion_rate = EROSION_RATE_BASE * dt_scale;
+    let base_rate = EROSION_RATE_BASE * dt_scale;
     let n = data.grid.cell_count();
 
     for _pass in 0..EROSION_PASSES {
@@ -1291,8 +1305,13 @@ fn erode(data: &mut PlanetData, buf: &mut [f64], dt_scale: f64) {
                 .map(|&nb| buf[nb as usize])
                 .sum::<f64>()
                 / neighbours.len() as f64;
-            let delta = erosion_rate * (mean - buf[i]);
-            data.elevation[i] = (buf[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
+            let diff = mean - buf[i];
+            // Relief-dependent rate: steeper gradient → stronger erosion.
+            // Normalise by EROSION_RELIEF_SCALE so that a ~500 m relief
+            // difference produces full-strength erosion (rate = base_rate).
+            let relief_factor = (diff.abs() / EROSION_RELIEF_SCALE).min(1.0);
+            let rate = base_rate * relief_factor;
+            data.elevation[i] = (buf[i] + rate * diff).clamp(MIN_ELEVATION, MAX_ELEVATION);
         }
     }
 }
