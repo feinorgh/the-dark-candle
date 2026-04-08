@@ -604,6 +604,7 @@ fn setup_globe(
             base_color: Color::srgba(ring.color[0], ring.color[1], ring.color[2], ring.opacity),
             alpha_mode: AlphaMode::Blend,
             double_sided: true,
+            cull_mode: None,
             unlit: true,
             ..default()
         });
