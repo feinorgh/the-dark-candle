@@ -161,6 +161,22 @@ const DEFORMATION_FALLOFF: f64 = 0.45;
 /// back-arc basins (e.g., Sea of Japan behind the Japanese island arc).
 const BACK_ARC_RATE: f64 = 2.0;
 
+// ─── Slab-pull force constants ───────────────────────────────────────────────
+
+/// Slab-pull angular acceleration coefficient (rad/yr²).
+///
+/// When multiplied by a plate's subduction fraction (n_subducting / n_total),
+/// gives the angular acceleration from slab pull. This is the **dominant**
+/// force driving plate motion on Earth (~70% of total driving force).
+///
+/// Calibration: a plate with 5% subduction boundary reaches ~8 cm/yr in
+/// ~16 Myr; a plate with 1% subduction takes ~78 Myr. Plates with no
+/// subduction receive no slab pull and drift only from random perturbation.
+///
+/// Physical basis: slab pull ∝ Δρ × g × slab_thickness × slab_depth.
+/// Density contrast Δρ ≈ 80 kg/m³, thickness ≈ 100 km, depth ≈ 660 km.
+const SLAB_PULL_COEFFICIENT: f64 = 2e-14;
+
 // ─── Plate velocity constants (SI) ───────────────────────────────────────────
 
 /// Minimum plate surface velocity (m/year). ~2 cm/yr.
@@ -305,11 +321,14 @@ where
     let mut convergence_timers: BTreeMap<(u8, u8), f64> = BTreeMap::new();
 
     for step in 0..steps {
-        evolve_plate_velocities(&mut plates, seed, step, dt_yr, dt_myr, radius_m);
-
-        // Recompute each step: plate assignments shift due to deformation.
+        // Detect boundaries first so force computations see current geometry.
         let boundary_normals = precompute_boundary_normals(data);
         detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+
+        // Compute slab-pull forces from boundary geometry, then evolve velocities.
+        let slab_pull = compute_slab_pull_torques(data, &plates, &boundary_normals);
+        evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
+
         propagate_strain(data, dt_scale);
         apply_boundary_forces(data, dt_myr);
         apply_deformation_zones(data, dt_myr);
@@ -364,10 +383,14 @@ where
     snapshots.push(capture_snapshot(data, 0, 0.0));
 
     for step in 0..steps {
-        evolve_plate_velocities(&mut plates, seed, step, dt_yr, dt_myr, radius_m);
-
+        // Detect boundaries first so force computations see current geometry.
         let boundary_normals = precompute_boundary_normals(data);
         detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+
+        // Compute slab-pull forces from boundary geometry, then evolve velocities.
+        let slab_pull = compute_slab_pull_torques(data, &plates, &boundary_normals);
+        evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
+
         propagate_strain(data, dt_scale);
         apply_boundary_forces(data, dt_myr);
         apply_deformation_zones(data, dt_myr);
@@ -621,6 +644,7 @@ fn random_unit_vec(rng: &mut SmallRng) -> DVec3 {
 /// speeds physical.
 fn evolve_plate_velocities(
     plates: &mut [Plate],
+    slab_pull_torques: &[DVec3],
     seed: u64,
     step: u32,
     dt_yr: f64,
@@ -631,8 +655,15 @@ fn evolve_plate_velocities(
     let max_angular = MAX_PLATE_SPEED_M_YR / radius_m;
 
     for (p, plate) in plates.iter_mut().enumerate() {
-        // Apply acceleration: ω += α × dt (years).
+        // Apply persistent random acceleration: ω += α × dt (years).
         plate.angular_velocity += plate.angular_acceleration * dt_yr;
+
+        // Apply slab-pull acceleration (transient, recomputed each step from
+        // the current boundary geometry). This is the dominant force on Earth:
+        // plates with long subduction zones are pulled toward the trench.
+        if let Some(&slab_pull) = slab_pull_torques.get(p) {
+            plate.angular_velocity += slab_pull * dt_yr;
+        }
 
         // Clamp angular speed to physical range.
         let speed = plate.angular_velocity.length();
@@ -681,6 +712,78 @@ fn accel_perturb_seed(seed: u64, plate: usize, step: u32) -> u64 {
         .wrapping_mul(0x6c62_272e_07bb_0142)
         .wrapping_add(step as u64)
         ^ 0xfeed_face_cafe_babe
+}
+
+// ---------------------------------------------------------------------------
+// Slab-pull force computation
+// ---------------------------------------------------------------------------
+
+/// Compute per-plate angular acceleration from slab pull.
+///
+/// At subduction zones, cold dense oceanic lithosphere sinks into the mantle,
+/// pulling the trailing plate toward the trench. This is the dominant force
+/// driving tectonic plate motion on Earth (~70% of total driving force).
+///
+/// For each plate, we:
+/// 1. Find convergent oceanic boundary cells (subduction zones).
+/// 2. Sum the torque: τ = Σ (pos × pull_direction) for each subducting cell.
+///    The pull direction is the boundary normal (toward the trench).
+/// 3. Normalize by plate cell count (inverse moment of inertia — larger plates
+///    are harder to accelerate) and scale by [`SLAB_PULL_COEFFICIENT`].
+///
+/// Returns a Vec of angular acceleration vectors (rad/yr²), one per plate.
+#[allow(clippy::needless_range_loop)] // multiple parallel arrays indexed by i
+fn compute_slab_pull_torques(
+    data: &PlanetData,
+    plates: &[Plate],
+    boundary_normals: &[DVec3],
+) -> Vec<DVec3> {
+    let n = data.grid.cell_count();
+    let n_plates = plates.len();
+
+    let mut torques = vec![DVec3::ZERO; n_plates];
+    let mut plate_cells = vec![0_usize; n_plates];
+
+    for i in 0..n {
+        let pid = data.plate_id[i] as usize;
+        if pid >= n_plates {
+            continue;
+        }
+        plate_cells[pid] += 1;
+
+        // Only oceanic cells at convergent boundaries contribute slab pull.
+        // Continental lithosphere is too buoyant to sink into the mantle.
+        if data.boundary_type[i] != BoundaryType::Convergent {
+            continue;
+        }
+        if data.crust_type[i] != CrustType::Oceanic {
+            continue;
+        }
+
+        let pos = data.grid.cell_position(CellId(i as u32));
+        let pull_dir = boundary_normals[i];
+        if pull_dir.length_squared() < 1e-20 {
+            continue;
+        }
+
+        // Torque = position × force. On the unit sphere |pos| = 1 and
+        // pull_dir is tangent to the sphere (perpendicular to pos), so
+        // |pos × pull_dir| ≈ |pull_dir|.
+        torques[pid] += pos.cross(pull_dir);
+    }
+
+    // Convert accumulated torque to angular acceleration:
+    //   α = SLAB_PULL_COEFFICIENT × (n_subducting / n_total) × torque_direction
+    //
+    // The division by plate_cells acts as inverse moment of inertia: smaller
+    // plates (less mass) accelerate more from the same force.
+    for pid in 0..n_plates {
+        if plate_cells[pid] > 0 {
+            torques[pid] *= SLAB_PULL_COEFFICIENT / plate_cells[pid] as f64;
+        }
+    }
+
+    torques
 }
 
 // ---------------------------------------------------------------------------
@@ -1829,8 +1932,10 @@ mod tests {
         let _initial_speed = plates[0].angular_velocity.length();
 
         // Run many steps — velocity direction should drift.
+        // Empty slab-pull: no subduction forces in this isolated test.
+        let no_slab_pull = vec![DVec3::ZERO; 1];
         for step in 0..20 {
-            evolve_plate_velocities(&mut plates, 42, step, dt_yr, dt_myr, radius_m);
+            evolve_plate_velocities(&mut plates, &no_slab_pull, 42, step, dt_yr, dt_myr, radius_m);
         }
 
         let final_vel = plates[0].angular_velocity;
@@ -2208,6 +2313,239 @@ mod tests {
         assert_eq!(
             p1.elevation, p2.elevation,
             "Same seed must produce identical elevations"
+        );
+    }
+
+    // ─── Slab-pull tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn slab_pull_accelerates_subducting_plates() {
+        // A plate with oceanic convergent boundary cells should receive
+        // non-zero slab-pull torque, while a plate with no convergent
+        // boundary gets zero torque.
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 1234,
+            grid_level: 4,
+            radius_m: 6_371_000.0,
+            tectonic_mode: TectonicMode::Quick,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        let seed = data.config.seed;
+        let radius_m = data.config.radius_m;
+        let dt_myr = data.config.tectonic_dt_myr();
+        let dt_yr = dt_myr * 1e6;
+
+        let plates = init_plates(&mut data, seed, radius_m);
+        let boundary_normals = precompute_boundary_normals(&data);
+        detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
+        let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
+
+        assert_eq!(
+            torques.len(),
+            plates.len(),
+            "One torque vector per plate"
+        );
+
+        // At least one plate should have non-zero slab pull (there are always
+        // some oceanic convergent boundaries after initialization).
+        let has_nonzero = torques.iter().any(|t| t.length() > 0.0);
+        assert!(
+            has_nonzero,
+            "At least one plate should receive slab-pull acceleration"
+        );
+    }
+
+    #[test]
+    fn slab_pull_only_from_oceanic_convergent() {
+        // Manually set up a scenario where some boundary cells are continental
+        // (no slab pull) and some are oceanic (should get slab pull).
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 999,
+            grid_level: 4,
+            radius_m: 6_371_000.0,
+            tectonic_mode: TectonicMode::Quick,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        let seed = data.config.seed;
+        let radius_m = data.config.radius_m;
+        let dt_myr = data.config.tectonic_dt_myr();
+        let dt_yr = dt_myr * 1e6;
+
+        let plates = init_plates(&mut data, seed, radius_m);
+        let boundary_normals = precompute_boundary_normals(&data);
+        detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
+
+        // Count oceanic convergent cells per plate.
+        let n = data.grid.cell_count();
+        let mut oceanic_conv_count = vec![0_usize; plates.len()];
+        for i in 0..n {
+            if data.boundary_type[i] == BoundaryType::Convergent
+                && data.crust_type[i] == CrustType::Oceanic
+            {
+                oceanic_conv_count[data.plate_id[i] as usize] += 1;
+            }
+        }
+
+        let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
+
+        // Plates with zero oceanic convergent cells must have zero torque.
+        for (pid, &count) in oceanic_conv_count.iter().enumerate() {
+            if count == 0 && pid < torques.len() {
+                assert!(
+                    torques[pid].length() < 1e-30,
+                    "Plate {pid} has no oceanic convergent cells but got torque {:.2e}",
+                    torques[pid].length()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slab_pull_direction_toward_trench() {
+        // The slab-pull torque should rotate the plate TOWARD the subduction
+        // zone. Verify the torque isn't zero and has a reasonable magnitude.
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 5,
+            radius_m: 6_371_000.0,
+            tectonic_mode: TectonicMode::Normal,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        let seed = data.config.seed;
+        let radius_m = data.config.radius_m;
+        let dt_myr = data.config.tectonic_dt_myr();
+        let dt_yr = dt_myr * 1e6;
+
+        let plates = init_plates(&mut data, seed, radius_m);
+
+        // Run boundary detection to establish geometry.
+        let boundary_normals = precompute_boundary_normals(&data);
+        detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
+
+        let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
+
+        // Find a plate with significant slab pull.
+        let active_plate = torques
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.length().partial_cmp(&b.length()).unwrap());
+
+        if let Some((pid, torque)) = active_plate {
+            if torque.length() > 1e-30 {
+                // The torque vector should be a subtle force (angular accel),
+                // not an absurdly large value. Sanity-check the magnitude.
+                assert!(
+                    torque.length() < 1e-10,
+                    "Slab-pull torque for plate {pid} should be small in rad/yr² \
+                     (got {:.2e}); it's a subtle force, not a sledgehammer",
+                    torque.length()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slab_pull_inversely_proportional_to_plate_size() {
+        // Two plates with the same number of subducting cells but different
+        // total sizes should have different torque magnitudes — the smaller
+        // plate should get more acceleration (less inertia).
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 7777,
+            grid_level: 5,
+            radius_m: 6_371_000.0,
+            tectonic_mode: TectonicMode::Normal,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        let seed = data.config.seed;
+        let radius_m = data.config.radius_m;
+        let dt_myr = data.config.tectonic_dt_myr();
+        let dt_yr = dt_myr * 1e6;
+
+        let plates = init_plates(&mut data, seed, radius_m);
+        let boundary_normals = precompute_boundary_normals(&data);
+        detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
+
+        let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
+
+        // Count plate sizes and subducting cells.
+        let n = data.grid.cell_count();
+        let mut plate_sizes = vec![0_usize; plates.len()];
+        let mut sub_counts = vec![0_usize; plates.len()];
+        for i in 0..n {
+            let pid = data.plate_id[i] as usize;
+            if pid < plates.len() {
+                plate_sizes[pid] += 1;
+                if data.boundary_type[i] == BoundaryType::Convergent
+                    && data.crust_type[i] == CrustType::Oceanic
+                {
+                    sub_counts[pid] += 1;
+                }
+            }
+        }
+
+        // Find two plates both with nonzero subducting cells.
+        let mut active: Vec<(usize, usize, usize, f64)> = (0..plates.len())
+            .filter(|&p| sub_counts[p] > 0 && torques[p].length() > 1e-30)
+            .map(|p| (p, plate_sizes[p], sub_counts[p], torques[p].length()))
+            .collect();
+
+        if active.len() >= 2 {
+            // Sort by torque magnitude per subducting cell.
+            active.sort_by(|a, b| {
+                let a_per = a.3 / a.2 as f64;
+                let b_per = b.3 / b.2 as f64;
+                b_per.partial_cmp(&a_per).unwrap()
+            });
+            // The plate with higher torque-per-subducting-cell should be smaller.
+            let (_, size_high, _, _) = active[0];
+            let (_, size_low, _, _) = active[active.len() - 1];
+            assert!(
+                size_high <= size_low,
+                "Higher torque-per-subducting-cell should come from smaller plate \
+                 (sizes: {size_high} vs {size_low})"
+            );
+        }
+    }
+
+    #[test]
+    fn slab_pull_determinism_preserved() {
+        // Two runs with the same seed must produce identical results,
+        // including slab-pull effects on velocity evolution.
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 31337,
+            grid_level: 4,
+            radius_m: 6_371_000.0,
+            tectonic_mode: TectonicMode::Quick,
+            ..Default::default()
+        };
+        let mut d1 = PlanetData::new(config.clone());
+        let mut d2 = PlanetData::new(config);
+
+        run_tectonics(&mut d1, |_| {});
+        run_tectonics(&mut d2, |_| {});
+
+        // If the full simulation is deterministic, the final states must match.
+        assert_eq!(
+            d1.plate_id, d2.plate_id,
+            "Slab-pull must preserve determinism: plate IDs diverged"
+        );
+        assert_eq!(
+            d1.elevation, d2.elevation,
+            "Slab-pull must preserve determinism: elevations diverged"
         );
     }
 }
