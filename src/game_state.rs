@@ -11,6 +11,7 @@ use bevy::prelude::*;
 
 use crate::persistence::{LoadRequest, SaveRequest, SaveSlot, list_save_slots};
 use crate::world::chunk_manager::PendingChunks;
+use crate::world::v2::chunk_manager::{V2ChunkMap, V2TerrainGen};
 
 /// Marker resource: when present, the WorldCreation state is skipped
 /// (scene was selected via CLI).
@@ -336,14 +337,38 @@ fn despawn_loading_screen(mut commands: Commands, q: Query<Entity, With<LoadingS
     }
 }
 
-/// Transition to Playing once there are no pending terrain generation tasks.
+/// Minimum number of V2 chunks that must be loaded around the player before
+/// transitioning to Playing.  9 = a 3×3 horizontal area ensures terrain is
+/// visible under and around the spawn position.
+const MIN_SPAWN_CHUNKS: usize = 9;
+
+/// Transition to Playing once the terrain around the player is ready.
 fn check_loading_complete(
     pending: Option<Res<PendingChunks>>,
+    v2_terrain: Option<Res<V2TerrainGen>>,
+    v2_chunk_map: Option<Res<V2ChunkMap>>,
+    mut text_q: Query<&mut Text, With<LoadingText>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut frames_ready: Local<u32>,
 ) {
-    let pending_count = pending.map(|p| p.len()).unwrap_or(0);
-    if pending_count == 0 {
+    let v1_pending = pending.map(|p| p.len()).unwrap_or(0);
+
+    // V2 pipeline: require a minimum number of chunks loaded around the player
+    // so there is visible terrain under their feet when gameplay starts.
+    let v2_ready = if v2_terrain.is_some() {
+        let loaded = v2_chunk_map.as_ref().map(|m| m.loaded_count()).unwrap_or(0);
+        // Update loading screen text with progress.
+        if let Ok(mut text) = text_q.single_mut() {
+            *text = Text::new(format!(
+                "Generating terrain… ({loaded} / {MIN_SPAWN_CHUNKS} chunks)"
+            ));
+        }
+        loaded >= MIN_SPAWN_CHUNKS
+    } else {
+        true
+    };
+
+    if v1_pending == 0 && v2_ready {
         // Wait a few frames after generation completes to let meshing catch up.
         *frames_ready += 1;
         if *frames_ready > 10 {

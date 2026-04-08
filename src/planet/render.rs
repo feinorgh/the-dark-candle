@@ -401,10 +401,7 @@ fn build_orbit_line(moon: &super::celestial::Moon, planet_radius: f64, segments:
         positions.push([p_norm.x as f32, p_norm.y as f32, p_norm.z as f32]);
     }
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::LineStrip,
-        RenderAssetUsages::default(),
-    );
+    let mut mesh = Mesh::new(PrimitiveTopology::LineStrip, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh
 }
@@ -911,7 +908,12 @@ pub fn run_globe_viewer(data: PlanetData, history: Option<TectonicHistory>) {
     .add_systems(Startup, setup_globe)
     .add_systems(
         Update,
-        (orbital_camera, animate_moons, switch_colour_mode, screenshot_system),
+        (
+            orbital_camera,
+            animate_moons,
+            switch_colour_mode,
+            screenshot_system,
+        ),
     );
 
     if let Some(history) = history {

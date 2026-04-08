@@ -491,12 +491,16 @@ where
         detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
         update_boundary_age(data, &mut scratch.boundary_age);
 
-        let slab_pull =
-            compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
+        let slab_pull = compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
         propagate_strain(data, &mut scratch.strain_buf, dt_scale);
-        apply_boundary_forces(data, &mut scratch.force_deltas, &scratch.boundary_age, dt_myr);
+        apply_boundary_forces(
+            data,
+            &mut scratch.force_deltas,
+            &scratch.boundary_age,
+            dt_myr,
+        );
         apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
@@ -558,12 +562,16 @@ where
         detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
         update_boundary_age(data, &mut scratch.boundary_age);
 
-        let slab_pull =
-            compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
+        let slab_pull = compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
         propagate_strain(data, &mut scratch.strain_buf, dt_scale);
-        apply_boundary_forces(data, &mut scratch.force_deltas, &scratch.boundary_age, dt_myr);
+        apply_boundary_forces(
+            data,
+            &mut scratch.force_deltas,
+            &scratch.boundary_age,
+            dt_myr,
+        );
         apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
@@ -1300,10 +1308,7 @@ fn erode(data: &mut PlanetData, buf: &mut [f64], dt_scale: f64) {
             if neighbours.is_empty() {
                 continue;
             }
-            let mean: f64 = neighbours
-                .iter()
-                .map(|&nb| buf[nb as usize])
-                .sum::<f64>()
+            let mean: f64 = neighbours.iter().map(|&nb| buf[nb as usize]).sum::<f64>()
                 / neighbours.len() as f64;
             let diff = mean - buf[i];
             // Relief-dependent rate: steeper gradient → stronger erosion.
@@ -1513,8 +1518,8 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut Scr
             }
             if count > 0 {
                 let avg = sum / count as f64;
-                deltas[i] = prev[i] * (1.0 - DEFORMATION_SMOOTH_ALPHA)
-                    + avg * DEFORMATION_SMOOTH_ALPHA;
+                deltas[i] =
+                    prev[i] * (1.0 - DEFORMATION_SMOOTH_ALPHA) + avg * DEFORMATION_SMOOTH_ALPHA;
             }
         }
     }
@@ -1944,16 +1949,8 @@ fn advect_plate_material(
                     let pid = old_plate_id[i] as usize;
                     if pid < n_plates {
                         let pos = data.grid.cell_position(CellId(i as u32));
-                        let src_pos = rodrigues_rotate(
-                            pos,
-                            plates[pid].angular_velocity,
-                            -dt_yr,
-                        );
-                        let src = walk_nearest(
-                            &data.grid,
-                            CellId(i as u32),
-                            src_pos,
-                        );
+                        let src_pos = rodrigues_rotate(pos, plates[pid].angular_velocity, -dt_yr);
+                        let src = walk_nearest(&data.grid, CellId(i as u32), src_pos);
                         let si = src.index();
                         if old_plate_id[si] == old_plate_id[i] {
                             data.elevation[i] = old_elevation[si];
@@ -1982,11 +1979,8 @@ fn advect_plate_material(
                     .copied()
                     .collect();
                 if !same_plate.is_empty() {
-                    let winner = resolve_advection_collision(
-                        &same_plate,
-                        old_crust_type,
-                        old_elevation,
-                    );
+                    let winner =
+                        resolve_advection_collision(&same_plate, old_crust_type, old_elevation);
                     data.crust_type[i] = old_crust_type[winner];
                     data.elevation[i] = old_elevation[winner];
                     data.crust_depth[i] = old_crust_depth[winner];
@@ -2026,10 +2020,7 @@ fn resolve_advection_collision(
         let s_better = match (crust_type[s], crust_type[best]) {
             (CrustType::Continental, CrustType::Oceanic) => true,
             (CrustType::Oceanic, CrustType::Continental) => false,
-            _ => {
-                elevation[s] > elevation[best]
-                    || (elevation[s] == elevation[best] && s < best)
-            }
+            _ => elevation[s] > elevation[best] || (elevation[s] == elevation[best] && s < best),
         };
         if s_better {
             best = s;
@@ -2513,7 +2504,15 @@ mod tests {
         // Empty slab-pull: no subduction forces in this isolated test.
         let no_slab_pull = vec![DVec3::ZERO; 1];
         for step in 0..20 {
-            evolve_plate_velocities(&mut plates, &no_slab_pull, 42, step, dt_yr, dt_myr, radius_m);
+            evolve_plate_velocities(
+                &mut plates,
+                &no_slab_pull,
+                42,
+                step,
+                dt_yr,
+                dt_myr,
+                radius_m,
+            );
         }
 
         let final_vel = plates[0].angular_velocity;
@@ -2945,11 +2944,7 @@ mod tests {
         detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
         let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
 
-        assert_eq!(
-            torques.len(),
-            plates.len(),
-            "One torque vector per plate"
-        );
+        assert_eq!(torques.len(), plates.len(), "One torque vector per plate");
 
         // At least one plate should have non-zero slab pull (there are always
         // some oceanic convergent boundaries after initialization).
@@ -3041,17 +3036,17 @@ mod tests {
             .enumerate()
             .max_by(|(_, a), (_, b)| a.length().partial_cmp(&b.length()).unwrap());
 
-        if let Some((pid, torque)) = active_plate {
-            if torque.length() > 1e-30 {
-                // The torque vector should be a subtle force (angular accel),
-                // not an absurdly large value. Sanity-check the magnitude.
-                assert!(
-                    torque.length() < 1e-10,
-                    "Slab-pull torque for plate {pid} should be small in rad/yr² \
-                     (got {:.2e}); it's a subtle force, not a sledgehammer",
-                    torque.length()
-                );
-            }
+        if let Some((pid, torque)) = active_plate
+            && torque.length() > 1e-30
+        {
+            // The torque vector should be a subtle force (angular accel),
+            // not an absurdly large value. Sanity-check the magnitude.
+            assert!(
+                torque.length() < 1e-10,
+                "Slab-pull torque for plate {pid} should be small in rad/yr² \
+                 (got {:.2e}); it's a subtle force, not a sledgehammer",
+                torque.length()
+            );
         }
     }
 
@@ -3258,9 +3253,18 @@ mod tests {
         run_tectonics(&mut d1, |_| {});
         run_tectonics(&mut d2, |_| {});
 
-        assert_eq!(d1.plate_id, d2.plate_id, "Advection broke determinism: plate IDs");
-        assert_eq!(d1.elevation, d2.elevation, "Advection broke determinism: elevation");
-        assert_eq!(d1.crust_type, d2.crust_type, "Advection broke determinism: crust type");
+        assert_eq!(
+            d1.plate_id, d2.plate_id,
+            "Advection broke determinism: plate IDs"
+        );
+        assert_eq!(
+            d1.elevation, d2.elevation,
+            "Advection broke determinism: elevation"
+        );
+        assert_eq!(
+            d1.crust_type, d2.crust_type,
+            "Advection broke determinism: crust type"
+        );
     }
 
     #[test]
@@ -3386,8 +3390,7 @@ mod tests {
         };
         let mut data = PlanetData::new(config);
         run_tectonics(&mut data, |_| {});
-        let unique_plates: std::collections::BTreeSet<u8> =
-            data.plate_id.iter().copied().collect();
+        let unique_plates: std::collections::BTreeSet<u8> = data.plate_id.iter().copied().collect();
         let n_boundary = data
             .boundary_type
             .iter()
@@ -3399,10 +3402,7 @@ mod tests {
             "Expected at least 4 plates after simulation, got {}",
             unique_plates.len()
         );
-        assert!(
-            n_boundary > 0,
-            "Expected some boundary cells, got 0"
-        );
+        assert!(n_boundary > 0, "Expected some boundary cells, got 0");
     }
 
     #[test]

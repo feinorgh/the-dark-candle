@@ -96,8 +96,7 @@ fn mean_annual_insolation(s0: f64, lat: f64, tilt: f64) -> f64 {
 
     let mut sum = 0.0;
     for k in 0..ORBIT_SAMPLES {
-        let orbital_lon =
-            std::f64::consts::TAU * (k as f64 + 0.5) / ORBIT_SAMPLES as f64;
+        let orbital_lon = std::f64::consts::TAU * (k as f64 + 0.5) / ORBIT_SAMPLES as f64;
         let declination = tilt * orbital_lon.sin();
 
         let sin_dec = declination.sin();
@@ -113,8 +112,8 @@ fn mean_annual_insolation(s0: f64, lat: f64, tilt: f64) -> f64 {
             cos_h0.acos()
         };
 
-        let daily = s0 / std::f64::consts::PI
-            * (h0 * sin_lat * sin_dec + cos_lat * cos_dec * h0.sin());
+        let daily =
+            s0 / std::f64::consts::PI * (h0 * sin_lat * sin_dec + cos_lat * cos_dec * h0.sin());
         sum += daily.max(0.0);
     }
     sum / ORBIT_SAMPLES as f64

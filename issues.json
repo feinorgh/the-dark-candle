@@ -645,5 +645,25 @@
     "affected_files": [
       "src/planet/tectonics.rs"
     ]
+  },
+  {
+    "id": "SPAWN-001",
+    "title": "Player spawns before terrain loads \u2014 falls through or floats above surface",
+    "category": "gameplay",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-08",
+    "suspected_files": [
+      "src/game_state.rs",
+      "src/world/v2/chunk_manager.rs",
+      "src/camera/mod.rs"
+    ],
+    "suspected_cause": "Loading screen check_loading_complete() monitored V1 PendingChunks which is always 0 for V2 worlds, causing immediate transition to Playing before any terrain chunks loaded. V2 chunk dispatch used arbitrary HashSet iteration order, so spawn-area chunks were not prioritized.",
+    "resolution": "Three-part fix: (1) check_loading_complete now gates on V2ChunkMap loaded count >= 9 when V2TerrainGen is active, (2) v2_update_chunks sorts dispatch candidates by coord-space distance to camera so spawn-area chunks generate first, (3) snap_to_surface system on OnEnter(Playing) repositions camera exactly on the analytical terrain surface.",
+    "notes": [
+      "Added V2ChunkMap::loaded_count() and V2PendingChunks::pending_count() public accessors.",
+      "Loading screen text now shows chunk loading progress.",
+      "snap_to_surface uses ground_height_from_terrain_gen() which works without loaded chunks."
+    ]
   }
 ]

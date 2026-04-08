@@ -26,7 +26,7 @@ impl Plugin for CameraPlugin {
                     .after(cursor_grab)
                     .run_if(in_state(GameState::Playing)),
             )
-            .add_systems(OnEnter(GameState::Playing), grab_cursor)
+            .add_systems(OnEnter(GameState::Playing), (grab_cursor, snap_to_surface))
             .add_systems(OnEnter(GameState::Paused), release_cursor)
             .add_systems(OnEnter(GameState::Map), release_cursor);
     }
@@ -298,6 +298,34 @@ fn release_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) 
     };
     cursor.grab_mode = CursorGrabMode::None;
     cursor.visible = true;
+}
+
+/// Place the camera exactly on the terrain surface when entering Playing.
+///
+/// Uses the analytical terrain generator (no chunks needed) to ensure the
+/// player starts at the correct height, even if minor drift occurred during
+/// the loading phase.  Resets vertical velocity so gravity starts clean.
+fn snap_to_surface(
+    v2_gen: Option<Res<V2TerrainGen>>,
+    planet: Res<PlanetConfig>,
+    mut cam_q: Query<(&mut Transform, &mut FpsCamera)>,
+) {
+    let Ok((mut transform, mut cam)) = cam_q.single_mut() else {
+        return;
+    };
+
+    if !planet.is_spherical() {
+        return;
+    }
+
+    let tgen = v2_gen.as_ref().map(|r| r.0.as_ref());
+    if let Some(tg) = tgen {
+        let ground_r = ground_height_from_terrain_gen(transform.translation, tg);
+        let up = transform.translation.normalize_or(Vec3::Y);
+        transform.translation = up * (ground_r + EYE_HEIGHT);
+        cam.vertical_velocity = 0.0;
+        cam.grounded = true;
+    }
 }
 
 /// Rotate camera based on accumulated mouse movement (only when cursor is grabbed).

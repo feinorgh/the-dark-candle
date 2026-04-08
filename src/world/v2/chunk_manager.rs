@@ -59,10 +59,22 @@ pub struct V2ChunkMap {
     loaded: HashSet<CubeSphereCoord>,
 }
 
+impl V2ChunkMap {
+    pub fn loaded_count(&self) -> usize {
+        self.loaded.len()
+    }
+}
+
 /// Tracks which CubeSphereCoords are pending (task dispatched, not yet collected).
 #[derive(Resource, Default)]
 pub struct V2PendingChunks {
     pending: HashSet<CubeSphereCoord>,
+}
+
+impl V2PendingChunks {
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
 }
 
 // ── Components ────────────────────────────────────────────────────────────
@@ -152,23 +164,35 @@ pub fn v2_update_chunks(
         }
     }
 
-    // Dispatch new chunks
+    // Dispatch new chunks, closest to camera first.
     let pool = AsyncComputeTaskPool::get();
-    let budget = MAX_PENDING.saturating_sub(pending.pending.len());
-    let mut dispatched = 0usize;
+    let budget = MAX_PENDING
+        .saturating_sub(pending.pending.len())
+        .min(MAX_DISPATCHES_PER_FRAME);
 
     let mean_radius = planet.mean_radius;
     let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+    let cam_coord = world_pos_to_coord(cam_transform.translation.as_dvec3(), mean_radius, fce);
 
-    for coord in &desired {
-        if dispatched >= MAX_DISPATCHES_PER_FRAME.min(budget) {
-            break;
-        }
-        if chunk_map.loaded.contains(coord) || pending.pending.contains(coord) {
-            continue;
-        }
+    let mut to_dispatch: Vec<CubeSphereCoord> = desired
+        .iter()
+        .filter(|c| !chunk_map.loaded.contains(c) && !pending.pending.contains(c))
+        .copied()
+        .collect();
 
-        let coord = *coord;
+    // Sort by squared distance in coord space so spawn-area chunks generate first.
+    to_dispatch.sort_unstable_by_key(|c| {
+        if c.face == cam_coord.face {
+            let du = c.u - cam_coord.u;
+            let dv = c.v - cam_coord.v;
+            let dl = c.layer - cam_coord.layer;
+            du * du + dv * dv + dl * dl
+        } else {
+            i32::MAX
+        }
+    });
+
+    for coord in to_dispatch.into_iter().take(budget) {
         let tgen = terrain_gen.0.clone();
         let cmap = color_map.clone();
 
@@ -180,7 +204,6 @@ pub fn v2_update_chunks(
 
         commands.spawn(V2ChunkTask(task));
         pending.pending.insert(coord);
-        dispatched += 1;
     }
 }
 
