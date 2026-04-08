@@ -378,6 +378,40 @@ fn build_ring_mesh(inner_r: f64, outer_r: f64, segments: u32) -> Mesh {
     mesh
 }
 
+/// Build a line-loop mesh tracing a moon's orbital ellipse in 3D.
+///
+/// Samples `segments` evenly-spaced true anomaly positions around the orbit
+/// and returns a `LineStrip` mesh. The positions are in the same normalised
+/// coordinate system as the globe (planet radius = 1).
+fn build_orbit_line(moon: &super::celestial::Moon, planet_radius: f64, segments: u32) -> Mesh {
+    use super::celestial::moon_position;
+
+    let period = moon.orbital_period_s;
+    let display_dist = (moon.semi_major_axis_m / planet_radius).clamp(1.5, 5.0);
+    let actual_dist = moon.semi_major_axis_m / planet_radius;
+    let scale = display_dist / actual_dist;
+
+    // +1 to close the loop back to the starting point.
+    let count = (segments + 1) as usize;
+    let mut positions = Vec::with_capacity(count);
+    for i in 0..count {
+        let t = period * i as f64 / segments as f64;
+        let p = moon_position(moon, t);
+        let p_norm = p / planet_radius * scale;
+        positions.push([p_norm.x as f32, p_norm.y as f32, p_norm.z as f32]);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::LineStrip,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh
+}
+
+#[derive(Component)]
+struct OrbitTrail;
+
 // ─── Bevy app components & resources ──────────────────────────────────────────
 
 #[derive(Resource)]
@@ -399,13 +433,33 @@ struct OrbitalCamera {
 }
 
 #[derive(Component)]
-struct MoonMarker;
+struct MoonMarker(usize);
 
 #[derive(Component)]
 struct RingMarker;
 
 #[derive(Component)]
 struct StarLight;
+
+/// Tracks simulated orbital time for moon animation.
+#[derive(Resource)]
+struct MoonOrbitTime {
+    /// Simulated time elapsed (seconds). Advances each frame scaled by
+    /// `speed` so orbits are visible without real-time waiting.
+    elapsed_s: f64,
+    /// Simulation speed multiplier (simulated seconds per wall-clock second).
+    speed: f64,
+}
+
+impl Default for MoonOrbitTime {
+    fn default() -> Self {
+        Self {
+            elapsed_s: 0.0,
+            // Default: 1 Earth-day per wall-second ≈ 86400× real-time.
+            speed: 86_400.0,
+        }
+    }
+}
 
 // ─── Time-lapse playback ──────────────────────────────────────────────────────
 
@@ -496,12 +550,13 @@ fn setup_globe(
         ..default()
     });
 
-    // Moon markers.
+    // Moon markers and orbit trails.
     let moon_positions = state.data.celestial.moon_positions_at(0.0);
     let moon_mesh = meshes.add(Sphere::new(0.05));
+    let planet_r = state.data.config.radius_m;
     for (i, pos) in moon_positions.iter().enumerate() {
         let moon = &state.data.celestial.moons[i];
-        let dist = (moon.semi_major_axis_m / state.data.config.radius_m).clamp(1.5, 5.0);
+        let dist = (moon.semi_major_axis_m / planet_r).clamp(1.5, 5.0);
         let dir = pos.normalize();
         let p = dir * dist;
         let mat = materials.add(StandardMaterial {
@@ -513,10 +568,30 @@ fn setup_globe(
             ..default()
         });
         commands.spawn((
-            MoonMarker,
+            MoonMarker(i),
             Mesh3d(moon_mesh.clone()),
             MeshMaterial3d(mat),
             Transform::from_xyz(p.x as f32, p.y as f32, p.z as f32),
+        ));
+
+        // Orbit trail (dashed-style thin line).
+        let orbit_mesh = meshes.add(build_orbit_line(moon, planet_r, 128));
+        let orbit_mat = materials.add(StandardMaterial {
+            base_color: Color::srgba(
+                moon.surface_color[0],
+                moon.surface_color[1],
+                moon.surface_color[2],
+                0.4,
+            ),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            OrbitTrail,
+            Mesh3d(orbit_mesh),
+            MeshMaterial3d(orbit_mat),
+            Transform::IDENTITY,
         ));
     }
 
@@ -579,6 +654,28 @@ fn orbital_camera(
     let y = cam.distance * cam.latitude.sin();
     let z = cam.distance * cam.latitude.cos() * cam.longitude.cos();
     *tf = Transform::from_xyz(x, y, z).looking_at(Vec3::ZERO, Vec3::Y);
+}
+
+/// Advance simulated orbital time and update moon sphere positions.
+fn animate_moons(
+    time: Res<Time>,
+    state: Res<GlobeState>,
+    mut orbit_time: ResMut<MoonOrbitTime>,
+    mut query: Query<(&MoonMarker, &mut Transform)>,
+) {
+    orbit_time.elapsed_s += time.delta_secs_f64() * orbit_time.speed;
+    let t = orbit_time.elapsed_s;
+    let planet_r = state.data.config.radius_m;
+
+    for (marker, mut tf) in &mut query {
+        let moon = &state.data.celestial.moons[marker.0];
+        let pos = super::celestial::moon_position(moon, t);
+        let actual_dist = moon.semi_major_axis_m / planet_r;
+        let display_dist = actual_dist.clamp(1.5, 5.0);
+        let scale = display_dist / actual_dist;
+        let p = pos / planet_r * scale;
+        *tf = Transform::from_xyz(p.x as f32, p.y as f32, p.z as f32);
+    }
 }
 
 fn switch_colour_mode(
@@ -809,10 +906,11 @@ pub fn run_globe_viewer(data: PlanetData, history: Option<TectonicHistory>) {
         exaggeration: 4.0,
         needs_rebuild: false,
     })
+    .insert_resource(MoonOrbitTime::default())
     .add_systems(Startup, setup_globe)
     .add_systems(
         Update,
-        (orbital_camera, switch_colour_mode, screenshot_system),
+        (orbital_camera, animate_moons, switch_colour_mode, screenshot_system),
     );
 
     if let Some(history) = history {
