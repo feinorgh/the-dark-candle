@@ -1573,7 +1573,7 @@
         "src/world/v2/chunk_manager.rs",
         "src/camera/mod.rs"
       ],
-      "notes": "Loading screen waits for >= 9 V2 chunks (3x3 around spawn) before transitioning to Playing. V2 chunk dispatch sorted by distance to camera (closest first). snap_to_surface system on OnEnter(Playing) repositions camera to analytical terrain surface. V2ChunkMap::loaded_count() and V2PendingChunks::pending_count() public accessors added."
+      "notes": "Loading screen waits for >= 9 V2 chunks (3x3 around spawn) before transitioning to Playing. V2 chunk dispatch sorted by distance to camera (closest first). snap_to_surface system on OnEnter(Playing) repositions camera to analytical terrain surface. V2ChunkMap::loaded_count() and V2PendingChunks::pending_count() public accessors added. Default spawn now finds coastline/land via find_coastline/find_random_land instead of hardcoded 45°N/0°E. Both snap_to_surface and camera_gravity clamp ground height to sea_level_radius to prevent underwater placement."
     }
   ],
   "tech_debt": [
@@ -1636,7 +1636,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "fbe410a6324c401a7072d1c1ed7b128f47e68294",
+    "generated_from_commit": "b2a323d",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
