@@ -58,6 +58,7 @@ struct ScratchBuffers {
     bfs_queue: VecDeque<usize>,
     deform_deltas: Vec<f64>,
     deform_prev: Vec<f64>,
+    deform_ramp: Vec<f64>,
     // Erosion swap buffer
     erode_buf: Vec<f64>,
     // Strain diffusion swap buffer
@@ -86,6 +87,7 @@ impl ScratchBuffers {
             bfs_queue: VecDeque::with_capacity(n / 4),
             deform_deltas: vec![0.0; n],
             deform_prev: vec![0.0; n],
+            deform_ramp: vec![0.0; n],
             erode_buf: vec![0.0; n],
             strain_buf: vec![0.0; n],
             force_deltas: vec![0.0; n],
@@ -131,7 +133,7 @@ const RIFT_RATE: f64 = 5.0;
 /// Volcanic activity gain per reference time step at active boundaries.
 const VOLCANIC_GAIN_BASE: f32 = 0.05;
 /// Volcanic activity decay factor per reference time step.
-const VOLCANIC_DECAY_BASE: f32 = 0.95;
+const VOLCANIC_DECAY_BASE: f32 = 0.85;
 /// Fault stress gain per reference time step at transform boundaries.
 const FAULT_STRESS_GAIN_BASE: f32 = 0.01;
 
@@ -141,11 +143,11 @@ const FAULT_STRESS_GAIN_BASE: f32 = 0.01;
 /// positions, and without adequate smoothing these leave trail-like artifacts.
 /// Four passes per call ensure gradual smoothing without flattening realistic
 /// mountain ranges.
-const EROSION_RATE_BASE: f64 = 0.08;
+const EROSION_RATE_BASE: f64 = 0.15;
 
 /// Number of diffusion passes per erosion call. More passes smooth boundary
 /// trail artifacts further while keeping per-pass rate moderate.
-const EROSION_PASSES: usize = 4;
+const EROSION_PASSES: usize = 6;
 
 /// Hard cap on mountain height (m).
 const MAX_ELEVATION: f64 = 9_000.0;
@@ -1154,9 +1156,11 @@ fn apply_boundary_forces(
             BoundaryType::Divergent => -RIFT_RATE * dt_myr,
         };
 
-        // Ramp: newly formed boundary cells receive attenuated forces.
+        // Quadratic ramp: newly formed boundary cells receive strongly
+        // attenuated forces. age=0 → 0%, age=1 → 4%, age=5 → 100%.
         let age = boundary_age[i].min(BOUNDARY_RAMP_STEPS);
-        let ramp = (age as f64 + 1.0) / (BOUNDARY_RAMP_STEPS as f64 + 1.0);
+        let age_frac = age as f64 / BOUNDARY_RAMP_STEPS as f64;
+        let ramp = age_frac * age_frac;
         deltas[i] = raw_delta * ramp;
     }
 
@@ -1216,6 +1220,10 @@ fn update_volcanic_activity(data: &mut PlanetData, hotspots: &[Hotspot], dt_scal
             data.volcanic_activity[i] = (data.volcanic_activity[i] + volcanic_gain).min(1.0);
         } else {
             data.volcanic_activity[i] *= volcanic_decay;
+            // Clamp near-zero activity to prevent long-tail accumulation.
+            if data.volcanic_activity[i] < 0.01 {
+                data.volcanic_activity[i] = 0.0;
+            }
         }
 
         if matches!(bt, BoundaryType::Transform) {
@@ -1383,6 +1391,7 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut Scr
     // ── Phase 1: BFS from convergent boundaries, tracking geodesic distance ──
     let dist = &mut scratch.bfs_dist;
     let is_back_arc = &mut scratch.bfs_back_arc;
+    let ramp = &mut scratch.deform_ramp;
     let queue = &mut scratch.bfs_queue;
     for v in dist[..n].iter_mut() {
         *v = f64::INFINITY;
@@ -1390,12 +1399,20 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut Scr
     for v in is_back_arc[..n].iter_mut() {
         *v = false;
     }
+    for v in ramp[..n].iter_mut() {
+        *v = 0.0;
+    }
     queue.clear();
 
     for i in 0..n {
         if data.boundary_type[i] == BoundaryType::Convergent {
             dist[i] = 0.0;
             queue.push_back(i);
+
+            // Seed ramp from boundary age (quadratic, same as boundary forces).
+            let age = scratch.boundary_age[i].min(BOUNDARY_RAMP_STEPS);
+            let age_frac = age as f64 / BOUNDARY_RAMP_STEPS as f64;
+            ramp[i] = age_frac * age_frac;
 
             if data.crust_type[i] == CrustType::Continental {
                 let id = CellId(i as u32);
@@ -1431,6 +1448,7 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut Scr
             if new_d < dist[nb_idx] {
                 dist[nb_idx] = new_d;
                 is_back_arc[nb_idx] = is_back_arc[cell];
+                ramp[nb_idx] = ramp[cell]; // inherit source cell's ramp
                 queue.push_back(nb_idx);
             }
         }
@@ -1450,11 +1468,12 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut Scr
         }
 
         let falloff = (-d * d / two_sigma_sq).exp();
+        let cell_ramp = ramp[i];
 
         if is_back_arc[i] && d > BACK_ARC_MIN_DIST_M {
-            deltas[i] = -BACK_ARC_RATE * falloff * dt_myr;
+            deltas[i] = cell_ramp * -BACK_ARC_RATE * falloff * dt_myr;
         } else {
-            deltas[i] = OROGENY_RATE * FORELAND_OROGENY_FRACTION * falloff * dt_myr;
+            deltas[i] = cell_ramp * OROGENY_RATE * FORELAND_OROGENY_FRACTION * falloff * dt_myr;
         }
     }
 
