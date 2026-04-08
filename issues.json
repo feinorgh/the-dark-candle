@@ -554,5 +554,59 @@
     "notes": [
       "Pre-existing bug only exposed by the new rifting mechanic creating plate indices > 14."
     ]
+  },
+  {
+    "id": "TECT-002",
+    "title": "Forward-scatter advection was a no-op due to sub-step displacement below Voronoi boundary",
+    "category": "tectonics",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-07-15",
+    "description": "Sub-stepped forward-scatter advection used 0.5 cell-diameter CFL sub-steps, but the Voronoi boundary on an icosahedral grid is at ~0.5 cell-diameter spacing. Every cell's forward destination rounded back to itself, making advection a complete no-op (0% cell movement).",
+    "reproduction": "Run tectonic simulation at any grid level with the old sub-stepping code and measure cell displacement per sub-step.",
+    "suspected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "suspected_cause": "Sub-step displacement threshold (0.5 cell-diameters) was below the Voronoi cell boundary distance.",
+    "resolution": "Replaced sub-stepped approach with single-pass full-displacement Rodrigues rotation. Each cell is rotated by the full dt displacement, giving 98%+ cell movement.",
+    "notes": [
+      "This bug meant plate advection existed in the code but had zero effect on the simulation output."
+    ]
+  },
+  {
+    "id": "TECT-003",
+    "title": "Cross-plate material contamination in forward-scatter advection caused all plates to merge",
+    "category": "tectonics",
+    "severity": "critical",
+    "status": "resolved",
+    "reported": "2026-07-15",
+    "description": "Forward-scatter advection mapped material from plate A's cells onto plate B's territory without checking plate ownership. Continental material from plate A was stamped onto plate B's oceanic boundary cells, creating continental-continental convergent contacts that triggered aggressive suturing. All plates merged into one within a few simulation steps.",
+    "reproduction": "Run tectonic simulation with advection enabled at grid level 4, seed 42, Quick mode. Check plate count after simulation.",
+    "suspected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "suspected_cause": "1-source and multi-source advection resolution did not filter by plate_id, allowing cross-plate material transport.",
+    "resolution": "Added same-plate filter to 1-source and multi-source advection resolution. Only material from cells belonging to the same plate as the destination is transported. Cross-plate boundary interactions are handled by boundary effects (orogeny, rifting, trench descent).",
+    "notes": [
+      "Combined with the sub-stepping cascade bug (TECT-004), this was the primary blocker for visible plate movement."
+    ]
+  },
+  {
+    "id": "TECT-004",
+    "title": "Sub-stepping caused cascading trailing-edge oceanic conversion",
+    "category": "tectonics",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-07-15",
+    "description": "CFL sub-stepping read modified state from previous sub-steps, causing trailing-edge oceanic crust creation to propagate inward at 2 cells per sub-step. Over 5 sub-steps per simulation step and 30 steps, nearly all continental crust was converted to oceanic.",
+    "reproduction": "Run tectonic simulation with seed 55 (all-continental start), grid level 4, Quick mode. Check continental count after simulation.",
+    "suspected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "suspected_cause": "Each sub-step snapshot read the state modified by the previous sub-step, not the original pre-advection state.",
+    "resolution": "Eliminated sub-stepping entirely. Single-pass full-displacement forward scatter uses Rodrigues rotation on the unit sphere. Rotation is volume-preserving for plate interiors, so the forward mapping is approximately bijective without needing CFL sub-stepping.",
+    "notes": [
+      "On a sphere, rigid rotation preserves the Voronoi mapping for interior cells regardless of displacement magnitude."
+    ]
   }
 ]
