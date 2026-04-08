@@ -1555,6 +1555,15 @@
         "assets/data/materials/ir_emitter.material.ron"
       ],
       "notes": "EmissionSpectrum with UV/visible/near-IR/thermal-IR bands on MaterialData. Active emission (W/m\u00b2) independent of passive emissivity. Thermal coupling injects heat to neighbors. Visual rendering in all color modes. Material IDs: LedPanelWarm=111, LedPanelCool=112, IrEmitter=113."
+    },
+    {
+      "name": "Climate & Biome System",
+      "status": "complete",
+      "paths": [
+        "src/planet/biomes.rs",
+        "src/planet/celestial.rs"
+      ],
+      "description": "Insolation-based energy balance climate model: per-cell solar flux from stellar luminosity, orbital distance, axial tilt, and latitude (Berger 1978 formula). Ice-albedo feedback with iterative convergence. Meridional heat transport via Laplacian smoothing. 14 biome types from Whittaker diagram. Polar ice caps form naturally from energy distribution."
     }
   ],
   "tech_debt": [
@@ -1650,7 +1659,7 @@
       "V1 terrain pipeline (flat heightmap, ChunkManagerPlugin, MeshingPlugin, RefinementPlugin, PipelineVersion enum, --pipeline CLI flag) fully removed. V2 cubed-sphere is the sole pipeline. SharedTerrainGen/TerrainGeneratorRes kept as shared resources. ChunkMap stays empty in V2 (V2 uses V2ChunkMap). MeshTask struct kept as marker for diagnostics query. generate_chunk_mesh/lod_step/ChunkMeshResult kept for meshing tests (annotated #[allow(dead_code)])."
     ],
     "known_issues_file": "issues.json",
-    "test_count": "169 planet tests (49 tectonic, 120 other planet)"
+    "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other)"
   },
   "phases": [
     {

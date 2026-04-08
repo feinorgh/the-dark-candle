@@ -1,9 +1,12 @@
 //! Climate estimation and biome classification for planetary surfaces.
 //!
-//! A static single-column climate model:
-//! stellar insolation + latitude gradient + elevation lapse rate → mean annual
-//! temperature; ocean-proximity BFS + Clausius-Clapeyron humidity scaling →
-//! mean annual precipitation; simplified Whittaker diagram → biome type.
+//! A static single-column energy-balance climate model:
+//! per-cell mean annual insolation (from stellar luminosity, orbital distance,
+//! axial tilt, and latitude) → local energy balance with surface albedo →
+//! iterative ice-albedo feedback → meridional heat transport (Laplacian
+//! smoothing) → elevation lapse rate → mean annual temperature; then
+//! ocean-proximity BFS + Clausius-Clapeyron humidity scaling → mean annual
+//! precipitation; simplified Whittaker diagram → biome type.
 //!
 //! No full atmospheric dynamics are simulated.  The output is a plausible
 //! static climate map sufficient for biome and resource distribution.
@@ -14,14 +17,32 @@ use std::collections::VecDeque;
 
 // ─── Climate constants ────────────────────────────────────────────────────────
 
+/// Stefan-Boltzmann constant (W/(m²·K⁴)).
+const SIGMA: f64 = 5.670_374_419e-8;
 /// Environmental lapse rate (K/m): temperature decreases with altitude.
 const LAPSE_RATE: f64 = 6.5e-3;
-/// Assumed planetary albedo (fraction of stellar radiation reflected).
-const ALBEDO: f64 = 0.30;
 /// Greenhouse warming above blackbody equilibrium (K).  Earth ≈ 33 K.
 const GREENHOUSE_K: f64 = 33.0;
-/// Annual-mean equator-to-pole temperature gradient (K).  Earth ≈ 60 K.
-const POLE_GRADIENT_K: f64 = 60.0;
+/// Albedo of ice/snow-covered surfaces (fresh snow 0.8, old sea ice 0.5).
+const ICE_ALBEDO: f64 = 0.62;
+/// Albedo of open ocean.
+const OCEAN_ALBEDO: f64 = 0.06;
+/// Mean albedo of non-ice land.
+const LAND_ALBEDO: f64 = 0.25;
+/// Temperature below which the surface is considered frozen and ice albedo
+/// applies (K).  Slightly below 273 K to account for seasonal averaging.
+const ICE_THRESHOLD_K: f64 = 263.0;
+/// Number of iterations to converge the ice-albedo feedback loop.
+const ICE_ALBEDO_ITERATIONS: usize = 5;
+/// Number of equally-spaced orbital positions sampled to approximate the
+/// annual mean insolation integral.
+const ORBIT_SAMPLES: usize = 24;
+/// Number of Laplacian smoothing passes on the temperature field to
+/// approximate meridional heat transport by atmosphere and ocean currents.
+const HEAT_TRANSPORT_PASSES: usize = 4;
+/// Per-pass blending weight toward the neighbour mean in the Laplacian
+/// smoothing (dimensionless, in [0, 1]).
+const HEAT_TRANSPORT_ALPHA: f64 = 0.20;
 /// Maximum BFS hops used for ocean proximity decay.
 const OCEAN_PROX_MAX_DIST: u32 = 20;
 /// Maximum annual precipitation in the wettest coastal-tropical cells (mm/year).
@@ -37,8 +58,7 @@ const MIN_PRECIP_MM: f32 = 5.0;
 /// `data.ocean_proximity`, and `data.biome`.
 /// Must be called **after** `run_tectonics` and `run_impacts`.
 pub fn run_biomes(data: &mut PlanetData) {
-    let t_equator = equatorial_temperature(data);
-    let temperature = cell_temperatures(data, t_equator);
+    let temperature = cell_temperatures(data);
     let ocean_proximity = ocean_proximity_bfs(data);
     let precipitation = cell_precipitation(data, &temperature, &ocean_proximity);
     let biomes = assign_biomes(data, &temperature, &precipitation, &ocean_proximity);
@@ -50,39 +70,135 @@ pub fn run_biomes(data: &mut PlanetData) {
     data.biome = biomes;
 }
 
-// ─── Climate model ────────────────────────────────────────────────────────────
+// ─── Insolation model ─────────────────────────────────────────────────────────
 
-/// Mean annual temperature at the equator (K) from stellar parameters.
+/// Solar constant at the planet's orbital distance (W/m²).
 ///
-/// Stefan-Boltzmann energy balance: the planet absorbs a fraction (1−α) of the
-/// stellar flux and re-radiates as a black body. Greenhouse warming is added as
-/// a constant offset.
-///
-/// T_eq = ( L★ (1−α) / (16 π d² σ) )^0.25 + ΔT_GH
-fn equatorial_temperature(data: &PlanetData) -> f64 {
-    let luminosity = data.celestial.star.luminosity_w;
+/// S₀ = L★ / (4π d²)
+fn solar_constant(data: &PlanetData) -> f64 {
     let d = data.celestial.planet_orbit_m;
-    let sigma = 5.670_374_419e-8_f64; // Stefan-Boltzmann constant (W/(m²·K⁴))
-    let absorbed = luminosity * (1.0 - ALBEDO) / (16.0 * std::f64::consts::PI * d * d * sigma);
-    absorbed.powf(0.25) + GREENHOUSE_K
+    data.celestial.star.luminosity_w / (4.0 * std::f64::consts::PI * d * d)
 }
 
-/// Per-cell mean annual temperature (K), adjusting for latitude and elevation.
+/// Mean annual insolation at latitude `lat` for obliquity `tilt` (both rad).
 ///
-/// Latitude effect: T = T_equator − POLE_GRADIENT × sin²(lat).
-/// Elevation effect: subtract LAPSE_RATE × max(0, elevation).
+/// Numerically integrates the Berger (1978) daily insolation formula over one
+/// orbit, sampling [`ORBIT_SAMPLES`] equally-spaced orbital longitudes:
 ///
-/// In this grid's Y-up convention, `pos.y = sin(latitude)` for any cell.
-fn cell_temperatures(data: &PlanetData, t_equator: f64) -> Vec<f64> {
-    let n = data.grid.cell_count();
-    let mut temp = Vec::with_capacity(n);
-    for i in 0..n {
-        let pos = data.grid.cell_position(CellId(i as u32));
-        // pos.y == sin(latitude); sin²(lat) gives polar cooling without trig.
-        let t_lat = t_equator - POLE_GRADIENT_K * pos.y * pos.y;
-        let t_cell = t_lat - LAPSE_RATE * data.elevation[i].max(0.0);
-        temp.push(t_cell);
+///   Q_daily = (S₀/π) × (H₀·sin φ·sin δ + cos φ·cos δ·sin H₀)
+///
+/// where H₀ = arccos(−tan φ · tan δ) is the half-day hour angle (clamped for
+/// polar day/night) and δ = ε·sin(λ) is the solar declination at orbital
+/// longitude λ.
+fn mean_annual_insolation(s0: f64, lat: f64, tilt: f64) -> f64 {
+    let sin_lat = lat.sin();
+    let cos_lat = lat.cos();
+
+    let mut sum = 0.0;
+    for k in 0..ORBIT_SAMPLES {
+        let orbital_lon =
+            std::f64::consts::TAU * (k as f64 + 0.5) / ORBIT_SAMPLES as f64;
+        let declination = tilt * orbital_lon.sin();
+
+        let sin_dec = declination.sin();
+        let cos_dec = declination.cos();
+
+        // Half-day hour angle; clamped for polar night (h0=0) / midnight sun (h0=π).
+        let cos_h0 = -(sin_lat * sin_dec) / (cos_lat * cos_dec);
+        let h0 = if cos_h0 >= 1.0 {
+            0.0
+        } else if cos_h0 <= -1.0 {
+            std::f64::consts::PI
+        } else {
+            cos_h0.acos()
+        };
+
+        let daily = s0 / std::f64::consts::PI
+            * (h0 * sin_lat * sin_dec + cos_lat * cos_dec * h0.sin());
+        sum += daily.max(0.0);
     }
+    sum / ORBIT_SAMPLES as f64
+}
+
+// ─── Temperature model ────────────────────────────────────────────────────────
+
+/// Per-cell mean annual temperature (K) from insolation-based energy balance
+/// with iterative ice-albedo feedback and meridional heat transport.
+///
+/// 1. Compute per-cell mean annual insolation from stellar parameters + latitude.
+/// 2. Initialise surface albedo (ocean / land).
+/// 3. Energy balance: T = (Q·(1−α)/σ)^0.25 + ΔT_greenhouse − lapse_rate × altitude.
+/// 4. Where T < [`ICE_THRESHOLD_K`], switch to ice albedo; repeat for convergence.
+/// 5. Apply Laplacian smoothing to approximate atmospheric/oceanic heat transport.
+fn cell_temperatures(data: &PlanetData) -> Vec<f64> {
+    let n = data.grid.cell_count();
+    let s0 = solar_constant(data);
+    let tilt = data.celestial.axial_tilt_rad;
+
+    // Step 1: per-cell annual mean insolation (W/m²).
+    let insolation: Vec<f64> = (0..n)
+        .map(|i| {
+            let pos = data.grid.cell_position(CellId(i as u32));
+            let lat = pos.y.clamp(-1.0, 1.0).asin();
+            mean_annual_insolation(s0, lat, tilt)
+        })
+        .collect();
+
+    // Step 2: initial surface albedo from terrain type.
+    let mut albedo: Vec<f64> = (0..n)
+        .map(|i| {
+            if data.elevation[i] < 0.0 {
+                OCEAN_ALBEDO
+            } else {
+                LAND_ALBEDO
+            }
+        })
+        .collect();
+
+    // Step 3–4: iterative energy balance with ice-albedo feedback.
+    let mut temp = vec![0.0_f64; n];
+    for _ in 0..ICE_ALBEDO_ITERATIONS {
+        for i in 0..n {
+            let absorbed = insolation[i] * (1.0 - albedo[i]);
+            let t_radiative = if absorbed > 0.0 {
+                (absorbed / SIGMA).powf(0.25)
+            } else {
+                0.0
+            };
+            let t_surface = t_radiative + GREENHOUSE_K;
+            let t_cell = t_surface - LAPSE_RATE * data.elevation[i].max(0.0);
+            temp[i] = t_cell;
+
+            // Update albedo for next iteration: frozen → ice, else restore.
+            albedo[i] = if t_cell < ICE_THRESHOLD_K {
+                ICE_ALBEDO
+            } else if data.elevation[i] < 0.0 {
+                OCEAN_ALBEDO
+            } else {
+                LAND_ALBEDO
+            };
+        }
+    }
+
+    // Step 5: Laplacian smoothing (meridional heat transport).
+    // Each pass blends each cell toward its neighbour mean, respecting
+    // the spherical grid topology.
+    for _ in 0..HEAT_TRANSPORT_PASSES {
+        let snapshot = temp.clone();
+        for i in 0..n {
+            let neighbours = data.grid.cell_neighbors(CellId(i as u32));
+            if neighbours.is_empty() {
+                continue;
+            }
+            let mean: f64 = neighbours
+                .iter()
+                .map(|&nb| snapshot[nb as usize])
+                .sum::<f64>()
+                / neighbours.len() as f64;
+            temp[i] = snapshot[i] + HEAT_TRANSPORT_ALPHA * (mean - snapshot[i]);
+        }
+    }
+
     temp
 }
 
@@ -258,15 +374,55 @@ mod tests {
     }
 
     #[test]
-    fn equatorial_temperature_earth_like() {
+    fn solar_constant_earth_like() {
         let config = PlanetConfig::default(); // seed=42, Earth radius/mass
         let data = PlanetData::new(config);
-        let t = equatorial_temperature(&data);
-        // Earth's mean equatorial surface temp ≈ 300 K; allow wide range since
-        // the star parameters are randomised from the seed.
+        let s0 = solar_constant(&data);
+        // Earth's solar constant ≈ 1361 W/m²; star parameters are randomised
+        // from seed but must be in habitable-zone range.
         assert!(
-            (240.0..360.0).contains(&t),
-            "Equatorial temperature {t:.1} K out of plausible range"
+            (500.0..3000.0).contains(&s0),
+            "Solar constant {s0:.0} W/m² out of plausible range"
+        );
+    }
+
+    #[test]
+    fn insolation_higher_at_equator_than_poles() {
+        let s0 = 1361.0; // Earth-like
+        let tilt = 0.4091; // 23.44°
+        let q_equator = mean_annual_insolation(s0, 0.0, tilt);
+        let q_pole = mean_annual_insolation(s0, std::f64::consts::FRAC_PI_2, tilt);
+        assert!(
+            q_equator > q_pole * 1.5,
+            "Equatorial insolation ({q_equator:.1}) should greatly exceed polar ({q_pole:.1})"
+        );
+        // Equatorial insolation should be ~S0/π ≈ 433 W/m²
+        assert!(
+            (350.0..500.0).contains(&q_equator),
+            "Equatorial insolation {q_equator:.1} W/m² out of expected range"
+        );
+    }
+
+    #[test]
+    fn zero_tilt_gives_no_polar_insolation() {
+        let s0 = 1361.0;
+        let q_pole = mean_annual_insolation(s0, std::f64::consts::FRAC_PI_2, 0.0);
+        // With zero obliquity, the poles receive no direct sunlight.
+        assert!(
+            q_pole < 1.0,
+            "Pole insolation with zero tilt should be near zero, got {q_pole:.1}"
+        );
+    }
+
+    #[test]
+    fn high_tilt_increases_polar_insolation() {
+        let s0 = 1361.0;
+        let q_low = mean_annual_insolation(s0, std::f64::consts::FRAC_PI_2, 0.1);
+        let q_high = mean_annual_insolation(s0, std::f64::consts::FRAC_PI_2, 0.6);
+        assert!(
+            q_high > q_low * 2.0,
+            "Higher obliquity should increase polar insolation: \
+             low tilt={q_low:.1}, high tilt={q_high:.1}"
         );
     }
 
@@ -433,5 +589,60 @@ mod tests {
         // Planet has some ocean and some land.
         assert!(ocean_frac > 0.01, "Too little ocean: {ocean_frac:.2}");
         assert!(land_frac > 0.01, "Too little land: {land_frac:.2}");
+    }
+
+    #[test]
+    fn polar_cells_colder_from_insolation() {
+        // Verify the insolation-driven model produces a clear pole-equator
+        // temperature gradient — the solar energy distribution naturally
+        // cools the poles without any hardcoded gradient constant.
+        let planet = test_planet();
+        let n = planet.grid.cell_count();
+
+        let mut tropical = Vec::new();
+        let mut polar = Vec::new();
+        for i in 0..n {
+            let pos = planet.grid.cell_position(CellId(i as u32));
+            let abs_lat = pos.y.abs();
+            if abs_lat < 0.15 {
+                tropical.push(planet.temperature_k[i]);
+            } else if abs_lat > 0.85 {
+                polar.push(planet.temperature_k[i]);
+            }
+        }
+        if tropical.is_empty() || polar.is_empty() {
+            return;
+        }
+        let t_trop = tropical.iter().sum::<f32>() / tropical.len() as f32;
+        let t_pol = polar.iter().sum::<f32>() / polar.len() as f32;
+        let gradient = t_trop - t_pol;
+        assert!(
+            gradient > 15.0,
+            "Insolation-driven gradient ({gradient:.1} K) should be > 15 K \
+             (equator {t_trop:.1} K, pole {t_pol:.1} K)"
+        );
+    }
+
+    #[test]
+    fn ice_albedo_feedback_cools_frozen_cells() {
+        // Ice-albedo feedback: cells that freeze should be colder than they
+        // would be with land/ocean albedo alone, because ice reflects more
+        // sunlight.  Verify by checking that IceCap cells have lower
+        // temperature than the ice threshold.
+        let planet = test_planet();
+        let n = planet.grid.cell_count();
+        let ice_temps: Vec<f32> = (0..n)
+            .filter(|&i| planet.biome[i] == BiomeType::IceCap)
+            .map(|i| planet.temperature_k[i])
+            .collect();
+        if ice_temps.is_empty() {
+            return; // star might be too bright for any ice
+        }
+        let mean_ice = ice_temps.iter().sum::<f32>() / ice_temps.len() as f32;
+        assert!(
+            mean_ice < ICE_THRESHOLD_K as f32,
+            "Mean IceCap temperature ({mean_ice:.1} K) should be below threshold \
+             ({ICE_THRESHOLD_K:.0} K) due to albedo feedback"
+        );
     }
 }

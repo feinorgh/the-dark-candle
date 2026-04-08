@@ -115,6 +115,16 @@ pub struct CelestialSystem {
     pub planet_orbit_m: f64,
     /// Planet's orbital period around the star (s).
     pub planet_orbital_period_s: f64,
+    /// Axial tilt (obliquity) in radians.  Earth ≈ 0.4091 rad (23.44°).
+    /// Determines the equator-to-pole insolation gradient and seasonal
+    /// extremes.  Generated randomly in [0.05, 0.70] rad (≈ 3°–40°).
+    #[serde(default = "default_axial_tilt")]
+    pub axial_tilt_rad: f64,
+}
+
+/// Default axial tilt for deserialising legacy data without the field.
+fn default_axial_tilt() -> f64 {
+    0.4091 // Earth's obliquity
 }
 
 // ─── Keplerian mechanics ──────────────────────────────────────────────────────
@@ -363,6 +373,11 @@ impl CelestialSystem {
         let moons = generate_moons(&mut rng, planet_mass_kg, planet_radius_m);
         let ring = generate_ring(&mut rng, planet_radius_m);
 
+        // Axial tilt: most terrestrial planets have modest obliquity, but
+        // giant impacts can produce high tilts (Uranus ≈ 98°).  We bias toward
+        // Earth-like values: [0.05, 0.70] rad ≈ [3°, 40°].
+        let axial_tilt_rad: f64 = rng.random_range(0.05_f64..0.70_f64);
+
         Self {
             star,
             moons,
@@ -371,6 +386,7 @@ impl CelestialSystem {
             planet_radius_m,
             planet_orbit_m,
             planet_orbital_period_s,
+            axial_tilt_rad,
         }
     }
 
@@ -553,6 +569,7 @@ mod tests {
             planet_radius_m: R_EARTH,
             planet_orbit_m: AU,
             planet_orbital_period_s: 3.156e7, // ~1 year
+            axial_tilt_rad: 0.4091,           // Earth's obliquity
         }
     }
 
@@ -752,6 +769,7 @@ mod tests {
             planet_radius_m: R_EARTH,
             planet_orbit_m: AU,
             planet_orbital_period_s: 3.156e7,
+            axial_tilt_rad: 0.4091,
         };
         let eclipses = sys.find_eclipses(0.0, 1e8, 1e4);
         assert!(eclipses.is_empty(), "No moons → no eclipses");
