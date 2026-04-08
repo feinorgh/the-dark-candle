@@ -1583,10 +1583,18 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
                             data.crust_depth[i] = old_crust_depth[si];
                         } else {
                             // Trailing edge: plate has moved away from this
-                            // boundary. Fill with fresh mid-ocean ridge crust.
-                            data.crust_type[i] = CrustType::Oceanic;
-                            data.elevation[i] = SEAFLOOR_SPREADING_ELEV;
-                            data.crust_depth[i] = OCEANIC_CRUST_DEPTH;
+                            // boundary. Only create fresh oceanic crust if
+                            // the cell was already oceanic. Continental
+                            // crust is too thick and buoyant to be replaced
+                            // by oceanic through simple plate motion —
+                            // continental-to-oceanic transition is handled
+                            // by the rifting system (gradual thinning).
+                            if old_crust_type[i] == CrustType::Oceanic {
+                                data.elevation[i] = SEAFLOOR_SPREADING_ELEV;
+                                data.crust_depth[i] = OCEANIC_CRUST_DEPTH;
+                            }
+                            // Continental trailing edges: preserve crust
+                            // type and material from the snapshot.
                         }
                     }
                 }
@@ -2881,6 +2889,47 @@ mod tests {
         assert_eq!(
             walked, brute,
             "walk_nearest should find the same cell as brute-force nearest"
+        );
+    }
+
+    #[test]
+    fn advection_preserves_continental_crust() {
+        // Continental crust should not be catastrophically converted to
+        // oceanic by trailing-edge advection. On Earth ~40% of crust is
+        // continental; starting from 100% continental, the simulation
+        // should preserve a significant fraction.
+        use super::*;
+
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 5,
+            tectonic_mode: TectonicMode::Normal,
+            tectonic_age_gyr: 1.8,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        let n = data.grid.cell_count();
+        let cont_before = data
+            .crust_type
+            .iter()
+            .filter(|&&c| c == CrustType::Continental)
+            .count();
+
+        run_tectonics(&mut data, |_| {});
+
+        let cont_after = data
+            .crust_type
+            .iter()
+            .filter(|&&c| c == CrustType::Continental)
+            .count();
+        let ratio = cont_after as f64 / n as f64;
+
+        assert!(
+            ratio > 0.20,
+            "Continental crust fraction too low ({cont_before} → {cont_after}, \
+             {:.1}% of cells); trailing-edge advection should not destroy \
+             continental crust (expected >20%)",
+            ratio * 100.0,
         );
     }
 
