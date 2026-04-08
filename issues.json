@@ -621,5 +621,17 @@
     "status": "resolved",
     "resolution": "Replaced hop-based discrete falloff with continuous geodesic distance Gaussian (sigma=600km), added Laplacian smoothing passes, increased erosion to double-pass with 3% base rate.",
     "commit": "pending"
+  },
+  {
+    "id": "TECT-006",
+    "category": "feature",
+    "severity": "enhancement",
+    "title": "Volcanic terrain shaping (edifice building + mantle plume hotspots)",
+    "status": "resolved",
+    "resolution": "Implemented volcanic edifice building in apply_volcanic_terrain() with convergent/divergent/interior build rates. Added mantle plume hotspots via init_hotspots(). Continental arc volcanism now detected. 2 new tests.",
+    "affected_files": [
+      "src/planet/tectonics.rs"
+    ],
+    "commit": "e10aa6c"
   }
 ]

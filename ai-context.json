@@ -1649,7 +1649,8 @@
       "Chunk performance overhaul: shell hysteresis (snap to chunk center), shell cap at load radius, pending cap (64), collection rate balanced (32/frame), GPU noise enabled for spherical planet, cave depth capped at 200m.",
       "V1 terrain pipeline (flat heightmap, ChunkManagerPlugin, MeshingPlugin, RefinementPlugin, PipelineVersion enum, --pipeline CLI flag) fully removed. V2 cubed-sphere is the sole pipeline. SharedTerrainGen/TerrainGeneratorRes kept as shared resources. ChunkMap stays empty in V2 (V2 uses V2ChunkMap). MeshTask struct kept as marker for diagnostics query. generate_chunk_mesh/lod_step/ChunkMeshResult kept for meshing tests (annotated #[allow(dead_code)])."
     ],
-    "known_issues_file": "issues.json"
+    "known_issues_file": "issues.json",
+    "test_count": "169 planet tests (49 tectonic, 120 other planet)"
   },
   "phases": [
     {

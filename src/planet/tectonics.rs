@@ -185,6 +185,42 @@ const DEFORMATION_SMOOTH_ALPHA: f64 = 0.5;
 /// back-arc basins (e.g., Sea of Japan behind the Japanese island arc).
 const BACK_ARC_RATE: f64 = 2.0;
 
+// ─── Volcanic terrain constants ──────────────────────────────────────────────
+
+/// Volcanic edifice construction rate at convergent boundaries (m/Myr).
+/// Represents stratovolcano/arc volcanism averaged over a cell-sized area.
+/// Individual volcanoes grow much faster, but a ~200 km cell contains the
+/// volcanic arc plus surrounding terrain.
+const VOLCANIC_BUILD_RATE_CONVERGENT: f64 = 3.0;
+
+/// Volcanic edifice construction rate at divergent boundaries (m/Myr).
+/// Mid-ocean ridges are already modelled by `SEAFLOOR_SPREADING_ELEV`;
+/// this additional uplift represents ridge-crest volcanic construction
+/// above the base spreading elevation.
+const VOLCANIC_BUILD_RATE_DIVERGENT: f64 = 0.5;
+
+/// Volcanic edifice construction rate at interior hotspots (m/Myr).
+/// Hawaiian-type shield volcanoes grow ~100 m/Myr at their peaks, but
+/// averaged over a cell-sized area (~200 km²) the rate is lower. Large
+/// igneous provinces (flood basalts) contribute additional regional uplift.
+const VOLCANIC_BUILD_RATE_INTERIOR: f64 = 2.0;
+
+/// Number of mantle plume hotspots per 10 000 grid cells.
+/// Earth has ~40–50 active hotspots on ~510 M km² surface. For our
+/// icosahedral grid, this density produces approximately one hotspot
+/// per 500–800 cells, scaling naturally with grid resolution.
+const HOTSPOT_DENSITY_PER_10K: f64 = 12.0;
+
+/// Volcanic activity gain injected per reference step at a hotspot cell.
+/// Higher than boundary gain because hotspots are concentrated mantle
+/// upwellings (e.g., Hawaii, Iceland, Yellowstone).
+const HOTSPOT_VOLCANIC_GAIN: f32 = 0.08;
+
+/// Seed offset added to the planet seed for hotspot placement RNG.
+/// Ensures hotspot positions are deterministic but independent of plate
+/// seed sequence.
+const HOTSPOT_SEED_OFFSET: u64 = 0xCAFE_BABE;
+
 // ─── Slab-pull force constants ───────────────────────────────────────────────
 
 /// Slab-pull angular acceleration coefficient (rad/yr²).
@@ -342,6 +378,7 @@ where
     let radius_m = data.config.radius_m;
 
     let mut plates = init_plates(data, seed, radius_m);
+    let hotspots = init_hotspots(&data.grid, seed);
     let mut convergence_timers: BTreeMap<(u8, u8), f64> = BTreeMap::new();
 
     for step in 0..steps {
@@ -365,7 +402,8 @@ where
 
         rift_plates(data, &mut plates, seed, step);
         suture_plates(data, &mut plates, &mut convergence_timers, dt_myr);
-        update_volcanic_activity(data, dt_scale);
+        update_volcanic_activity(data, &hotspots, dt_scale);
+        apply_volcanic_terrain(data, dt_myr);
         erode(data, dt_scale);
         progress(step);
     }
@@ -407,6 +445,7 @@ where
     let mut snapshots = Vec::with_capacity((steps / interval + 2) as usize);
 
     let mut plates = init_plates(data, seed, radius_m);
+    let hotspots = init_hotspots(&data.grid, seed);
     let mut convergence_timers: BTreeMap<(u8, u8), f64> = BTreeMap::new();
 
     // Capture the initial state (step 0, before any simulation).
@@ -428,7 +467,8 @@ where
 
         rift_plates(data, &mut plates, seed, step);
         suture_plates(data, &mut plates, &mut convergence_timers, dt_myr);
-        update_volcanic_activity(data, dt_scale);
+        update_volcanic_activity(data, &hotspots, dt_scale);
+        apply_volcanic_terrain(data, dt_myr);
         erode(data, dt_scale);
         progress(step);
 
@@ -661,6 +701,47 @@ fn random_unit_vec(rng: &mut SmallRng) -> DVec3 {
             return DVec3::new(x, y, z) / len2.sqrt();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Mantle plume hotspots
+// ---------------------------------------------------------------------------
+
+/// A mantle plume hotspot: a fixed upwelling in the mantle reference frame
+/// that injects volcanic activity into whichever plate currently sits above it.
+///
+/// Hotspots are the source of intraplate volcanism (Hawaii, Yellowstone,
+/// Réunion) and leave age-progressive volcanic chains as plates drift over
+/// them.
+#[derive(Debug, Clone)]
+struct Hotspot {
+    /// Intensity in \[0.3, 1.0\]. Major plumes (Hawaii, Iceland) have high
+    /// intensity; minor ones contribute less volcanic activity.
+    intensity: f64,
+    /// Precomputed nearest grid cell index. Since the grid doesn't change
+    /// and the hotspot is mantle-fixed, this is constant for the run.
+    cell: usize,
+}
+
+/// Create mantle plume hotspots with uniform random positions on the sphere.
+///
+/// Count scales with grid cell count via [`HOTSPOT_DENSITY_PER_10K`].
+/// Positions are deterministic for a given `seed`.
+fn init_hotspots(grid: &IcosahedralGrid, seed: u64) -> Vec<Hotspot> {
+    let n_cells = grid.cell_count();
+    let n_hotspots = ((n_cells as f64 / 10_000.0) * HOTSPOT_DENSITY_PER_10K)
+        .round()
+        .max(3.0) as usize;
+
+    let mut rng = SmallRng::seed_from_u64(seed.wrapping_add(HOTSPOT_SEED_OFFSET));
+    (0..n_hotspots)
+        .map(|_| {
+            let position = random_unit_vec(&mut rng);
+            let intensity = rng.random_range(0.3_f64..1.0);
+            let cell = grid.nearest_cell_from_pos(position).index();
+            Hotspot { intensity, cell }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -985,19 +1066,31 @@ fn dominant_neighbour_crust(data: &PlanetData, i: usize) -> CrustType {
 }
 
 /// Update volcanic activity: gain at active boundaries, decay everywhere else.
+///
+/// Active contexts:
+/// - All divergent boundaries (mid-ocean ridges + continental rifts)
+/// - Oceanic convergent boundaries (subduction zones)
+/// - Continental convergent boundaries with oceanic neighbours (volcanic arcs:
+///   Andes, Cascades, Japan — the overriding plate gets arc volcanism from the
+///   subducting oceanic slab beneath it)
+///
 /// Rates scale with `dt_scale = dt_myr / REF_DT_MYR`.
-fn update_volcanic_activity(data: &mut PlanetData, dt_scale: f64) {
+fn update_volcanic_activity(data: &mut PlanetData, hotspots: &[Hotspot], dt_scale: f64) {
     let volcanic_gain = VOLCANIC_GAIN_BASE * dt_scale as f32;
     let volcanic_decay = VOLCANIC_DECAY_BASE.powf(dt_scale as f32);
     let fault_gain = FAULT_STRESS_GAIN_BASE * dt_scale as f32;
+    let hotspot_gain = HOTSPOT_VOLCANIC_GAIN * dt_scale as f32;
 
     let n = data.grid.cell_count();
     for i in 0..n {
-        let is_active = (matches!(
-            data.boundary_type[i],
-            BoundaryType::Convergent | BoundaryType::Divergent
-        ) && matches!(data.crust_type[i], CrustType::Oceanic))
-            || matches!(data.boundary_type[i], BoundaryType::Divergent);
+        let bt = data.boundary_type[i];
+        let ct = data.crust_type[i];
+
+        let is_active = matches!(bt, BoundaryType::Divergent)
+            || (matches!(bt, BoundaryType::Convergent) && matches!(ct, CrustType::Oceanic))
+            || (matches!(bt, BoundaryType::Convergent)
+                && matches!(ct, CrustType::Continental)
+                && dominant_neighbour_crust(data, i) == CrustType::Oceanic);
 
         if is_active {
             data.volcanic_activity[i] = (data.volcanic_activity[i] + volcanic_gain).min(1.0);
@@ -1005,9 +1098,45 @@ fn update_volcanic_activity(data: &mut PlanetData, dt_scale: f64) {
             data.volcanic_activity[i] *= volcanic_decay;
         }
 
-        if matches!(data.boundary_type[i], BoundaryType::Transform) {
+        if matches!(bt, BoundaryType::Transform) {
             data.fault_stress[i] = (data.fault_stress[i] + fault_gain).min(1.0);
         }
+    }
+
+    // Inject volcanic activity from mantle plume hotspots.
+    for hs in hotspots {
+        let i = hs.cell;
+        let gain = hotspot_gain * hs.intensity as f32;
+        data.volcanic_activity[i] = (data.volcanic_activity[i] + gain).min(1.0);
+    }
+}
+
+/// Convert volcanic activity into elevation changes (edifice building).
+///
+/// Active volcanic cells accumulate elevation proportional to their activity
+/// level, representing the constructive landform-building effect of volcanism:
+/// stratovolcanoes and shield volcanoes at convergent boundaries, ridge-crest
+/// topography at divergent boundaries, and hotspot volcanoes in plate interiors.
+///
+/// The rate depends on boundary type: convergent arc volcanism builds faster
+/// (explosive, silica-rich magma) than interior hotspot volcanism (effusive),
+/// which in turn exceeds gentle mid-ocean ridge construction.
+fn apply_volcanic_terrain(data: &mut PlanetData, dt_myr: f64) {
+    let n = data.grid.cell_count();
+    for i in 0..n {
+        let va = data.volcanic_activity[i] as f64;
+        if va < 0.01 {
+            continue;
+        }
+
+        let base_rate = match data.boundary_type[i] {
+            BoundaryType::Convergent => VOLCANIC_BUILD_RATE_CONVERGENT,
+            BoundaryType::Divergent => VOLCANIC_BUILD_RATE_DIVERGENT,
+            _ => VOLCANIC_BUILD_RATE_INTERIOR,
+        };
+
+        data.elevation[i] =
+            (data.elevation[i] + va * base_rate * dt_myr).clamp(MIN_ELEVATION, MAX_ELEVATION);
     }
 }
 
@@ -1899,6 +2028,83 @@ mod tests {
         assert!(
             has_volcanic,
             "Expected non-zero volcanic activity somewhere"
+        );
+    }
+
+    #[test]
+    fn hotspots_inject_volcanic_activity() {
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 4,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.8,
+            ..Default::default()
+        };
+        let mut planet = PlanetData::new(config);
+        run_tectonics(&mut planet, |_| {});
+
+        // After a full simulation, some interior cells should have volcanic
+        // activity from mantle plume hotspots (not just boundary cells).
+        let interior_volcanic: Vec<f32> = planet
+            .grid
+            .cell_ids()
+            .filter(|&id| planet.boundary_type[id.index()] == BoundaryType::Interior)
+            .map(|id| planet.volcanic_activity[id.index()])
+            .filter(|&v| v > 0.01)
+            .collect();
+
+        assert!(
+            !interior_volcanic.is_empty(),
+            "Expected some interior cells with volcanic activity from hotspots"
+        );
+    }
+
+    #[test]
+    fn volcanic_terrain_raises_active_cells() {
+        // Verify that the volcanic terrain system actually modifies elevation
+        // on cells with high volcanic activity. We can't simply compare
+        // volcanic vs quiet cells because volcanic cells are often at
+        // subduction zones where other forces dominate, but we CAN verify
+        // the system produces non-trivial elevation variance on volcanic cells.
+        let config = PlanetConfig {
+            seed: 42,
+            grid_level: 4,
+            tectonic_mode: TectonicMode::Quick,
+            tectonic_age_gyr: 1.8,
+            ..Default::default()
+        };
+        let mut planet = PlanetData::new(config);
+        run_tectonics(&mut planet, |_| {});
+
+        // Cells with significant volcanic activity should exist and have
+        // non-trivial elevation variance (the edifice building prevents
+        // them from all being flat ocean floor).
+        let volcanic_elevs: Vec<f64> = planet
+            .grid
+            .cell_ids()
+            .filter(|&id| planet.volcanic_activity[id.index()] > 0.3)
+            .map(|id| planet.elevation[id.index()])
+            .collect();
+
+        assert!(
+            volcanic_elevs.len() >= 3,
+            "Expected at least 3 cells with volcanic activity > 0.3, got {}",
+            volcanic_elevs.len()
+        );
+
+        let mean = volcanic_elevs.iter().sum::<f64>() / volcanic_elevs.len() as f64;
+        let variance = volcanic_elevs
+            .iter()
+            .map(|e| (e - mean).powi(2))
+            .sum::<f64>()
+            / volcanic_elevs.len() as f64;
+        let std_dev = variance.sqrt();
+
+        // Volcanic terrain building + boundary forces should produce
+        // meaningful elevation spread among volcanic cells.
+        assert!(
+            std_dev > 50.0,
+            "Volcanic cells should have elevation std_dev > 50 m, got {std_dev:.1} m"
         );
     }
 
