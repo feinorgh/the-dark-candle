@@ -33,6 +33,63 @@ use crate::planet::grid::CellId;
 use crate::planet::grid::IcosahedralGrid;
 use crate::planet::{BoundaryType, CrustType, PlanetData};
 
+/// Pre-allocated scratch buffers reused across simulation steps.
+///
+/// Every step of the tectonic simulation needs temporary copies of per-cell
+/// arrays for read-from-old / write-to-current patterns.  Allocating these
+/// each step is wasteful: at L7 (164K cells) × 200 steps, that's thousands
+/// of heap allocations.  This struct hoists them out of the loop.
+struct ScratchBuffers {
+    // Advection snapshots
+    old_plate_id: Vec<u8>,
+    old_crust_type: Vec<CrustType>,
+    old_elevation: Vec<f64>,
+    old_crust_depth: Vec<f32>,
+    // Advection forward-scatter bookkeeping
+    fwd_dest: Vec<usize>,
+    source_count: Vec<u16>,
+    single_source: Vec<usize>,
+    multi_sources: Vec<Vec<usize>>,
+    // Boundary normals (recomputed every step)
+    boundary_normals: Vec<DVec3>,
+    // Deformation zone BFS
+    bfs_dist: Vec<f64>,
+    bfs_back_arc: Vec<bool>,
+    bfs_queue: VecDeque<usize>,
+    deform_deltas: Vec<f64>,
+    deform_prev: Vec<f64>,
+    // Erosion swap buffer
+    erode_buf: Vec<f64>,
+    // Strain diffusion swap buffer
+    strain_buf: Vec<f32>,
+    // Boundary-force deltas
+    force_deltas: Vec<f64>,
+}
+
+impl ScratchBuffers {
+    fn new(n: usize) -> Self {
+        Self {
+            old_plate_id: vec![0; n],
+            old_crust_type: vec![CrustType::default(); n],
+            old_elevation: vec![0.0; n],
+            old_crust_depth: vec![0.0; n],
+            fwd_dest: vec![0; n],
+            source_count: vec![0; n],
+            single_source: vec![0; n],
+            multi_sources: vec![Vec::new(); n],
+            boundary_normals: vec![DVec3::ZERO; n],
+            bfs_dist: vec![f64::INFINITY; n],
+            bfs_back_arc: vec![false; n],
+            bfs_queue: VecDeque::with_capacity(n / 4),
+            deform_deltas: vec![0.0; n],
+            deform_prev: vec![0.0; n],
+            erode_buf: vec![0.0; n],
+            strain_buf: vec![0.0; n],
+            force_deltas: vec![0.0; n],
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Constants — all rates are per million years (Myr), scaled by dt each step
 // ---------------------------------------------------------------------------
@@ -380,31 +437,27 @@ where
     let mut plates = init_plates(data, seed, radius_m);
     let hotspots = init_hotspots(&data.grid, seed);
     let mut convergence_timers: BTreeMap<(u8, u8), f64> = BTreeMap::new();
+    let mut scratch = ScratchBuffers::new(data.grid.cell_count());
 
     for step in 0..steps {
-        // Advect material FIRST: move elevation, crust type, plate IDs
-        // according to plate velocities. This is the core of continental drift.
-        advect_plate_material(data, &plates, dt_yr);
+        advect_plate_material(data, &plates, dt_yr, &mut scratch);
 
-        // Detect boundaries on the POST-advection geometry so all subsequent
-        // systems (strain, orogeny, slab pull) see the current layout.
-        let boundary_normals = precompute_boundary_normals(data);
-        detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+        precompute_boundary_normals(data, &mut scratch.boundary_normals);
+        detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
 
-        // Compute slab-pull forces from boundary geometry, then evolve velocities.
-        let slab_pull = compute_slab_pull_torques(data, &plates, &boundary_normals);
+        let slab_pull =
+            compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
-        // Apply boundary effects to material at current positions.
-        propagate_strain(data, dt_scale);
-        apply_boundary_forces(data, dt_myr);
-        apply_deformation_zones(data, dt_myr);
+        propagate_strain(data, &mut scratch.strain_buf, dt_scale);
+        apply_boundary_forces(data, &mut scratch.force_deltas, dt_myr);
+        apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
         suture_plates(data, &mut plates, &mut convergence_timers, dt_myr);
         update_volcanic_activity(data, &hotspots, dt_scale);
         apply_volcanic_terrain(data, dt_myr);
-        erode(data, dt_scale);
+        erode(data, &mut scratch.erode_buf, dt_scale);
         progress(step);
     }
 
@@ -447,29 +500,30 @@ where
     let mut plates = init_plates(data, seed, radius_m);
     let hotspots = init_hotspots(&data.grid, seed);
     let mut convergence_timers: BTreeMap<(u8, u8), f64> = BTreeMap::new();
+    let mut scratch = ScratchBuffers::new(data.grid.cell_count());
 
     // Capture the initial state (step 0, before any simulation).
     snapshots.push(capture_snapshot(data, 0, 0.0));
 
     for step in 0..steps {
-        // Advect material FIRST.
-        advect_plate_material(data, &plates, dt_yr);
+        advect_plate_material(data, &plates, dt_yr, &mut scratch);
 
-        let boundary_normals = precompute_boundary_normals(data);
-        detect_boundaries(data, &plates, &boundary_normals, dt_yr);
+        precompute_boundary_normals(data, &mut scratch.boundary_normals);
+        detect_boundaries(data, &plates, &scratch.boundary_normals, dt_yr);
 
-        let slab_pull = compute_slab_pull_torques(data, &plates, &boundary_normals);
+        let slab_pull =
+            compute_slab_pull_torques(data, &plates, &scratch.boundary_normals);
         evolve_plate_velocities(&mut plates, &slab_pull, seed, step, dt_yr, dt_myr, radius_m);
 
-        propagate_strain(data, dt_scale);
-        apply_boundary_forces(data, dt_myr);
-        apply_deformation_zones(data, dt_myr);
+        propagate_strain(data, &mut scratch.strain_buf, dt_scale);
+        apply_boundary_forces(data, &mut scratch.force_deltas, dt_myr);
+        apply_deformation_zones(data, dt_myr, &mut scratch);
 
         rift_plates(data, &mut plates, seed, step);
         suture_plates(data, &mut plates, &mut convergence_timers, dt_myr);
         update_volcanic_activity(data, &hotspots, dt_scale);
         apply_volcanic_terrain(data, dt_myr);
-        erode(data, dt_scale);
+        erode(data, &mut scratch.erode_buf, dt_scale);
         progress(step);
 
         let sim_step = step + 1; // 1-based: step 0 has been run
@@ -907,9 +961,10 @@ fn compute_slab_pull_torques(
 ///
 /// Recomputed every step because plate assignments change due to subduction,
 /// rifting, and suturing.
-fn precompute_boundary_normals(data: &PlanetData) -> Vec<DVec3> {
-    let n = data.grid.cell_count();
-    let mut normals = vec![DVec3::ZERO; n];
+fn precompute_boundary_normals(data: &PlanetData, normals: &mut [DVec3]) {
+    for v in normals.iter_mut() {
+        *v = DVec3::ZERO;
+    }
 
     for id in data.grid.cell_ids() {
         let i = id.index();
@@ -917,7 +972,6 @@ fn precompute_boundary_normals(data: &PlanetData) -> Vec<DVec3> {
         for &nb in data.grid.cell_neighbors(id) {
             if data.plate_id[nb as usize] != data.plate_id[i] {
                 let pos_b = data.grid.cell_position(CellId(nb));
-                // Tangent on the sphere surface pointing from a to b.
                 let tangent = great_circle_tangent(pos_a, pos_b);
                 normals[i] += tangent;
             }
@@ -926,8 +980,6 @@ fn precompute_boundary_normals(data: &PlanetData) -> Vec<DVec3> {
             normals[i] = normals[i].normalize();
         }
     }
-
-    normals
 }
 
 /// Unit tangent vector along the great circle from `a` to `b`, lying in
@@ -1007,9 +1059,11 @@ fn detect_boundaries(
 /// Apply height changes at boundary cells based on boundary type and the
 /// crust types of interacting plates. Height deltas scale with `dt_myr`.
 #[allow(clippy::needless_range_loop)] // multiple parallel arrays indexed by i
-fn apply_boundary_forces(data: &mut PlanetData, dt_myr: f64) {
+fn apply_boundary_forces(data: &mut PlanetData, deltas: &mut [f64], dt_myr: f64) {
     let n = data.grid.cell_count();
-    let mut deltas: Vec<f64> = vec![0.0; n];
+    for d in deltas[..n].iter_mut() {
+        *d = 0.0;
+    }
 
     for i in 0..n {
         match data.boundary_type[i] {
@@ -1018,14 +1072,10 @@ fn apply_boundary_forces(data: &mut PlanetData, dt_myr: f64) {
                 let neighbour_crust = dominant_neighbour_crust(data, i);
                 let my_crust = data.crust_type[i];
                 deltas[i] += match (my_crust, neighbour_crust) {
-                    // Continent-Continent: orogeny on both sides.
                     (CrustType::Continental, CrustType::Continental) => OROGENY_RATE * dt_myr,
-                    // Ocean-Continent: arc volcano on continental, trench on oceanic.
                     (CrustType::Continental, CrustType::Oceanic) => ARC_RATE * dt_myr,
                     (CrustType::Oceanic, CrustType::Continental) => -TRENCH_RATE * dt_myr,
-                    // Ocean-Ocean: one side builds island arc, other subducts.
                     (CrustType::Oceanic, CrustType::Oceanic) => {
-                        // Alternate which side rises based on cell parity.
                         if i % 2 == 0 {
                             ISLAND_ARC_RATE * dt_myr
                         } else {
@@ -1147,12 +1197,12 @@ fn apply_volcanic_terrain(data: &mut PlanetData, dt_myr: f64) {
 /// rate that would flatten mountains unrealistically.
 ///
 /// Erosion rate scales with `dt_scale = dt_myr / REF_DT_MYR`.
-fn erode(data: &mut PlanetData, dt_scale: f64) {
+fn erode(data: &mut PlanetData, buf: &mut [f64], dt_scale: f64) {
     let erosion_rate = EROSION_RATE_BASE * dt_scale;
     let n = data.grid.cell_count();
 
     for _pass in 0..2 {
-        let old_elev = data.elevation.clone();
+        buf[..n].copy_from_slice(&data.elevation[..n]);
         for i in 0..n {
             let id = CellId(i as u32);
             let neighbours = data.grid.cell_neighbors(id);
@@ -1161,11 +1211,11 @@ fn erode(data: &mut PlanetData, dt_scale: f64) {
             }
             let mean: f64 = neighbours
                 .iter()
-                .map(|&nb| old_elev[nb as usize])
+                .map(|&nb| buf[nb as usize])
                 .sum::<f64>()
                 / neighbours.len() as f64;
-            let delta = erosion_rate * (mean - old_elev[i]);
-            data.elevation[i] = (old_elev[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
+            let delta = erosion_rate * (mean - buf[i]);
+            data.elevation[i] = (buf[i] + delta).clamp(MIN_ELEVATION, MAX_ELEVATION);
         }
     }
 }
@@ -1183,7 +1233,7 @@ fn erode(data: &mut PlanetData, dt_scale: f64) {
 ///    crust conductivity. Continental crust transmits strain ~2× further than
 ///    oceanic, producing wide deformation zones like the Tibetan Plateau.
 /// 3. **Relaxation** — Viscous decay prevents unbounded interior accumulation.
-fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
+fn propagate_strain(data: &mut PlanetData, buf: &mut [f32], dt_scale: f64) {
     let n = data.grid.cell_count();
     let gain_convergent = STRAIN_GAIN_CONVERGENT * dt_scale as f32;
     let gain_divergent = STRAIN_GAIN_DIVERGENT * dt_scale as f32;
@@ -1203,7 +1253,7 @@ fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
     }
 
     // Phase 2: diffuse strain within each plate.
-    let old_strain = data.strain.clone();
+    buf[..n].copy_from_slice(&data.strain[..n]);
     for i in 0..n {
         let id = CellId(i as u32);
         let neighbors = data.grid.cell_neighbors(id);
@@ -1216,7 +1266,7 @@ fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
         for &nb in neighbors {
             let nb_idx = nb as usize;
             if data.plate_id[nb_idx] == data.plate_id[i] {
-                sum += old_strain[nb_idx] as f64;
+                sum += buf[nb_idx] as f64;
                 count += 1;
             }
         }
@@ -1227,8 +1277,8 @@ fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
                 CrustType::Continental => CONTINENTAL_STRAIN_CONDUCTIVITY,
                 CrustType::Oceanic => 1.0,
             };
-            let delta = diffusion_rate * conductivity * (mean - old_strain[i] as f64);
-            data.strain[i] = (old_strain[i] as f64 + delta).clamp(0.0, 1.0) as f32;
+            let delta = diffusion_rate * conductivity * (mean - buf[i] as f64);
+            data.strain[i] = (buf[i] as f64 + delta).clamp(0.0, 1.0) as f32;
         }
     }
 
@@ -1257,22 +1307,27 @@ fn propagate_strain(data: &mut PlanetData, dt_scale: f64) {
 /// After computing raw deltas from the distance field, several Laplacian
 /// smoothing passes are applied to eliminate any residual discrete-grid
 /// banding from the BFS traversal.
-fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
+fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64, scratch: &mut ScratchBuffers) {
     let n = data.grid.cell_count();
     let radius = data.config.radius_m;
 
     // ── Phase 1: BFS from convergent boundaries, tracking geodesic distance ──
-    let mut dist = vec![f64::INFINITY; n];
-    let mut is_back_arc = vec![false; n];
-    let mut queue = VecDeque::new();
+    let dist = &mut scratch.bfs_dist;
+    let is_back_arc = &mut scratch.bfs_back_arc;
+    let queue = &mut scratch.bfs_queue;
+    for v in dist[..n].iter_mut() {
+        *v = f64::INFINITY;
+    }
+    for v in is_back_arc[..n].iter_mut() {
+        *v = false;
+    }
+    queue.clear();
 
     for i in 0..n {
         if data.boundary_type[i] == BoundaryType::Convergent {
             dist[i] = 0.0;
             queue.push_back(i);
 
-            // Detect back-arc context: this cell is continental, but its
-            // cross-plate neighbour is oceanic (subduction zone).
             if data.crust_type[i] == CrustType::Continental {
                 let id = CellId(i as u32);
                 is_back_arc[i] = data.grid.cell_neighbors(id).iter().any(|&nb| {
@@ -1284,9 +1339,6 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
         }
     }
 
-    // SPFA-style BFS: edges are weighted by actual geodesic distance between
-    // cell centres (chord on the unit sphere × radius ≈ arc distance for
-    // the small angles between adjacent cells).
     while let Some(cell) = queue.pop_front() {
         let d = dist[cell];
         if d >= DEFORMATION_MAX_DIST_M {
@@ -1299,7 +1351,6 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
 
         for &nb in data.grid.cell_neighbors(id) {
             let nb_idx = nb as usize;
-            // Only spread within the same plate (intraplate deformation).
             if data.plate_id[nb_idx] != my_plate {
                 continue;
             }
@@ -1310,7 +1361,6 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
 
             if new_d < dist[nb_idx] {
                 dist[nb_idx] = new_d;
-                // Propagate back-arc context from nearest boundary cell.
                 is_back_arc[nb_idx] = is_back_arc[cell];
                 queue.push_back(nb_idx);
             }
@@ -1319,12 +1369,13 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
 
     // ── Phase 2: Compute deformation deltas from the distance field ──────────
     let two_sigma_sq = 2.0 * DEFORMATION_DECAY_DIST_M * DEFORMATION_DECAY_DIST_M;
-    let mut deltas = vec![0.0_f64; n];
+    let deltas = &mut scratch.deform_deltas;
+    for d in deltas[..n].iter_mut() {
+        *d = 0.0;
+    }
 
     for i in 0..n {
         let d = dist[i];
-        // Skip boundary cells (d == 0, handled by apply_boundary_forces)
-        // and unreachable cells (d == INFINITY).
         if d <= 0.0 || d == f64::INFINITY {
             continue;
         }
@@ -1332,17 +1383,16 @@ fn apply_deformation_zones(data: &mut PlanetData, dt_myr: f64) {
         let falloff = (-d * d / two_sigma_sq).exp();
 
         if is_back_arc[i] && d > BACK_ARC_MIN_DIST_M {
-            // Back-arc extension: subsidence behind volcanic arc.
             deltas[i] = -BACK_ARC_RATE * falloff * dt_myr;
         } else {
-            // Foreland uplift: orogeny spreading inland.
             deltas[i] = OROGENY_RATE * FORELAND_OROGENY_FRACTION * falloff * dt_myr;
         }
     }
 
     // ── Phase 3: Laplacian smoothing of deltas (respecting plate boundaries) ─
+    let prev = &mut scratch.deform_prev;
     for _ in 0..DEFORMATION_SMOOTH_PASSES {
-        let prev = deltas.clone();
+        prev[..n].copy_from_slice(&deltas[..n]);
         for i in 0..n {
             let id = CellId(i as u32);
             let my_plate = data.plate_id[i];
@@ -1716,23 +1766,30 @@ fn walk_nearest(grid: &IcosahedralGrid, start: CellId, target_pos: DVec3) -> Cel
 /// Only same-plate material is transported; cross-plate boundary interactions
 /// are handled by `apply_boundary_forces` / `apply_deformation_zones`.
 #[allow(clippy::needless_range_loop)]
-fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
+fn advect_plate_material(
+    data: &mut PlanetData,
+    plates: &[Plate],
+    dt_yr: f64,
+    scratch: &mut ScratchBuffers,
+) {
     let n = data.grid.cell_count();
     let n_plates = plates.len();
     if n == 0 || n_plates == 0 {
         return;
     }
 
-    // Snapshot original state (read from snapshot, write to current).
-    // Strain is NOT advected — it's grid-relative, recomputed each step.
-    let old_plate_id = data.plate_id.clone();
-    let old_crust_type = data.crust_type.clone();
-    let old_elevation = data.elevation.clone();
-    let old_crust_depth = data.crust_depth.clone();
+    // Snapshot original state into scratch buffers (no heap allocation).
+    let old_plate_id = &mut scratch.old_plate_id;
+    let old_crust_type = &mut scratch.old_crust_type;
+    let old_elevation = &mut scratch.old_elevation;
+    let old_crust_depth = &mut scratch.old_crust_depth;
+    old_plate_id[..n].copy_from_slice(&data.plate_id[..n]);
+    old_crust_type[..n].copy_from_slice(&data.crust_type[..n]);
+    old_elevation[..n].copy_from_slice(&data.elevation[..n]);
+    old_crust_depth[..n].copy_from_slice(&data.crust_depth[..n]);
 
-    // Phase 1: forward scatter using Rodrigues rotation (stays on sphere).
-    // Each cell maps to its destination under full-step rotation.
-    let mut fwd_dest = vec![0_usize; n];
+    // Phase 1: forward scatter using Rodrigues rotation.
+    let fwd_dest = &mut scratch.fwd_dest;
     for i in 0..n {
         let id = CellId(i as u32);
         let pos = data.grid.cell_position(id);
@@ -1745,13 +1802,19 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
         fwd_dest[i] = walk_nearest(&data.grid, id, dest_pos).index();
     }
 
-    // Phase 2: build per-destination source lists.
-    let mut source_count = vec![0_u16; n];
+    // Phase 2: build per-destination source lists (reuse scratch vecs).
+    let source_count = &mut scratch.source_count;
+    let single_source = &mut scratch.single_source;
+    let multi_sources = &mut scratch.multi_sources;
+    for v in source_count[..n].iter_mut() {
+        *v = 0;
+    }
+    for ms in multi_sources[..n].iter_mut() {
+        ms.clear();
+    }
     for i in 0..n {
         source_count[fwd_dest[i]] += 1;
     }
-    let mut single_source = vec![0_usize; n];
-    let mut multi_sources: Vec<Vec<usize>> = vec![Vec::new(); n];
     for i in 0..n {
         let d = fwd_dest[i];
         if source_count[d] == 1 {
@@ -1765,21 +1828,19 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
     for i in 0..n {
         match source_count[i] {
             0 => {
-                // No material reaches this cell via forward scatter.
                 let at_boundary = data
                     .grid
                     .cell_neighbors(CellId(i as u32))
                     .iter()
                     .any(|&nb| old_plate_id[nb as usize] != old_plate_id[i]);
                 if at_boundary {
-                    // Use backward trace to distinguish trailing vs leading edge.
                     let pid = old_plate_id[i] as usize;
                     if pid < n_plates {
                         let pos = data.grid.cell_position(CellId(i as u32));
                         let src_pos = rodrigues_rotate(
                             pos,
                             plates[pid].angular_velocity,
-                            -dt_yr, // trace backward
+                            -dt_yr,
                         );
                         let src = walk_nearest(
                             &data.grid,
@@ -1788,35 +1849,17 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
                         );
                         let si = src.index();
                         if old_plate_id[si] == old_plate_id[i] {
-                            // Leading edge: material from plate interior
-                            // should fill this cell. Copy from source.
                             data.elevation[i] = old_elevation[si];
                             data.crust_type[i] = old_crust_type[si];
                             data.crust_depth[i] = old_crust_depth[si];
-                        } else {
-                            // Trailing edge: plate has moved away from this
-                            // boundary. Only create fresh oceanic crust if
-                            // the cell was already oceanic. Continental
-                            // crust is too thick and buoyant to be replaced
-                            // by oceanic through simple plate motion —
-                            // continental-to-oceanic transition is handled
-                            // by the rifting system (gradual thinning).
-                            if old_crust_type[i] == CrustType::Oceanic {
-                                data.elevation[i] = SEAFLOOR_SPREADING_ELEV;
-                                data.crust_depth[i] = OCEANIC_CRUST_DEPTH;
-                            }
-                            // Continental trailing edges: preserve crust
-                            // type and material from the snapshot.
+                        } else if old_crust_type[i] == CrustType::Oceanic {
+                            data.elevation[i] = SEAFLOOR_SPREADING_ELEV;
+                            data.crust_depth[i] = OCEANIC_CRUST_DEPTH;
                         }
                     }
                 }
-                // Interior 0-source: old values remain untouched (mapping
-                // artifact from grid irregularity; rare for plate interiors).
             }
             1 => {
-                // Clean 1:1 advection — only transport within the same
-                // plate. Cross-plate material flow is handled by boundary
-                // effects (orogeny, rifting, trench descent, etc.).
                 let s = single_source[i];
                 if old_plate_id[s] == old_plate_id[i] {
                     data.crust_type[i] = old_crust_type[s];
@@ -1825,9 +1868,6 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
                 }
             }
             _ => {
-                // Multiple sources → convergent collision.
-                // Only consider same-plate sources; cross-plate collisions
-                // are resolved by boundary effects, not raw material swap.
                 let srcs = &multi_sources[i];
                 let same_plate: Vec<usize> = srcs
                     .iter()
@@ -1837,8 +1877,8 @@ fn advect_plate_material(data: &mut PlanetData, plates: &[Plate], dt_yr: f64) {
                 if !same_plate.is_empty() {
                     let winner = resolve_advection_collision(
                         &same_plate,
-                        &old_crust_type,
-                        &old_elevation,
+                        old_crust_type,
+                        old_elevation,
                     );
                     data.crust_type[i] = old_crust_type[winner];
                     data.elevation[i] = old_elevation[winner];
@@ -2793,7 +2833,8 @@ mod tests {
         let dt_yr = dt_myr * 1e6;
 
         let plates = init_plates(&mut data, seed, radius_m);
-        let boundary_normals = precompute_boundary_normals(&data);
+        let mut boundary_normals = vec![DVec3::ZERO; data.grid.cell_count()];
+        precompute_boundary_normals(&data, &mut boundary_normals);
         detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
         let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
 
@@ -2832,10 +2873,9 @@ mod tests {
         let dt_yr = dt_myr * 1e6;
 
         let plates = init_plates(&mut data, seed, radius_m);
-        let boundary_normals = precompute_boundary_normals(&data);
+        let mut boundary_normals = vec![DVec3::ZERO; data.grid.cell_count()];
+        precompute_boundary_normals(&data, &mut boundary_normals);
         detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
-
-        // Count oceanic convergent cells per plate.
         let n = data.grid.cell_count();
         let mut oceanic_conv_count = vec![0_usize; plates.len()];
         for i in 0..n {
@@ -2882,7 +2922,8 @@ mod tests {
         let plates = init_plates(&mut data, seed, radius_m);
 
         // Run boundary detection to establish geometry.
-        let boundary_normals = precompute_boundary_normals(&data);
+        let mut boundary_normals = vec![DVec3::ZERO; data.grid.cell_count()];
+        precompute_boundary_normals(&data, &mut boundary_normals);
         detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
 
         let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
@@ -2928,7 +2969,8 @@ mod tests {
         let dt_yr = dt_myr * 1e6;
 
         let plates = init_plates(&mut data, seed, radius_m);
-        let boundary_normals = precompute_boundary_normals(&data);
+        let mut boundary_normals = vec![DVec3::ZERO; data.grid.cell_count()];
+        precompute_boundary_normals(&data, &mut boundary_normals);
         detect_boundaries(&mut data, &plates, &boundary_normals, dt_yr);
 
         let torques = compute_slab_pull_torques(&data, &plates, &boundary_normals);
