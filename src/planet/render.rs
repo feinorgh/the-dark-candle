@@ -806,7 +806,7 @@ pub fn run_globe_viewer(data: PlanetData, history: Option<TectonicHistory>) {
     .insert_resource(GlobeState {
         data,
         mode: ColourMode::Elevation,
-        exaggeration: 50.0,
+        exaggeration: 4.0,
         needs_rebuild: false,
     })
     .add_systems(Startup, setup_globe)
