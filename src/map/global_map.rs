@@ -34,9 +34,9 @@ pub fn update_global_map(
     planet_config: Option<Res<PlanetConfig>>,
     cam_q: Query<&Transform, (With<FpsCamera>, With<Player>)>,
     mut images: ResMut<Assets<Image>>,
-    mut map_node_q: Query<(&mut ImageNode, &mut Node), With<MapImageNode>>,
+    mut map_node_q: Query<(&mut ImageNode, &mut Node), (With<MapImageNode>, Without<PlayerMarker>)>,
     mut coord_text_q: Query<&mut Text, With<MapCoordText>>,
-    mut marker_q: Query<&mut Node, With<PlayerMarker>>,
+    mut marker_q: Query<&mut Node, (With<PlayerMarker>, Without<MapImageNode>)>,
     mut cache: Local<GlobalMapCache>,
 ) {
     if state.view != MapView::Global {
