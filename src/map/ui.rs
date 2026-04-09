@@ -56,6 +56,9 @@ pub struct MapImageNode;
 pub struct MapCoordText;
 
 #[derive(Component)]
+pub struct MapContainer;
+
+#[derive(Component)]
 pub struct PlayerMarker;
 
 // ---------------------------------------------------------------------------
@@ -92,24 +95,25 @@ pub fn spawn_map_overlay(mut commands: Commands, mut time: ResMut<Time<Virtual>>
                     spawn_tab_button(tabs, "Global Map", MapView::Global);
                 });
 
-            // Map image container (fills remaining space)
+            // Map image container (fills remaining space, clips zoomed content)
             parent
                 .spawn((
+                    MapContainer,
                     Node {
                         width: Val::Percent(90.0),
                         height: Val::Percent(75.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
+                        overflow: Overflow::clip(),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.05, 0.05, 0.08)),
                 ))
                 .with_children(|container| {
-                    // The actual map image
+                    // The actual map image (absolutely positioned for zoom/pan)
                     container.spawn((
                         MapImageNode,
                         ImageNode::default(),
                         Node {
+                            position_type: PositionType::Absolute,
                             width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
                             ..default()
@@ -357,7 +361,7 @@ pub fn map_teleport(
     planet_config: Option<Res<PlanetConfig>>,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
-    map_node_q: Query<(&ComputedNode, &GlobalTransform), With<MapImageNode>>,
+    map_node_q: Query<(&ComputedNode, &GlobalTransform), With<MapContainer>>,
     mut camera_q: Query<(&mut Transform, &mut FpsCamera), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {

@@ -34,7 +34,7 @@ pub fn update_global_map(
     planet_config: Option<Res<PlanetConfig>>,
     cam_q: Query<&Transform, (With<FpsCamera>, With<Player>)>,
     mut images: ResMut<Assets<Image>>,
-    mut map_node_q: Query<&mut ImageNode, With<MapImageNode>>,
+    mut map_node_q: Query<(&mut ImageNode, &mut Node), With<MapImageNode>>,
     mut coord_text_q: Query<&mut Text, With<MapCoordText>>,
     mut marker_q: Query<&mut Node, With<PlayerMarker>>,
     mut cache: Local<GlobalMapCache>,
@@ -86,9 +86,17 @@ pub fn update_global_map(
         cache.handle = Some(images.add(image));
     }
 
-    // Update the UI image.
-    if let (Ok(mut img_node), Some(h)) = (map_node_q.single_mut(), cache.handle.clone()) {
+    // Update the UI image and apply zoom/pan transform.
+    if let (Ok((mut img_node, mut node)), Some(h)) = (map_node_q.single_mut(), cache.handle.clone())
+    {
         img_node.image = h;
+        let zoom = state.global_zoom;
+        let pan = state.global_pan;
+        node.width = Val::Percent(zoom * 100.0);
+        node.height = Val::Percent(zoom * 100.0);
+        // Position so that the viewport center shows image UV (0.5 - pan.x, 0.5 - pan.y).
+        node.left = Val::Percent((1.0 - zoom) * 50.0 + zoom * pan.x * 100.0);
+        node.top = Val::Percent((1.0 - zoom) * 50.0 + zoom * pan.y * 100.0);
     }
 
     // Compute player position on the map.
