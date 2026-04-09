@@ -307,7 +307,7 @@ pub fn map_pan(
 pub fn pixel_to_lat_lon(
     cursor_pos: Vec2,
     container_rect: &ComputedNode,
-    container_global: &GlobalTransform,
+    container_global: &UiGlobalTransform,
     state: &MapViewState,
 ) -> Option<(f64, f64)> {
     use std::f64::consts::{PI, TAU};
@@ -318,7 +318,7 @@ pub fn pixel_to_lat_lon(
         return None;
     }
     // The node's global translation gives us the centre of the node in screen space.
-    let center = container_global.translation().truncate();
+    let center = container_global.translation;
     let half = size * 0.5;
     let min = center - half;
 
@@ -361,7 +361,7 @@ pub fn map_teleport(
     planet_config: Option<Res<PlanetConfig>>,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
-    map_node_q: Query<(&ComputedNode, &GlobalTransform), With<MapContainer>>,
+    map_node_q: Query<(&ComputedNode, &UiGlobalTransform), With<MapContainer>>,
     mut camera_q: Query<(&mut Transform, &mut FpsCamera), With<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
@@ -380,22 +380,19 @@ pub fn map_teleport(
         return;
     };
 
-    // Get the map image node's computed layout.
+    // Get the map container's computed layout.
     let Ok((computed_node, global_tf)) = map_node_q.single() else {
         return;
     };
 
     let Some((lat, lon)) = pixel_to_lat_lon(cursor_pos, computed_node, global_tf, &state) else {
-        info!("Teleport: click outside map bounds");
         return;
     };
 
     let Some(planet) = planet_config else {
-        warn!("Teleport: no PlanetConfig available");
         return;
     };
     let Some(tgen) = terrain_gen else {
-        warn!("Teleport: no terrain generator available");
         return;
     };
 
@@ -465,7 +462,7 @@ mod tests {
 
         // Simulate a 1024×512 container centered at (512, 256) in screen space.
         let computed = make_computed_node(1024.0, 512.0);
-        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+        let global_tf = UiGlobalTransform::from_translation(Vec2::new(512.0, 256.0));
 
         // Click at the center of the container.
         let cursor = Vec2::new(512.0, 256.0);
@@ -487,7 +484,7 @@ mod tests {
         };
 
         let computed = make_computed_node(1024.0, 512.0);
-        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+        let global_tf = UiGlobalTransform::from_translation(Vec2::new(512.0, 256.0));
 
         // Top-left corner: should be ~(90°N, -180°)
         let cursor = Vec2::new(0.0, 0.0);
@@ -500,7 +497,7 @@ mod tests {
     fn pixel_to_lat_lon_outside_returns_none() {
         let state = MapViewState::default();
         let computed = make_computed_node(1024.0, 512.0);
-        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+        let global_tf = UiGlobalTransform::from_translation(Vec2::new(512.0, 256.0));
 
         // Far outside the map image bounds.
         let cursor = Vec2::new(2000.0, 2000.0);
@@ -517,7 +514,7 @@ mod tests {
         };
 
         let computed = make_computed_node(1024.0, 512.0);
-        let global_tf = GlobalTransform::from_translation(Vec3::new(512.0, 256.0, 0.0));
+        let global_tf = UiGlobalTransform::from_translation(Vec2::new(512.0, 256.0));
 
         // Center click at 2× zoom with pan — should NOT be (0,0).
         let cursor = Vec2::new(512.0, 256.0);

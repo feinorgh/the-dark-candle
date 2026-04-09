@@ -27,7 +27,7 @@ pub struct GlobalMapCache {
     height: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_global_map(
     state: Res<MapViewState>,
     planetary: Option<Res<PlanetaryData>>,
