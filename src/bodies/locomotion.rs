@@ -235,7 +235,7 @@ fn find_foot_placement(
 /// Should run in `FixedUpdate` after physics integration and before rendering.
 pub fn update_locomotion(
     time: Res<Time>,
-    chunk_map: Res<ChunkMap>,
+    chunk_map: Option<Res<ChunkMap>>,
     gait_assets: Res<Assets<GaitData>>,
     chunks: Query<&Chunk>,
     mut query: Query<(
@@ -276,7 +276,9 @@ pub fn update_locomotion(
             let name = &skeleton.bone_names[i];
             if name.contains("foot") || name.contains("hoof") || name.contains("paw") {
                 let foot_world = skeleton.bone_transforms[i].translation;
-                if let Some(target) = find_foot_placement(foot_world, &chunk_map, &chunks) {
+                if let Some(ref cm) = chunk_map
+                    && let Some(target) = find_foot_placement(foot_world, cm, &chunks)
+                {
                     skeleton.ik_targets[i] = Some(target);
                 }
             }

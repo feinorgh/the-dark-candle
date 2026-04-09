@@ -2,6 +2,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::ui::IsDefaultUiCamera;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::biology::health::Health;
@@ -266,6 +267,7 @@ fn spawn_camera(
 
     commands.spawn((
         Camera3d::default(),
+        IsDefaultUiCamera,
         Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
         Bloom::NATURAL,
         atmosphere,
