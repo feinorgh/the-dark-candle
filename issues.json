@@ -715,8 +715,8 @@
     "title": "Teleport pixel_to_lat_lon queried wrong node for bounds",
     "description": "map_teleport queried MapImageNode for ComputedNode bounds, but with zoom the image is larger than the viewport. Coordinates would be wrong.",
     "status": "resolved",
-    "resolution": "Added MapContainer marker to the clipping container and query that instead. The container represents the visible viewport.",
-    "resolved_commit": "9e24340",
+    "resolution": "map_teleport queried GlobalTransform which does not exist on Bevy 0.18 UI nodes. Replaced with UiGlobalTransform. Also updated pixel_to_lat_lon signature and all unit tests.",
+    "resolved_commit": "26bc736",
     "affected_files": [
       "src/map/ui.rs"
     ]
