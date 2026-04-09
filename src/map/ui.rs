@@ -283,8 +283,8 @@ pub fn map_pan(
         let delta = motion.delta;
         if delta != Vec2::ZERO {
             let pan_speed = 0.001 / state.global_zoom;
-            state.global_pan.x -= delta.x * pan_speed;
-            state.global_pan.y -= delta.y * pan_speed;
+            state.global_pan.x += delta.x * pan_speed;
+            state.global_pan.y += delta.y * pan_speed;
             let max_pan = 0.5 - 0.5 / state.global_zoom;
             state.global_pan = state
                 .global_pan
