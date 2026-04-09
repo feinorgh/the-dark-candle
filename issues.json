@@ -679,7 +679,8 @@
       "src/world/collision.rs"
     ],
     "suspected_cause": "Default spawn at 45\u00b0N/0\u00b0E could be ocean. snap_to_surface and camera_gravity used ground_height_from_terrain_gen() (terrain surface only) without clamping to sea level, placing the player on the ocean floor.",
-    "resolution": "Three fixes: (1) snap_to_surface clamps ground height to max(terrain, sea_level+1), (2) camera_gravity applies same sea level clamp so player cannot fall through water surface, (3) spawn_camera now searches for coastline/land when no SpawnLocation is provided instead of hardcoded 45\u00b0N/0\u00b0E."
+    "resolution": "rebuild_terrain_gen_if_planetary was setting terrain_res.0 to a Spherical noise generator via from_planet_config(), while shared_gen and V2TerrainGen used the Planetary tectonic sampler. Spawn position queries used the wrong elevation map. Fixed by creating a second PlanetaryTerrainSampler for terrain_res.",
+    "resolved_commit": "5a137c9"
   },
   {
     "id": "ECS-001",

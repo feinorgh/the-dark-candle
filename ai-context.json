@@ -1582,6 +1582,14 @@
       "files": [
         "src/camera/mod.rs"
       ]
+    },
+    {
+      "name": "terrain-gen-mismatch-fix",
+      "status": "complete",
+      "description": "rebuild_terrain_gen_if_planetary now sets TerrainGeneratorRes to a PlanetaryTerrainSampler (matching SharedTerrainGen/V2TerrainGen) so spawn positioning, camera gravity, and map queries use the same elevation map as chunk generation.",
+      "files": [
+        "src/world/mod.rs"
+      ]
     }
   ],
   "tech_debt": [
@@ -1644,7 +1652,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "ca21e66",
+    "generated_from_commit": "5a137c9",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
