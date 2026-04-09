@@ -1590,6 +1590,15 @@
       "files": [
         "src/world/mod.rs"
       ]
+    },
+    {
+      "name": "global-map-zoom",
+      "status": "complete",
+      "description": "Global map zoom scales the map image via absolute positioning and overflow clipping. Pan repositions the image within the viewport container. Teleport uses MapContainer bounds for coordinate mapping.",
+      "files": [
+        "src/map/global_map.rs",
+        "src/map/ui.rs"
+      ]
     }
   ],
   "tech_debt": [
@@ -1652,7 +1661,7 @@
   },
   "meta": {
     "generated_date": "2026-03-30",
-    "generated_from_commit": "5a137c9",
+    "generated_from_commit": "9e24340",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

@@ -693,5 +693,32 @@
     ],
     "reproduction": "Run with V2 pipeline (default). Console floods with \"Res<ChunkMap> failed validation: Resource does not exist\" every frame.",
     "resolution": "Changed Res<ChunkMap> to Option<Res<ChunkMap>> in update_locomotion. ChunkMap is a V1-only resource; V2 uses V2ChunkMap."
+  },
+  {
+    "id": "MAP-001",
+    "category": "map",
+    "severity": "medium",
+    "title": "Global map zoom only moves marker, does not scale image",
+    "description": "scroll_zoom updated global_zoom state but update_global_map only applied zoom/pan to the player marker position, not the map image node. The image always displayed at 100% container size.",
+    "status": "resolved",
+    "resolution": "Added overflow:clip to container, made MapImageNode absolutely positioned, and scale/reposition it in update_global_map based on zoom and pan state.",
+    "resolved_commit": "9e24340",
+    "affected_files": [
+      "src/map/global_map.rs",
+      "src/map/ui.rs"
+    ]
+  },
+  {
+    "id": "MAP-002",
+    "category": "map",
+    "severity": "medium",
+    "title": "Teleport pixel_to_lat_lon queried wrong node for bounds",
+    "description": "map_teleport queried MapImageNode for ComputedNode bounds, but with zoom the image is larger than the viewport. Coordinates would be wrong.",
+    "status": "resolved",
+    "resolution": "Added MapContainer marker to the clipping container and query that instead. The container represents the visible viewport.",
+    "resolved_commit": "9e24340",
+    "affected_files": [
+      "src/map/ui.rs"
+    ]
   }
 ]
