@@ -234,7 +234,13 @@ fn rebuild_terrain_gen_if_planetary(
     let unified = Arc::new(terrain::UnifiedTerrainGenerator::Planetary(Box::new(
         sampler,
     )));
-    terrain_res.0 = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
+    // Build a second Planetary sampler for TerrainGeneratorRes so that
+    // surface queries (spawn positioning, camera gravity, map) match the
+    // actual chunk terrain.  Previously this created a Spherical noise
+    // generator which had a completely different elevation map, causing
+    // the player to spawn in the ocean.
+    let sampler2 = PlanetaryTerrainSampler::new(planetary.0.clone(), planet_config.clone());
+    terrain_res.0 = terrain::UnifiedTerrainGenerator::Planetary(Box::new(sampler2));
     *shared_gen = chunk_manager::SharedTerrainGen(unified.clone());
 
     // Propagate the planetary generator to the V2 pipeline so V2 chunk
