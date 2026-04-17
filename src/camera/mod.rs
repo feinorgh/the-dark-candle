@@ -205,12 +205,18 @@ fn spawn_camera(
                 let sea = planet.sea_level_radius;
                 let seed = planet.seed as u64;
                 if let Some(pos) = find_coastline(&tg.0, sea, 5000, seed) {
-                    info!("Default spawn: coastline at {:.1}°N, {:.1}°E",
-                          pos.0.to_degrees(), pos.1.to_degrees());
+                    info!(
+                        "Default spawn: coastline at {:.1}°N, {:.1}°E",
+                        pos.0.to_degrees(),
+                        pos.1.to_degrees()
+                    );
                     pos
                 } else if let Some(pos) = find_random_land(&tg.0, sea, 2000, seed) {
-                    info!("Default spawn: random land at {:.1}°N, {:.1}°E",
-                          pos.0.to_degrees(), pos.1.to_degrees());
+                    info!(
+                        "Default spawn: random land at {:.1}°N, {:.1}°E",
+                        pos.0.to_degrees(),
+                        pos.1.to_degrees()
+                    );
                     pos
                 } else {
                     warn!("No land found, falling back to 45°N 0°E");
