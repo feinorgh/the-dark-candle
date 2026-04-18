@@ -511,13 +511,14 @@
     "title": "Bevy Atmosphere shader incompatible with spherical-world coordinates -- sky appears black in planet mode",
     "category": "rendering",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "affected_files": [
-      "src/camera/mod.rs"
+      "src/camera/mod.rs",
+      "src/lighting/mod.rs"
     ],
-    "description": "Bevy's built-in Atmosphere component (bevy::pbr::Atmosphere) is designed for flat/local worlds where camera.Y = altitude above planet surface. Its get_view_position() shader function computes: world_pos = camera_world_position + vec3(0, bottom_radius, 0). In flat mode this correctly gives r = bottom_radius + altitude. But in spherical planet mode the camera is at 3D position e.g. (22628, 22628, 0) (radius 32001.7m from origin). After the Y offset: world_pos = (22628, 54628, 0), r = 59100m, simulated altitude = 27100m. At 27km simulated altitude the Rayleigh optical depth is ~0.002 (near-vacuum), so the sky is essentially black with only the sun disc visible. The Bevy shader source even contains: // NOTE: this means that if your world is actually spherical, this will be wrong. Bevy's built-in Atmosphere cannot be used for spherical-planet worlds without a custom sky rendering solution.",
-    "suspected_cause": "Bevy Atmosphere shader adds (0, bottom_radius, 0) to camera world position, assuming flat-world convention (Y = altitude). For spherical planets where |camera_pos| = bottom_radius + altitude, this offset displaces the camera to an incorrect position in atmosphere space (altitude ~27km instead of ~2m), making the atmosphere appear as near-vacuum. Fix requires either a custom sky render pass that uses correct spherical geometry, or transforming the camera position into atmosphere-local coordinates before it reaches the shader.",
-    "resolution": null
+    "description": "Bevy's built-in Atmosphere component (bevy::pbr::Atmosphere) is designed for flat/local worlds where camera.Y = altitude above planet surface. Its get_view_position() shader function computes: world_pos = camera_world_position + vec3(0, bottom_radius, 0). In flat mode this correctly gives r = bottom_radius + altitude. But in spherical planet mode the camera is at 3D position e.g. (22628, 22628, 0) (radius 32001.7m from origin). After the Y offset: world_pos = (22628, 54628, 0), r = 59100m, simulated altitude = 27100m. At 27km simulated altitude the Rayleigh optical depth is ~0.002 (near-vacuum), so the sky is essentially black with only the sun disc visible.",
+    "suspected_cause": "Bevy Atmosphere shader adds (0, bottom_radius, 0) to camera world position, assuming flat-world convention (Y = altitude). For spherical planets where |camera_pos| = bottom_radius + altitude, this offset displaces the camera to an incorrect position in atmosphere space.",
+    "resolution": "Skip Atmosphere component in spherical mode. Added update_spherical_sky system that computes zenith sky color via CPU Rayleigh scattering (sky.rs) and sets ClearColor. Boosted ambient light by 2.5x in spherical mode to compensate for lost IBL. Atmosphere still used in flat mode."
   },
   {
     "id": "TERRAIN-007",
@@ -726,7 +727,7 @@
     "title": "Gaps between chunks — grid-like seams vary with latitude",
     "category": "rendering",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-18",
     "description": "Visible gaps exist between adjacent chunks, producing a grid-like pattern across the terrain surface. The gap width appears to vary with latitude, suggesting a coordinate-space or scaling mismatch in the cubed-sphere chunk positioning or mesh generation.",
     "reproduction": "Run the game with --planet and fly around. Gaps between chunks are visible as dark lines forming a grid. Observe that gap width changes at different latitudes.",
@@ -736,31 +737,28 @@
       "src/world/v2/greedy_mesh.rs",
       "src/world/v2/terrain_gen.rs"
     ],
-    "suspected_cause": "Likely a rounding or off-by-one error in cubed-sphere chunk world_transform() positioning, or greedy mesh not extending to chunk boundaries. The latitude-dependent width suggests the face-to-sphere projection introduces non-uniform spacing.",
+    "suspected_cause": "NeighborSlices::empty() was always passed to greedy_mesh. Boundary voxels treated neighbors as AIR, generating exposed faces at every chunk boundary. Additionally, adjacent chunks have different rotations so flat mesh boundary vertices don't coincide in world space.",
     "related_commits": [],
-    "resolution": null,
-    "notes": []
+    "resolution": "Changed NeighborSlices to use efficient 2D boundary slices (CHUNK_SIZE² per direction instead of full CHUNK_VOLUME). Extended generate_v2_chunk to produce boundary slices by sampling the actual neighbor chunk's boundary-layer voxels in the neighbor's coordinate frame. Greedy mesh now receives real neighbor data, suppressing false boundary faces between solid chunks.",
+    "notes": ["Geometric gaps from cubed-sphere vertex mismatch may still be visible at extreme positions. Phase 3 (vertex warping) can be applied if needed."]
   },
   {
     "id": "RENDER-005",
     "title": "Terrain disappears at altitude — hard view distance cutoff",
     "category": "rendering",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-18",
     "description": "When flying at high altitude, the terrain disappears completely beyond a fixed distance. There is no graceful LOD fallback — instead of rendering lower-detail chunks at greater distances, the terrain simply stops. Players should be able to fly at arbitrary altitude and still see terrain below, albeit at reduced detail.",
     "reproduction": "Run the game and fly upward (increase altitude significantly). At a certain height the terrain vanishes entirely, leaving only sky. Expected: terrain remains visible at all altitudes with progressively coarser LOD.",
     "suspected_files": [
-      "src/world/v2/chunk_manager.rs",
-      "src/world/chunk_manager.rs",
-      "src/world/lod.rs"
+      "src/world/v2/chunk_manager.rs"
     ],
-    "suspected_cause": "The chunk loading shell has a fixed radius that does not scale with camera altitude. At high altitude the camera exceeds the shell radius and no chunks are loaded. The LOD system likely needs altitude-adaptive shell sizing or a fallback low-resolution planetary mesh.",
+    "suspected_cause": "V2LoadRadius was fixed at horizontal=12, vertical=2. desired_chunks_v2 used a fixed loop range and skipped out-of-range u/v coords instead of wrapping cross-face.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Implemented adaptive load radius using horizon distance formula d=sqrt(2Rh+h²). Horizontal radius now scales with altitude, capped at 48 chunks. Vertical range always extends from surface (layer 0) to camera layer plus padding. Added cross-face chunk loading via wrap_cross_face(). Surface-layer chunks get dispatch priority.",
     "notes": [
-      "May require an altitude-dependent chunk loading radius or a multi-resolution approach where distant terrain uses coarser LOD levels.",
-      "A low-poly planetary horizon mesh could serve as a fallback when chunks are too distant to load."
+      "Long-term: proper LOD/impostor system still needed for very high altitudes where even 48-chunk radius is insufficient."
     ]
   }
 ]

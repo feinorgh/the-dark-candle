@@ -17,8 +17,8 @@ use crate::world::lod::MaterialColorMap;
 use crate::world::meshing::{ChunkMesh, ChunkMeshMarker, chunk_mesh_to_bevy_mesh};
 use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
-use crate::world::v2::cubed_sphere::{CubeSphereCoord, world_pos_to_coord};
-use crate::world::v2::greedy_mesh::{self, NeighborSlices};
+use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord, world_pos_to_coord};
+use crate::world::v2::greedy_mesh;
 use crate::world::v2::terrain_gen::generate_v2_chunk;
 
 // ── Limits ────────────────────────────────────────────────────────────────
@@ -26,6 +26,11 @@ use crate::world::v2::terrain_gen::generate_v2_chunk;
 const MAX_DISPATCHES_PER_FRAME: usize = 32;
 const MAX_PENDING: usize = 128;
 const MAX_COLLECTS_PER_FRAME: usize = 32;
+
+/// Maximum horizontal load radius in chunks (prevents runaway at extreme altitudes).
+const MAX_HORIZONTAL_CHUNKS: i32 = 48;
+/// Maximum vertical load extent in layers.
+const MAX_VERTICAL_LAYERS: i32 = 64;
 
 // ── Resources ─────────────────────────────────────────────────────────────
 
@@ -99,7 +104,25 @@ pub struct V2ChunkResult {
 
 // ── Systems ───────────────────────────────────────────────────────────────
 
+/// Compute horizontal load radius in chunks from camera altitude using the
+/// geometric horizon distance: `d = sqrt(2·R·h + h²)`.
+fn horizon_load_radius(altitude_m: f64, mean_radius: f64, base_horizontal: i32) -> i32 {
+    if altitude_m <= 0.0 {
+        return base_horizontal;
+    }
+    let r = mean_radius;
+    let h = altitude_m;
+    let horizon_dist = (2.0 * r * h + h * h).sqrt();
+    let cs = CHUNK_SIZE as f64;
+    let radius_chunks = (horizon_dist / cs).ceil() as i32;
+    radius_chunks.clamp(base_horizontal, MAX_HORIZONTAL_CHUNKS)
+}
+
 /// Compute the set of desired chunks around the camera on the cubed sphere.
+///
+/// Horizontal radius scales with altitude via the horizon distance formula.
+/// Vertical range always extends from the surface layer (0) to the camera layer,
+/// plus the base vertical padding in both directions.
 fn desired_chunks_v2(
     cam_pos: Vec3,
     planet: &PlanetConfig,
@@ -108,23 +131,37 @@ fn desired_chunks_v2(
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
     let cam_coord = world_pos_to_coord(cam_pos.as_dvec3(), planet.mean_radius, fce);
 
-    let h = radius.horizontal;
-    let v = radius.vertical;
+    // Altitude above mean surface
+    let altitude_m = cam_pos.as_dvec3().length() - planet.mean_radius;
+
+    let h = horizon_load_radius(altitude_m, planet.mean_radius, radius.horizontal);
     let max_uv = fce as i32;
     let mut set = HashSet::new();
 
+    // Vertical range: always include surface (layer 0) and extend to camera.
+    // The base vertical padding extends above/below this range.
+    let cam_layer = cam_coord.layer;
+    let layer_lo = (0.min(cam_layer) - radius.vertical).max(-MAX_VERTICAL_LAYERS);
+    let layer_hi = (0.max(cam_layer) + radius.vertical).min(MAX_VERTICAL_LAYERS);
+
     for du in -h..=h {
         for dv in -h..=h {
-            for dl in -v..=v {
+            for layer in layer_lo..=layer_hi {
                 let u = cam_coord.u + du;
                 let vi = cam_coord.v + dv;
-                let layer = cam_coord.layer + dl;
                 let face = cam_coord.face;
 
-                // Clamp u, v to valid face range. Cross-face wrapping is
-                // handled by the neighbor system for meshing; for chunk loading
-                // we simply skip out-of-range coords for simplicity.
+                // Use cross-face wrapping for out-of-range u/v coords
+                // so terrain loads seamlessly across cube faces.
                 if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
+                    // Resolve via the neighbor wrapping system on the camera coord.
+                    // Build the target coord on the camera's face and let the
+                    // cross-face lookup translate it.
+                    if let Some(wrapped) =
+                        wrap_cross_face(face, u, vi, layer, max_uv)
+                    {
+                        set.insert(wrapped);
+                    }
                     continue;
                 }
 
@@ -134,6 +171,65 @@ fn desired_chunks_v2(
     }
 
     set
+}
+
+/// Resolve an out-of-range (u, v) on `face` to the correct cross-face coord.
+/// Returns `None` if the coord is doubly out-of-range (corner wrap — skip).
+fn wrap_cross_face(
+    face: CubeFace,
+    u: i32,
+    v: i32,
+    layer: i32,
+    max_uv: i32,
+) -> Option<CubeSphereCoord> {
+
+    // Only handle single-axis overflow (edge); skip corners where both are OOB.
+    let u_oob = u < 0 || u >= max_uv;
+    let v_oob = v < 0 || v >= max_uv;
+    if u_oob && v_oob {
+        return None; // Corner wrap — too complex, skip
+    }
+
+    // Build a temporary coord on the face at clamped position, then use
+    // the neighbor system to find the actual cross-face coord.
+    if u_oob {
+        let clamped_u = if u < 0 { 0 } else { max_uv - 1 };
+        let base = CubeSphereCoord::new(face, clamped_u, v, layer);
+        let delta = if u < 0 { -(clamped_u - u) } else { u - clamped_u };
+        // Walk across the face boundary
+        let neighbor = if u < 0 {
+            base.neighbors(max_uv)[1] // -U neighbor
+        } else {
+            base.neighbors(max_uv)[0] // +U neighbor
+        };
+        // For deeper steps, we'd need recursive walking. For now, only load
+        // the immediate cross-face layer (1 chunk deep across boundary).
+        if delta.abs() <= 1 {
+            return Some(CubeSphereCoord::new(
+                neighbor.face, neighbor.u, neighbor.v, layer,
+            ));
+        }
+        return None;
+    }
+
+    if v_oob {
+        let clamped_v = if v < 0 { 0 } else { max_uv - 1 };
+        let base = CubeSphereCoord::new(face, u, clamped_v, layer);
+        let delta = if v < 0 { -(clamped_v - v) } else { v - clamped_v };
+        let neighbor = if v < 0 {
+            base.neighbors(max_uv)[3] // -V neighbor
+        } else {
+            base.neighbors(max_uv)[2] // +V neighbor
+        };
+        if delta.abs() <= 1 {
+            return Some(CubeSphereCoord::new(
+                neighbor.face, neighbor.u, neighbor.v, layer,
+            ));
+        }
+        return None;
+    }
+
+    None
 }
 
 /// Main V2 chunk update system: compute desired set, dispatch generation,
@@ -180,16 +276,19 @@ pub fn v2_update_chunks(
         .copied()
         .collect();
 
-    // Sort by squared distance in coord space so spawn-area chunks generate first.
+    // Sort: prioritize surface-layer chunks, then by distance to camera.
     to_dispatch.sort_unstable_by_key(|c| {
-        if c.face == cam_coord.face {
+        // Surface chunks (layer 0) get priority bonus
+        let surface_bonus = if c.layer == 0 { 0 } else { 1_000_000 };
+        let dist = if c.face == cam_coord.face {
             let du = c.u - cam_coord.u;
             let dv = c.v - cam_coord.v;
             let dl = c.layer - cam_coord.layer;
             du * du + dv * dv + dl * dl
         } else {
-            i32::MAX
-        }
+            i32::MAX / 2
+        };
+        surface_bonus + dist
     });
 
     for coord in to_dispatch.into_iter().take(budget) {
@@ -198,7 +297,7 @@ pub fn v2_update_chunks(
 
         let task = pool.spawn(async move {
             let data = generate_v2_chunk(coord, mean_radius, fce, &tgen);
-            let mesh = greedy_mesh::greedy_mesh(&data.voxels, &NeighborSlices::empty(), &cmap);
+            let mesh = greedy_mesh::greedy_mesh(&data.voxels, &data.neighbor_slices, &cmap);
             V2ChunkResult { coord, mesh }
         });
 

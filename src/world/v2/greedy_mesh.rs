@@ -12,8 +12,12 @@ use crate::world::voxel::{MaterialId, Voxel};
 
 /// Voxel data for the 6 face-neighbor chunks, used for seamless boundary faces.
 ///
-/// Each neighbor is optional — if absent, boundary voxels are treated as air.
+/// Each neighbor stores only the single boundary layer (CHUNK_SIZE² voxels)
+/// closest to the shared face, not the full CHUNK_VOLUME.
 /// Layout: `[+X, -X, +Y, -Y, +Z, -Z]`.
+///
+/// For +X neighbor: the x=0 layer of that neighbor (adjacent to our x=CS-1).
+/// For -X neighbor: the x=CS-1 layer (adjacent to our x=0). Etc.
 pub struct NeighborSlices {
     pub slices: [Option<Vec<Voxel>>; 6],
 }
@@ -32,7 +36,15 @@ fn voxel_index(x: usize, y: usize, z: usize) -> usize {
     z * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + x
 }
 
+/// Index into a 2D boundary slice: `a * CHUNK_SIZE + b`.
+#[inline]
+fn slice_index(a: usize, b: usize) -> usize {
+    a * CHUNK_SIZE + b
+}
+
 /// Look up a voxel material, checking neighbor data for out-of-bounds positions.
+///
+/// Neighbor slices are 2D boundary layers (CHUNK_SIZE² voxels each).
 #[inline]
 fn sample_material(
     voxels: &[Voxel],
@@ -50,27 +62,28 @@ fn sample_material(
     {
         return voxels[voxel_index(x as usize, y as usize, z as usize)].material;
     }
-    // Out of bounds: check neighbor chunks
+    // Out of bounds: check neighbor boundary slices.
+    // Each slice is indexed as slice_index(a, b) where a, b are the two
+    // axes perpendicular to the direction.
     let cs = CHUNK_SIZE as i32;
-    let (dir_idx, lx, ly, lz) = if x >= cs {
-        (0, x - cs, y, z) // +X neighbor
+    let (dir_idx, sa, sb) = if x >= cs {
+        (0, y, z) // +X: boundary at neighbor's x=0, indexed by (y, z)
     } else if x < 0 {
-        (1, x + cs, y, z) // -X neighbor
+        (1, y, z) // -X: boundary at neighbor's x=CS-1
     } else if y >= cs {
-        (2, x, y - cs, z) // +Y neighbor
+        (2, x, z) // +Y: boundary at neighbor's y=0
     } else if y < 0 {
-        (3, x, y + cs, z) // -Y neighbor
+        (3, x, z) // -Y: boundary at neighbor's y=CS-1
     } else if z >= cs {
-        (4, x, y, z - cs) // +Z neighbor
+        (4, x, y) // +Z: boundary at neighbor's z=0
     } else {
-        (5, x, y, z + cs) // -Z neighbor
+        (5, x, y) // -Z: boundary at neighbor's z=CS-1
     };
 
     if let Some(ref nbr) = neighbors.slices[dir_idx] {
-        let lx = lx.clamp(0, cs - 1) as usize;
-        let ly = ly.clamp(0, cs - 1) as usize;
-        let lz = lz.clamp(0, cs - 1) as usize;
-        nbr[voxel_index(lx, ly, lz)].material
+        let a = sa.clamp(0, cs - 1) as usize;
+        let b = sb.clamp(0, cs - 1) as usize;
+        nbr[slice_index(a, b)].material
     } else {
         MaterialId::AIR
     }

@@ -207,6 +207,9 @@ fn update_sun(
 }
 
 /// System: scale ambient light brightness with orbital-derived sun elevation.
+///
+/// In spherical mode, applies a boost factor to compensate for the absence of
+/// Atmosphere-driven image-based lighting.
 fn update_ambient(
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
@@ -220,7 +223,14 @@ fn update_ambient(
         planet.libration_period,
     );
     let factor = elevation.sin().max(0.0);
-    let brightness = config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
+    let mut brightness =
+        config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
+
+    // Without the Atmosphere shader, there is no IBL contribution. Boost
+    // ambient so spherical-mode scenes don't appear unnaturally dark.
+    if planet.is_spherical() {
+        brightness *= 2.5;
+    }
 
     for mut ambient in &mut ambient_q {
         ambient.brightness = brightness;
@@ -263,6 +273,37 @@ fn update_fog(
     for mut fog in &mut fog_q {
         fog.color = fog_color;
     }
+}
+
+/// System: compute sky color from CPU Rayleigh scattering in spherical mode
+/// and set it as the ClearColor. In spherical mode the Bevy Atmosphere shader
+/// is not used because it assumes a flat world.
+fn update_spherical_sky(
+    planet: Res<PlanetConfig>,
+    orbital_state: Res<orbital::OrbitalState>,
+    mut clear_color: ResMut<ClearColor>,
+) {
+    if !planet.is_spherical() {
+        return;
+    }
+
+    let (_dir, elevation) = orbital::compute_sun_direction(
+        &orbital_state,
+        planet.axial_tilt,
+        planet.libration_amplitude,
+        planet.libration_period,
+    );
+
+    // Compute zenith sky color using our Rayleigh scattering model.
+    let zenith = [0.0_f32, 1.0, 0.0];
+    let hdr = sky::sky_color_from_angles(zenith, elevation, 0.0);
+    let srgb = sky::tonemap_to_srgb(hdr);
+
+    clear_color.0 = Color::srgb(
+        srgb[0] as f32 / 255.0,
+        srgb[1] as f32 / 255.0,
+        srgb[2] as f32 / 255.0,
+    );
 }
 
 /// Spawn the sun and ambient light entities using orbital state.
@@ -419,6 +460,7 @@ impl Plugin for LightingPlugin {
                     update_sun,
                     update_ambient,
                     update_fog,
+                    update_spherical_sky,
                     update_chunk_light_maps,
                     refraction::update_chunk_refraction_maps,
                     update_terrain_shadows,

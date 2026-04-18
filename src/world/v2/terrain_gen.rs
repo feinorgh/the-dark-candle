@@ -13,12 +13,15 @@ use bevy::prelude::*;
 use crate::world::chunk::{CHUNK_SIZE, CHUNK_VOLUME};
 use crate::world::terrain::{UnifiedTerrainGenerator, terrain_density};
 use crate::world::v2::cubed_sphere::CubeSphereCoord;
+use crate::world::v2::greedy_mesh::NeighborSlices;
 use crate::world::voxel::{MaterialId, Voxel};
 
 /// Result of V2 terrain generation for a single chunk.
 pub struct V2ChunkData {
     pub coord: CubeSphereCoord,
     pub voxels: Vec<Voxel>,
+    /// Boundary slices from the 6 neighbor directions for seamless meshing.
+    pub neighbor_slices: NeighborSlices,
 }
 
 /// Generate voxel data for a V2 chunk in local tangent space.
@@ -71,7 +74,11 @@ pub fn generate_v2_chunk(
 
     // Entirely above terrain AND above sea → all air (default)
     if base_r - half_diag_tangent > max_surface && base_r - half_diag_tangent > sea {
-        return V2ChunkData { coord, voxels };
+        return V2ChunkData {
+            coord,
+            voxels,
+            neighbor_slices: NeighborSlices::empty(),
+        };
     }
 
     // Entirely below terrain → solid stone fill
@@ -81,7 +88,16 @@ pub fn generate_v2_chunk(
             v.material = MaterialId::STONE;
             v.density = 1.0;
         }
-        return V2ChunkData { coord, voxels };
+        return V2ChunkData {
+            coord,
+            voxels,
+            neighbor_slices: generate_boundary_slices(
+                coord,
+                mean_radius,
+                face_chunks_per_edge,
+                tgen,
+            ),
+        };
     }
 
     // Per-voxel fill
@@ -113,7 +129,92 @@ pub fn generate_v2_chunk(
         }
     }
 
-    V2ChunkData { coord, voxels }
+    V2ChunkData {
+        coord,
+        voxels,
+        neighbor_slices: generate_boundary_slices(coord, mean_radius, face_chunks_per_edge, tgen),
+    }
+}
+
+/// Generate boundary slices for the 6 neighbor directions.
+///
+/// For each direction, samples only the single boundary layer of the neighbor
+/// chunk (CHUNK_SIZE² voxels). The slice is in the neighbor's local frame
+/// at the face closest to our chunk.
+///
+/// Layout: `[+X, -X, +Y, -Y, +Z, -Z]`.
+fn generate_boundary_slices(
+    coord: CubeSphereCoord,
+    mean_radius: f64,
+    face_chunks_per_edge: f64,
+    tgen: &UnifiedTerrainGenerator,
+) -> NeighborSlices {
+    let fce_i = face_chunks_per_edge as i32;
+    let neighbors = coord.neighbors(fce_i);
+    let cs = CHUNK_SIZE;
+    let half = cs as f32 / 2.0;
+    let sea = tgen.planet_config().sea_level_radius;
+
+    let mut slices: [Option<Vec<Voxel>>; 6] = [const { None }; 6];
+
+    // Direction info: (neighbor_index, fixed_axis, fixed_value)
+    // +X neighbor: their x=0 layer is our boundary
+    // -X neighbor: their x=CS-1 layer
+    // +Y neighbor: their y=0 layer
+    // -Y neighbor: their y=CS-1 layer
+    // +Z neighbor: their z=0 layer
+    // -Z neighbor: their z=CS-1 layer
+    let boundary_configs: [(usize, u8, f32); 6] = [
+        (0, 0, 0.5 - half),           // +X: neighbor's x = 0
+        (1, 0, (cs - 1) as f32 + 0.5 - half), // -X: neighbor's x = CS-1
+        (2, 1, 0.5 - half),           // +Y: neighbor's y = 0
+        (3, 1, (cs - 1) as f32 + 0.5 - half), // -Y: neighbor's y = CS-1
+        (4, 2, 0.5 - half),           // +Z: neighbor's z = 0
+        (5, 2, (cs - 1) as f32 + 0.5 - half), // -Z: neighbor's z = CS-1
+    ];
+
+    for (dir_idx, fixed_axis, fixed_val) in boundary_configs {
+        let nbr_coord = neighbors[dir_idx];
+        let (nbr_center, nbr_rotation) =
+            nbr_coord.world_transform(mean_radius, face_chunks_per_edge);
+
+        let slice_size = cs * cs;
+        let mut slice = vec![Voxel::default(); slice_size];
+
+        for a in 0..cs {
+            for b in 0..cs {
+                // Build local position in neighbor's frame.
+                // The two free axes are the non-fixed ones.
+                let (lx, ly, lz) = match fixed_axis {
+                    0 => (fixed_val, a as f32 + 0.5 - half, b as f32 + 0.5 - half),
+                    1 => (a as f32 + 0.5 - half, fixed_val, b as f32 + 0.5 - half),
+                    _ => (a as f32 + 0.5 - half, b as f32 + 0.5 - half, fixed_val),
+                };
+
+                let local = Vec3::new(lx, ly, lz);
+                let world = nbr_center + nbr_rotation * local;
+                let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
+                let r = wpos.length();
+                let (lat, lon) = tgen.planet_config().lat_lon(wpos);
+                let surface_r = tgen.sample_surface_radius_at(lat, lon);
+
+                let material = tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
+                let density = if material == MaterialId::WATER {
+                    terrain_density(sea - r)
+                } else {
+                    terrain_density(surface_r - r)
+                };
+
+                let idx = a * cs + b;
+                slice[idx].material = material;
+                slice[idx].density = density;
+            }
+        }
+
+        slices[dir_idx] = Some(slice);
+    }
+
+    NeighborSlices { slices }
 }
 
 #[cfg(test)]

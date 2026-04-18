@@ -271,23 +271,45 @@ fn spawn_camera(
         Atmosphere::earthlike(medium)
     };
 
-    commands.spawn((
-        Camera3d::default(),
-        IsDefaultUiCamera,
-        Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
-        Bloom::NATURAL,
-        atmosphere,
-        DistanceFog {
-            color: Color::srgba(0.7, 0.78, 0.9, 1.0),
-            directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
-            directional_light_exponent: 30.0,
-            falloff: FogFalloff::from_visibility(500.0),
-        },
-        FpsCamera::default(),
-        Player,
-        Health::new(100.0),
-        FallTracker::default(),
-    ));
+    // In spherical mode, the Bevy Atmosphere shader incorrectly computes
+    // altitude (it offsets the camera by (0, bottom_radius, 0) assuming a
+    // flat world). We skip it and use CPU sky color via ClearColor instead.
+    if planet.is_spherical() {
+        commands.spawn((
+            Camera3d::default(),
+            IsDefaultUiCamera,
+            Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
+            Bloom::NATURAL,
+            DistanceFog {
+                color: Color::srgba(0.7, 0.78, 0.9, 1.0),
+                directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+                directional_light_exponent: 30.0,
+                falloff: FogFalloff::from_visibility(500.0),
+            },
+            FpsCamera::default(),
+            Player,
+            Health::new(100.0),
+            FallTracker::default(),
+        ));
+    } else {
+        commands.spawn((
+            Camera3d::default(),
+            IsDefaultUiCamera,
+            Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
+            Bloom::NATURAL,
+            atmosphere,
+            DistanceFog {
+                color: Color::srgba(0.7, 0.78, 0.9, 1.0),
+                directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+                directional_light_exponent: 30.0,
+                falloff: FogFalloff::from_visibility(500.0),
+            },
+            FpsCamera::default(),
+            Player,
+            Health::new(100.0),
+            FallTracker::default(),
+        ));
+    }
 }
 
 /// Grab cursor on left-click (while Playing).
