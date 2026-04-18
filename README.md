@@ -9,9 +9,10 @@ Built with [Bevy 0.18](https://bevyengine.org/) · Rust 2024 Edition · MIT / Ap
 ## World Generation
 
 The Dark Candle generates entire planets from a single seed — geodesic grids,
-tectonic plates, impact craters, biomes, geology, and ore deposits — then
-renders them as interactive 3D globes or 2D map projections with GPU-accelerated
-terrain detail.
+tectonic plates with physically-driven motion (slab-pull, rifting, suturing,
+volcanic hotspots), impact craters, insolation-based climate, biomes, geology,
+and ore deposits — then renders them as interactive 3D globes or 2D map
+projections with GPU-accelerated terrain detail.
 
 <p align="center">
   <img src="docs/images/elevation_equirect.png" width="700" alt="Elevation map – equirectangular projection" />
@@ -44,21 +45,27 @@ terrain detail.
 ## Features
 
 ### 🌍 Planetary Generation
-- **Geodesic grid** — icosahedral subdivision (configurable level 0–8, up to 655 362 cells)
+- **Geodesic grid** — icosahedral subdivision (configurable level 0–10, up to ~2.6 M cells)
 - **Tectonic simulation** — power-law plate sizes, configurable geological time (Quick/Normal/Extended modes), physical plate velocities (2–10 cm/yr SI), subduction deformation, mountain building
+- **Slab-pull force feedback** — physically-driven plate motion from subducting-slab density
+- **Malleable plate deformation** — per-cell strain tracking, continental rifting (plate splitting), plate suturing (merging), and boundary-zone orogeny
+- **Volcanic terrain shaping** — mantle plume hotspots with shield volcano, dome, and caldera morphologies
+- **Sub-stepped plate advection** — forward-scatter transport (≤ 0.5 cell-diameter per sub-step) with same-plate filtering to prevent cross-plate contamination
+- **Relief-dependent erosion** — tectonic erosion scales with local relief to preserve landmass
 - **Tectonic time-lapse** — step-by-step playback of plate evolution with play/pause, speed control (0.25×–32×), and frame stepping
 - **Impact events** — asteroid craters with ejecta blankets and central peaks
-- **Celestial system** — procedural star, moons, rings, and orbital mechanics
-- **Climate model** — Stefan-Boltzmann energy balance, latitude gradients, altitude lapse rates, ocean proximity
+- **Celestial system** — procedural star, moons (0–4 with Keplerian orbits), rings, tidal mechanics, eclipse prediction, animated moon orbits with visible orbit trails
+- **Climate model** — insolation-based energy balance (Berger 1978 daily integration, ice-albedo feedback, meridional heat transport), altitude lapse rates, ocean proximity
 - **14 biome types** — Whittaker classification from temperature and precipitation
 - **10 rock types & 7 ore types** — geological age, metamorphism, and hydrothermal deposits
 - **GPU-accelerated rendering** — WGSL compute shaders for terrain projection (35× speedup at 4K)
 - **Map projections** — equirectangular, Mollweide, orthographic with hillshading
-- **Interactive 3D globe** — Bevy renderer with orbital camera, colour modes, and tectonic time-lapse playback
+- **Interactive 3D globe** — Bevy renderer with orbital camera, 9 colour modes (elevation, biome, plates, geological age, crust depth, tidal amplitude, rock, temperature, strain), and tectonic time-lapse playback
 
 ### 🧱 Voxel World
-- **Octree chunks** — 32³ base resolution with adaptive multi-resolution subdivision
-- **36 material types** — loaded from RON data files: stone, water, iron, lava, wood, glass, plus geological materials (sandstone, limestone, granite, basalt) and ores (coal, copper, gold, quartz crystal), plus 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch)
+- **Cubed-sphere chunks** — 6-face cubed-sphere grid with 32³ chunks, greedy meshing, and local tangent orientation (Y = radial up)
+- **Octree storage** — sparse voxel octree (SVO) for adaptive multi-resolution subdivision
+- **41 material types** — loaded from RON data files: stone, water, iron, lava, wood, glass, plus geological materials (sandstone, limestone, granite, basalt) and ores (coal, copper, gold, quartz crystal), 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch), 3 plasters (white, red, green), and 3 emissive materials (IR emitter, cool/warm LED panels with spectral power distribution)
 - **NoiseStack noise engine** — composable multi-octave FBM, ridged fractals, domain warping, terrain-type selector, micro-detail, continent/ocean masks
 - **Procedural terrain** — noise-based heightmaps, valley/river carving, hydraulic erosion (droplet, grid, and combined modes)
 - **Geological depth** — stratified rock layers (sedimentary/metamorphic/igneous) with depth-based ore veins and multi-scale cave systems (caverns, tunnels, worm tubes with underground lakes and lava)
@@ -119,7 +126,7 @@ terrain detail.
 - **Progressive collapse** — parts lose all live joints and become unsupported are despawned; debris fragments spawn with scatter velocities
 - **Crafting system** — `RecipeData` RON assets define input materials, tool requirement, minimum temperature (K), and duration in ticks; `CraftingQueue` component tracks per-workstation progress
 - **Player build mode** — press B to toggle; R rotates 90°; left-click places on 1 m grid with auto joint creation; placement validates support and inventory
-- **36 materials** — 28 terrain/chemistry materials plus 8 construction-specific: oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch — all with real SI properties
+- **41 materials** — 33 terrain/chemistry/emissive materials plus 8 construction-specific: oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch — all with real SI properties
 - **Inventory system** — per-entity `Inventory` component with configurable weight (kg) and volume (m³) limits
 
 ### 🦎 Entity Bodies & Organic Physics
@@ -206,7 +213,7 @@ cargo run --release --bin worldgen -- \
   --seed 42 --level 6 --animate --width 1024 --gpu
 ```
 
-**Colour modes:** `elevation`, `biome`, `plate`, `geology`, `age`, `crust_depth`, `tidal`
+**Colour modes:** `elevation`, `biome`, `plates`, `age`, `crust_depth`, `tidal`, `rock`, `temperature`, `strain`
 
 **Projections:** `equirect`, `mollweide`, `orthographic`
 
@@ -215,7 +222,7 @@ cargo run --release --bin worldgen -- \
 ### Run Tests
 
 ```bash
-cargo test --lib                 # 1590+ unit tests
+cargo test --lib                 # 1640+ unit tests
 cargo test --test simulations    # Physics simulation scenarios
 cargo test --test validate_assets  # Asset loading validation
 ```
@@ -228,12 +235,12 @@ The codebase is organised into focused ECS modules:
 
 | Module | Description |
 |--------|-------------|
-| `world/` | Octree chunks, meshing, terrain generation (NoiseStack, biome integration, scene presets), erosion (D8 valley + hydraulic), raycasting, planetary sampling |
+| `world/` | Cubed-sphere chunks (V2), greedy meshing, terrain generation (NoiseStack, biome integration, scene presets), erosion (D8 valley + hydraulic), raycasting, planetary sampling, octree storage |
 | `physics/` | Rigid bodies, gravity, collision, LBM gas, FLIP fluid, atmosphere |
 | `chemistry/` | Heat transfer, reactions, state transitions, radiation |
 | `building/` | Structural construction: part/recipe RON assets, joint stress model, load-path analysis, player placement, demolition, crafting |
 | `bodies/` | Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK, locomotion gaits, player embodiment, injury system |
-| `planet/` | Geodesic grid, tectonics, impacts, celestial, biomes, geology, rendering |
+| `planet/` | Geodesic grid, tectonics (advection, deformation, rifting, suturing, slab-pull, volcanic hotspots), impacts, celestial, biomes, geology, rendering |
 | `lighting/` | Sun cycle, atmospheric sky (Bevy Atmosphere component), light maps, volumetric clouds, distance fog, optics (Snell's law, Fresnel, TIR), chromatic dispersion, local Mie scattering, caustics |
 | `weather/` | Particle emitters, wind advection, snow/rain accumulation |
 | `biology/` | Metabolism, body temperature, hydration, energy systems |
@@ -249,12 +256,12 @@ The codebase is organised into focused ECS modules:
 | `camera/` | First-person camera controller |
 | `map/` | In-game map overlay: local discovery map + global planet map |
 
-**182 source files · ~76K lines of Rust · 1590+ tests**
+**213 source files · ~84K lines of Rust · 1640+ tests**
 
 ### Data-Driven Design
 
 Game data lives in `assets/data/` as RON files:
-- **36 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties; 28 terrain/chemistry materials (including 8 geological and 4 ores) + 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch); all with SI structural strength values (tensile, compressive, shear, flexural, fracture toughness)
+- **41 materials** — density, thermal conductivity, specific heat, hardness, viscosity, optical properties; 33 terrain/chemistry/emissive materials (including 8 geological, 4 ores, 3 plasters, and 3 emissive with spectral power distribution) + 8 construction materials (oak, pine, brick, concrete, wrought iron, bronze, dried clay, thatch); all with SI structural strength values (tensile, compressive, shear, flexural, fracture toughness)
 - **8 chemical reactions** — reactants, products, activation energy, enthalpy
 - **8 part types** — block, slab, beam, column, wall, arch, stair, roof (`.part.ron`)
 - **5 crafting recipes** — wood_to_planks, clay_to_brick, sand_to_glass, iron_ore_to_ingot, mix_concrete (`.recipe.ron`)
@@ -274,13 +281,18 @@ Detailed design documents live in [`docs/`](docs/):
 - [Terrain Generation](docs/terrain-generation.md)
 - [Geodesic Terrain Design](docs/geodesic-terrain-design.md)
 - [Spherical Terrain](docs/spherical-terrain.md)
+- [Voxel Subdivision System](docs/voxel-subdivision-system.md)
 - [Fluid Simulation](docs/fluid-simulation-system.md)
 - [Atmosphere Simulation](docs/atmosphere-simulation.md)
 - [Advanced Physics](docs/advanced-physics.md)
+- [Electromagnetism](docs/electromagnetism.md)
+- [Nuclear Physics](docs/nuclear-physics.md)
 - [Entity Bodies](docs/entity-bodies.md)
 - [Buildings & Structural Construction](docs/structural-construction.md)
 - [Optics & Light](docs/optics-light.md)
 - [Simulation Test System](docs/simulation-test-system.md)
+- [Showcases](docs/SHOWCASES.md)
+- [Debugging & Diagnostics](docs/debugging-and-diagnostics.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ---
