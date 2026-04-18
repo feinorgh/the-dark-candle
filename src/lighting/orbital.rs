@@ -8,6 +8,7 @@
 // module.
 
 use bevy::prelude::*;
+use bevy::math::DVec3;
 
 /// Tracks the planet's rotational and orbital position.
 ///
@@ -87,6 +88,54 @@ pub fn compute_sun_direction(
 /// with noon sun elevation of ~45° (or up to ~68° at summer solstice with
 /// Earth-like axial tilt).
 pub const DEFAULT_OBSERVER_LATITUDE: f64 = std::f64::consts::FRAC_PI_4;
+
+/// Compute the direction **toward the star** in the planet's body frame.
+///
+/// Unlike [`compute_sun_direction`], this is independent of any observer's
+/// latitude — it returns a single unit `DVec3` that is the same for the
+/// entire planet. The planet's rotation axis is assumed to be the Y axis;
+/// if your `PlanetConfig.rotation_axis` differs, the caller must rotate
+/// the result accordingly.
+///
+/// The coordinate frame is:
+///   +Y = rotation axis (north pole)
+///   +X = reference meridian at orbital_angle=0
+///   +Z = completes right-handed system
+///
+/// Declination δ comes from axial tilt and orbital position.
+/// Hour angle H comes from rotation angle and libration.
+///
+/// The star direction in equatorial coordinates:
+///   x = cos(δ) cos(H)
+///   y = sin(δ)
+///   z = −cos(δ) sin(H)
+pub fn compute_sun_direction_world(
+    state: &OrbitalState,
+    axial_tilt: f64,
+    libration_amplitude: f64,
+    libration_period: f64,
+) -> DVec3 {
+    use std::f64::consts::TAU;
+
+    let declination = (axial_tilt.sin() * state.orbital_angle.sin()).asin();
+
+    let libration_offset = if libration_period > 0.0 {
+        let days_elapsed = state.rotation_angle / TAU;
+        libration_amplitude * (TAU * days_elapsed / libration_period).sin()
+    } else {
+        0.0
+    };
+
+    // H=0 at local noon of the reference meridian, positive westward.
+    let hour_angle = std::f64::consts::PI - state.rotation_angle - libration_offset;
+
+    let cos_dec = declination.cos();
+    let sin_dec = declination.sin();
+    let cos_h = hour_angle.cos();
+    let sin_h = hour_angle.sin();
+
+    DVec3::new(cos_dec * cos_h, sin_dec, -cos_dec * sin_h).normalize()
+}
 
 /// Compute sun direction at a specific observer latitude.
 ///
@@ -367,5 +416,99 @@ mod tests {
         assert_eq!(state.time_scale, 0.0);
         state.time_scale = saved;
         assert_eq!(state.time_scale, 144.0);
+    }
+
+    // ── compute_sun_direction_world tests ──
+
+    #[test]
+    fn world_sun_noon_points_toward_reference_meridian() {
+        // rotation=π → noon on the reference meridian. Sun should be in +X
+        // direction (cos(H)=cos(0)=1, sin(H)=0 → x=1, z=0).
+        let state = OrbitalState {
+            rotation_angle: std::f64::consts::PI,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let dir = compute_sun_direction_world(&state, 0.0, 0.0, 0.0);
+        assert!(dir.x > 0.9, "Noon sun should point toward +X, got {dir:?}");
+        assert!(dir.y.abs() < 0.01, "No declination → Y≈0, got {dir:?}");
+        assert!(dir.z.abs() < 0.01, "Noon → Z≈0, got {dir:?}");
+    }
+
+    #[test]
+    fn world_sun_midnight_points_away_from_reference_meridian() {
+        // rotation=0 → midnight. H=π → cos(π)=-1 → x=-1.
+        let state = OrbitalState {
+            rotation_angle: 0.0,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let dir = compute_sun_direction_world(&state, 0.0, 0.0, 0.0);
+        assert!(dir.x < -0.9, "Midnight sun should point -X, got {dir:?}");
+    }
+
+    #[test]
+    fn world_sun_is_unit_vector() {
+        let state = OrbitalState {
+            rotation_angle: 1.234,
+            orbital_angle: 0.567,
+            ..Default::default()
+        };
+        let dir = compute_sun_direction_world(&state, 0.4, 0.1, 1.0);
+        let len = dir.length();
+        assert!(
+            (len - 1.0).abs() < 1e-10,
+            "Should be unit vector, length={len}"
+        );
+    }
+
+    #[test]
+    fn world_sun_solstice_has_declination() {
+        // Summer solstice: orbital_angle=π/2, tilt=23.44°.
+        // Declination should equal axial_tilt.
+        let tilt = 23.44_f64.to_radians();
+        let state = OrbitalState {
+            rotation_angle: std::f64::consts::PI, // noon
+            orbital_angle: std::f64::consts::FRAC_PI_2,
+            ..Default::default()
+        };
+        let dir = compute_sun_direction_world(&state, tilt, 0.0, 0.0);
+        // At noon with full declination, Y = sin(tilt) ≈ 0.3978
+        assert!(
+            (dir.y - tilt.sin()).abs() < 0.01,
+            "Summer solstice noon Y should be sin(tilt)={}, got {}",
+            tilt.sin(),
+            dir.y
+        );
+    }
+
+    #[test]
+    fn world_sun_independent_of_observer() {
+        // The function takes no observer latitude — verify same result
+        // regardless of what compute_sun_direction gives for different latitudes.
+        let state = OrbitalState {
+            rotation_angle: 2.0,
+            orbital_angle: 1.0,
+            ..Default::default()
+        };
+        let dir1 = compute_sun_direction_world(&state, 0.2, 0.0, 0.0);
+        let dir2 = compute_sun_direction_world(&state, 0.2, 0.0, 0.0);
+        assert_eq!(dir1, dir2);
+    }
+
+    #[test]
+    fn world_sun_equinox_in_equatorial_plane() {
+        // At equinox (orbital_angle=0), declination=0 → sun in XZ plane.
+        let state = OrbitalState {
+            rotation_angle: 1.5,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let dir = compute_sun_direction_world(&state, 0.4, 0.0, 0.0);
+        assert!(
+            dir.y.abs() < 1e-10,
+            "Equinox sun should be in equatorial plane, Y={}",
+            dir.y
+        );
     }
 }

@@ -83,6 +83,20 @@ impl Default for SunDirection {
     }
 }
 
+/// Unit vector pointing toward the star in planet body-frame coordinates.
+///
+/// Unlike `SunDirection` (which is in the observer's local tangent frame),
+/// this is the same for the entire planet and produces physically correct
+/// day/night hemispheres when used as the `DirectionalLight` direction.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct SunWorldDirection(pub bevy::math::DVec3);
+
+impl Default for SunWorldDirection {
+    fn default() -> Self {
+        Self(bevy::math::DVec3::new(0.0, 1.0, 0.0))
+    }
+}
+
 /// Configuration for terrain shadow casting.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct ShadowConfig {
@@ -167,36 +181,60 @@ fn sun_color(elevation: f32) -> Color {
     }
 }
 
-/// System: update sun DirectionalLight from orbital-derived direction.
+/// System: update sun DirectionalLight from world-space sun direction.
+///
+/// The `DirectionalLight` direction is set to the planet-frame sun vector,
+/// producing physically correct day/night hemispheres. Local elevation
+/// (for illuminance scaling and color temperature) is derived from the
+/// dot product of the sun direction with the observer's radial "up" vector.
 fn update_sun(
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
     config: Res<DayNightConfig>,
     mut insolation: ResMut<SolarInsolation>,
     mut sun_dir: ResMut<SunDirection>,
+    mut sun_world: ResMut<SunWorldDirection>,
     mut sun_q: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
 ) {
-    let (dir, elevation) = orbital::compute_sun_direction(
+    let world_dir = orbital::compute_sun_direction_world(
         &orbital_state,
         planet.axial_tilt,
         planet.libration_amplitude,
         planet.libration_period,
     );
+    sun_world.0 = world_dir;
+
+    // Derive local elevation from the camera's position on the planet.
+    // elevation = angle between sun direction and the observer's local horizon,
+    // which equals asin(dot(sun_dir, observer_up)).
+    let observer_up = cam_q
+        .iter()
+        .next()
+        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
+        .unwrap_or(bevy::math::DVec3::Y);
+
+    let sin_elevation = world_dir.dot(observer_up);
+    let elevation = (sin_elevation.clamp(-1.0, 1.0) as f32).asin();
 
     // Insolation factor: sine of elevation when above horizon, else 0.
     insolation.0 = elevation.sin().max(0.0);
 
-    // Update sun direction for terrain shadows.
+    // Update sun direction resource for terrain shadows (world-space).
+    let wd = world_dir.as_vec3();
     if elevation > 0.0 {
-        sun_dir.0 = dir;
+        sun_dir.0 = [wd.x, wd.y, wd.z];
     } else {
         sun_dir.0 = [0.0, 1.0, 0.0];
     }
 
     for (mut light, mut transform) in &mut sun_q {
+        // DirectionalLight direction is world-space — the terminator emerges
+        // naturally from the dot product of light direction with surface normals.
+        let sun_vec = wd;
+        *transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
+
         if elevation > 0.0 {
-            let sun_vec = Vec3::new(dir[0], dir[1], dir[2]);
-            *transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
             light.illuminance = config.noon_illuminance * elevation.sin();
             light.color = sun_color(elevation);
         } else {
@@ -206,22 +244,26 @@ fn update_sun(
     }
 }
 
-/// System: scale ambient light brightness with orbital-derived sun elevation.
+/// System: scale ambient light brightness with local sun elevation.
 ///
 /// In spherical mode, applies a boost factor to compensate for the absence of
 /// Atmosphere-driven image-based lighting.
 fn update_ambient(
-    orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
     config: Res<DayNightConfig>,
+    sun_world: Res<SunWorldDirection>,
     mut ambient_q: Query<&mut AmbientLight, With<SkyAmbient>>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
 ) {
-    let (_dir, elevation) = orbital::compute_sun_direction(
-        &orbital_state,
-        planet.axial_tilt,
-        planet.libration_amplitude,
-        planet.libration_period,
-    );
+    let observer_up = cam_q
+        .iter()
+        .next()
+        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
+        .unwrap_or(bevy::math::DVec3::Y);
+
+    let sin_elevation = sun_world.0.dot(observer_up);
+    let elevation = (sin_elevation.clamp(-1.0, 1.0) as f32).asin();
+
     let factor = elevation.sin().max(0.0);
     let mut brightness =
         config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
@@ -245,18 +287,20 @@ fn update_ambient(
     }
 }
 
-/// System: update distance fog color to match time of day.
+/// System: update distance fog color to match local time of day.
 fn update_fog(
-    orbital_state: Res<orbital::OrbitalState>,
-    planet: Res<PlanetConfig>,
+    sun_world: Res<SunWorldDirection>,
     mut fog_q: Query<&mut DistanceFog>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
 ) {
-    let (_dir, elevation) = orbital::compute_sun_direction(
-        &orbital_state,
-        planet.axial_tilt,
-        planet.libration_amplitude,
-        planet.libration_period,
-    );
+    let observer_up = cam_q
+        .iter()
+        .next()
+        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
+        .unwrap_or(bevy::math::DVec3::Y);
+
+    let sin_elevation = sun_world.0.dot(observer_up);
+    let elevation = (sin_elevation.clamp(-1.0, 1.0) as f32).asin();
 
     let fog_color = if elevation <= 0.0 {
         // Night: dark blue-gray
@@ -280,23 +324,42 @@ fn update_fog(
 /// is not used because it assumes a flat world.
 fn update_spherical_sky(
     planet: Res<PlanetConfig>,
-    orbital_state: Res<orbital::OrbitalState>,
+    sun_world: Res<SunWorldDirection>,
     mut clear_color: ResMut<ClearColor>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
 ) {
     if !planet.is_spherical() {
         return;
     }
 
-    let (_dir, elevation) = orbital::compute_sun_direction(
-        &orbital_state,
-        planet.axial_tilt,
-        planet.libration_amplitude,
-        planet.libration_period,
-    );
+    let observer_up = cam_q
+        .iter()
+        .next()
+        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
+        .unwrap_or(bevy::math::DVec3::Y);
+
+    // Project the world sun direction into the observer's local tangent frame
+    // for the scattering model (which expects sun_dir relative to observer).
+    // Build tangent frame: up = observer_up, east & south from cross products.
+    let up = observer_up;
+    let arbitrary = if up.x.abs() < 0.9 {
+        bevy::math::DVec3::X
+    } else {
+        bevy::math::DVec3::Z
+    };
+    let east = up.cross(arbitrary).normalize();
+    let south = east.cross(up).normalize();
+
+    let wd = sun_world.0;
+    let local_sun = [
+        wd.dot(east) as f32,
+        wd.dot(up) as f32,
+        wd.dot(south) as f32,
+    ];
 
     // Compute zenith sky color using our Rayleigh scattering model.
     let zenith = [0.0_f32, 1.0, 0.0];
-    let hdr = sky::sky_color_from_angles(zenith, elevation, 0.0);
+    let hdr = sky::sky_color(zenith, local_sun);
     let srgb = sky::tonemap_to_srgb(hdr);
 
     clear_color.0 = Color::srgb(
@@ -313,24 +376,25 @@ fn spawn_lights(
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
 ) {
-    let (dir, elevation) = orbital::compute_sun_direction(
+    let world_dir = orbital::compute_sun_direction_world(
         &orbital_state,
         planet.axial_tilt,
         planet.libration_amplitude,
         planet.libration_period,
     );
+
+    // At startup, assume observer at north pole for initial elevation estimate.
+    let sin_elevation = world_dir.y; // dot with Y-up
+    let elevation = (sin_elevation.clamp(-1.0, 1.0) as f32).asin();
+
     let illuminance = if elevation > 0.0 {
         config.noon_illuminance * elevation.sin()
     } else {
         config.noon_illuminance * 0.02
     };
 
-    let sun_vec = Vec3::new(dir[0], dir[1], dir[2]);
-    let sun_transform = if elevation > 0.0 {
-        Transform::default().looking_at(-sun_vec, Vec3::Y)
-    } else {
-        Transform::default()
-    };
+    let sun_vec = world_dir.as_vec3();
+    let sun_transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
 
     commands.spawn((
         Sun,
@@ -367,7 +431,6 @@ fn update_terrain_shadows(
     shadow_config: Res<ShadowConfig>,
     mut last_angles: ResMut<LastShadowAngles>,
     orbital_state: Res<orbital::OrbitalState>,
-    planet: Res<PlanetConfig>,
     registry: Option<Res<crate::data::MaterialRegistry>>,
     mut pending: ResMut<PendingShadowUpdates>,
     mut chunk_q: Query<(
@@ -381,12 +444,8 @@ fn update_terrain_shadows(
     }
     let Some(_registry) = registry else { return };
 
-    let (_dir, elevation) = orbital::compute_sun_direction(
-        &orbital_state,
-        planet.axial_tilt,
-        planet.libration_amplitude,
-        planet.libration_period,
-    );
+    let sun_world_dir = sun_dir.0;
+    let elevation = sun_world_dir[1].asin(); // Y component ≈ sin(elevation) for terrain
     let azimuth = orbital_state.rotation_angle as f32;
 
     // Check angle threshold — enqueue all chunks when crossed.
@@ -448,6 +507,7 @@ impl Plugin for LightingPlugin {
             .init_resource::<DayNightConfig>()
             .init_resource::<SolarInsolation>()
             .init_resource::<SunDirection>()
+            .init_resource::<SunWorldDirection>()
             .init_resource::<ShadowConfig>()
             .init_resource::<LastShadowAngles>()
             .init_resource::<PendingShadowUpdates>()
@@ -646,5 +706,72 @@ mod tests {
         assert!(cfg.angle_threshold_degrees > 0.0);
         assert!(cfg.shadow_samples >= 1);
         assert!(cfg.enabled);
+    }
+
+    // ── Spatial sun direction integration tests ──
+
+    #[test]
+    fn opposite_hemispheres_see_opposite_elevations() {
+        // At noon (rotation=π, no tilt), sun points toward +X.
+        // Observer on +X side (subsolar) should see positive elevation.
+        // Observer on −X side (midnight) should see negative elevation.
+        let state = orbital::OrbitalState {
+            rotation_angle: std::f64::consts::PI,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let sun_dir = orbital::compute_sun_direction_world(&state, 0.0, 0.0, 0.0);
+
+        let day_up = bevy::math::DVec3::X; // observer on +X surface
+        let night_up = bevy::math::DVec3::NEG_X; // observer on -X surface
+
+        let day_elev = sun_dir.dot(day_up);
+        let night_elev = sun_dir.dot(night_up);
+
+        assert!(day_elev > 0.5, "Day-side should see sun high, got {day_elev}");
+        assert!(night_elev < -0.5, "Night-side should see sun below horizon, got {night_elev}");
+    }
+
+    #[test]
+    fn subsolar_point_sees_near_zenith() {
+        // Sun at noon, no tilt → sun direction ≈ +X.
+        // Observer at +X (equator, reference meridian) should see ~90° elevation.
+        let state = orbital::OrbitalState {
+            rotation_angle: std::f64::consts::PI,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let sun_dir = orbital::compute_sun_direction_world(&state, 0.0, 0.0, 0.0);
+        let observer_up = bevy::math::DVec3::X;
+        let sin_elev = sun_dir.dot(observer_up);
+        let elev_deg = sin_elev.asin().to_degrees();
+        assert!(
+            (elev_deg - 90.0).abs() < 2.0,
+            "Subsolar observer should see ~90° elevation, got {elev_deg:.1}°"
+        );
+    }
+
+    #[test]
+    fn terminator_observer_sees_near_zero_elevation() {
+        // Sun at noon → +X direction. Observer at +Z is 90° away (on the terminator).
+        let state = orbital::OrbitalState {
+            rotation_angle: std::f64::consts::PI,
+            orbital_angle: 0.0,
+            ..Default::default()
+        };
+        let sun_dir = orbital::compute_sun_direction_world(&state, 0.0, 0.0, 0.0);
+        let observer_up = bevy::math::DVec3::Z; // 90° from subsolar point
+        let sin_elev = sun_dir.dot(observer_up);
+        let elev_deg = sin_elev.asin().to_degrees();
+        assert!(
+            elev_deg.abs() < 2.0,
+            "Terminator observer should see ~0° elevation, got {elev_deg:.1}°"
+        );
+    }
+
+    #[test]
+    fn sun_world_direction_resource_defaults() {
+        let swd = SunWorldDirection::default();
+        assert!((swd.0.length() - 1.0).abs() < 1e-10);
     }
 }
