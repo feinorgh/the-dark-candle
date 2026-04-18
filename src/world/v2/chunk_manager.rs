@@ -643,7 +643,7 @@ pub fn v2_collect_meshes(
             result.coord.world_transform_scaled_f64(mean_radius, coord_fce);
         let cs_half_scaled = Vec3::new(
             cs_half_f * tangent_scale.x,
-            cs_half_f,
+            cs_half_f * tangent_scale.y,
             cs_half_f * tangent_scale.z,
         );
         let center_render = {

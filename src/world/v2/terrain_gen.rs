@@ -93,10 +93,13 @@ fn generate_voxels_core(
         }
     }
 
-    let base_r = mean_radius + coord.layer as f64 * cs as f64;
-    let top_r = base_r + cs as f64;
-    let half_diag_tangent = ((tangent_scale.x as f64).powi(2) + (tangent_scale.z as f64).powi(2))
-        .sqrt()
+    let lod_scale = (1u64 << coord.lod) as f64;
+    let base_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
+    let top_r = base_r + cs as f64 * lod_scale;
+    let half_diag_tangent = ((tangent_scale.x as f64).powi(2)
+        + (tangent_scale.y as f64).powi(2)
+        + (tangent_scale.z as f64).powi(2))
+    .sqrt()
         * cs as f64
         / 2.0;
 
@@ -129,7 +132,7 @@ fn generate_voxels_core(
             for ly in 0..cs {
                 let local = Vec3::new(
                     (lx as f32 + 0.5 - half) * tangent_scale.x,
-                    ly as f32 + 0.5 - half,
+                    (ly as f32 + 0.5 - half) * tangent_scale.y,
                     (lz as f32 + 0.5 - half) * tangent_scale.z,
                 );
                 let world = center + rotation * local;
@@ -369,36 +372,36 @@ pub fn generate_single_boundary_slice(
     for a in 0..cs {
         for b in 0..cs {
             // Build local position one voxel past the chunk boundary.
-            // Tangent axes (X, Z) are scaled; radial axis (Y) is not.
+            // All axes (X, Y, Z) are scaled by tangent_scale.
             let local = match dir {
                 0 => Vec3::new(
                     (cs as f32 + 0.5 - half) * tangent_scale.x,
-                    a as f32 + 0.5 - half,
+                    (a as f32 + 0.5 - half) * tangent_scale.y,
                     (b as f32 + 0.5 - half) * tangent_scale.z,
                 ), // +X
                 1 => Vec3::new(
                     (-1.0 + 0.5 - half) * tangent_scale.x,
-                    a as f32 + 0.5 - half,
+                    (a as f32 + 0.5 - half) * tangent_scale.y,
                     (b as f32 + 0.5 - half) * tangent_scale.z,
                 ), // -X
                 2 => Vec3::new(
                     (a as f32 + 0.5 - half) * tangent_scale.x,
-                    cs as f32 + 0.5 - half,
+                    (cs as f32 + 0.5 - half) * tangent_scale.y,
                     (b as f32 + 0.5 - half) * tangent_scale.z,
                 ), // +Y
                 3 => Vec3::new(
                     (a as f32 + 0.5 - half) * tangent_scale.x,
-                    -1.0 + 0.5 - half,
+                    (-1.0 + 0.5 - half) * tangent_scale.y,
                     (b as f32 + 0.5 - half) * tangent_scale.z,
                 ), // -Y
                 4 => Vec3::new(
                     (a as f32 + 0.5 - half) * tangent_scale.x,
-                    b as f32 + 0.5 - half,
+                    (b as f32 + 0.5 - half) * tangent_scale.y,
                     (cs as f32 + 0.5 - half) * tangent_scale.z,
                 ), // +Z
                 _ => Vec3::new(
                     (a as f32 + 0.5 - half) * tangent_scale.x,
-                    b as f32 + 0.5 - half,
+                    (b as f32 + 0.5 - half) * tangent_scale.y,
                     (-1.0 + 0.5 - half) * tangent_scale.z,
                 ), // -Z
             };

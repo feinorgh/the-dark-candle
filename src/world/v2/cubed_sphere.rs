@@ -211,8 +211,9 @@ impl CubeSphereCoord {
     ) -> (Vec3, Quat, Vec3) {
         let dir = self.unit_sphere_dir(face_chunks_per_edge);
         let cs = CHUNK_SIZE as f64;
+        let lod_scale = (1u64 << self.lod) as f64;
 
-        let center_r = mean_radius + self.layer as f64 * cs;
+        let center_r = mean_radius + self.layer as f64 * cs * lod_scale;
 
         let world_pos = dir * center_r;
         let translation = Vec3::new(world_pos.x as f32, world_pos.y as f32, world_pos.z as f32);
@@ -252,9 +253,10 @@ impl CubeSphereCoord {
 
         // Scale = (actual arc extent at this radius) / (nominal chunk size CS).
         let scale_x = (center_r * angle_u / cs) as f32;
+        let scale_y = lod_scale as f32;
         let scale_z = (center_r * angle_v / cs) as f32;
 
-        (translation, rotation, Vec3::new(scale_x, 1.0, scale_z))
+        (translation, rotation, Vec3::new(scale_x, scale_y, scale_z))
     }
 
     /// Like `world_transform_scaled` but returns the center position as f64
@@ -266,7 +268,8 @@ impl CubeSphereCoord {
     ) -> (DVec3, Quat, Vec3) {
         let dir = self.unit_sphere_dir(face_chunks_per_edge);
         let cs = CHUNK_SIZE as f64;
-        let center_r = mean_radius + self.layer as f64 * cs;
+        let lod_scale = (1u64 << self.lod) as f64;
+        let center_r = mean_radius + self.layer as f64 * cs * lod_scale;
         let world_pos = dir * center_r;
 
         // Rotation and scale are the same as f32 variant
