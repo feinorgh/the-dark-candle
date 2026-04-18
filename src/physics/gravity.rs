@@ -16,6 +16,7 @@
 
 #![allow(dead_code)]
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::world::collision::ground_height_from_terrain_gen;
@@ -164,6 +165,7 @@ pub fn apply_forces(
     time: Res<Time>,
     planet: Res<PlanetConfig>,
     v2_gen: Option<Res<V2TerrainGen>>,
+    origin: Res<crate::floating_origin::RenderOrigin>,
     mut bodies: Query<(
         &mut PhysicsBody,
         &mut Transform,
@@ -281,7 +283,13 @@ pub fn apply_forces(
 
         // Ground collision using V2 terrain generator (no chunk lookup needed).
         if is_spherical && let Some(ref tg) = v2_gen {
-            let ground_r = ground_height_from_terrain_gen(transform.translation, &tg.0);
+            // Reconstruct absolute world position from render-space + origin
+            let world_pos = origin.0 + DVec3::new(
+                transform.translation.x as f64,
+                transform.translation.y as f64,
+                transform.translation.z as f64,
+            );
+            let ground_r = ground_height_from_terrain_gen(world_pos, &tg.0);
             let entity_r = transform.translation.length();
             let feet_r = entity_r - body.foot_offset;
             if feet_r <= ground_r {

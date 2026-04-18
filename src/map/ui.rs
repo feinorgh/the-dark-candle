@@ -364,7 +364,7 @@ pub fn map_teleport(
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     map_node_q: Query<(&ComputedNode, &UiGlobalTransform), With<MapContainer>>,
-    mut camera_q: Query<(&mut WorldPosition, &mut FpsCamera), With<Player>>,
+    mut camera_q: Query<(&mut WorldPosition, &mut Transform, &mut FpsCamera), With<Player>>,
     mut render_origin: ResMut<RenderOrigin>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
@@ -413,9 +413,11 @@ pub fn map_teleport(
     let teleport_pos = dir * ((surface_r.max(sea_r) + EYE_HEIGHT) as f64);
 
     // Move the camera.
-    if let Ok((mut wp, mut fps)) = camera_q.single_mut() {
+    if let Ok((mut wp, mut transform, mut fps)) = camera_q.single_mut() {
         wp.0 = teleport_pos;
         render_origin.0 = teleport_pos;
+        // WorldPosition == RenderOrigin → render offset is zero
+        transform.translation = Vec3::ZERO;
         // Reset vertical velocity so we don't carry momentum.
         fps.vertical_velocity = 0.0;
         fps.grounded = false;

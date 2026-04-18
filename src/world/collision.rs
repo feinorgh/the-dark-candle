@@ -27,11 +27,10 @@ pub fn terrain_spawn_height(
 /// plus 1 m to stand on top. This is the V2-pipeline equivalent of
 /// `ground_height_radial` — it works without loaded chunks.
 pub fn ground_height_from_terrain_gen(
-    world_pos: Vec3,
+    world_pos: DVec3,
     terrain_gen: &super::terrain::UnifiedTerrainGenerator,
 ) -> f32 {
-    let pos = DVec3::new(world_pos.x as f64, world_pos.y as f64, world_pos.z as f64);
-    let (lat, lon) = terrain_gen.planet_config().lat_lon(pos);
+    let (lat, lon) = terrain_gen.planet_config().lat_lon(world_pos);
     let surface_r = terrain_gen.sample_surface_radius_at(lat, lon);
     surface_r as f32 + 1.0 // +1 to stand on top of the voxel
 }
@@ -78,7 +77,7 @@ mod tests {
         let tgen =
             UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
         // Position on +X axis at the surface
-        let pos = Vec3::new(32000.0, 0.0, 0.0);
+        let pos = DVec3::new(32000.0, 0.0, 0.0);
         let h = ground_height_from_terrain_gen(pos, &tgen);
         // With no noise, surface is exactly at mean_radius. +1 for standing.
         assert!((h - 32001.0).abs() < 1.0, "Expected ~32001, got {h}");
@@ -96,7 +95,7 @@ mod tests {
         let tgen =
             UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
 
-        let pos = Vec3::new(20000.0, 15000.0, 10000.0);
+        let pos = DVec3::new(20000.0, 15000.0, 10000.0);
         let h1 = ground_height_from_terrain_gen(pos, &tgen);
         let h2 = ground_height_from_terrain_gen(pos, &tgen);
         assert_eq!(h1, h2);

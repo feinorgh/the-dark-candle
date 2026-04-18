@@ -387,8 +387,7 @@ fn snap_to_surface(
 
     let tgen = v2_gen.as_ref().map(|r| r.0.as_ref());
     if let Some(tg) = tgen {
-        let render_pos = world_pos.render_offset(&origin);
-        let terrain_r = ground_height_from_terrain_gen(render_pos, tg);
+        let terrain_r = ground_height_from_terrain_gen(world_pos.0, tg);
         // Never place the player below sea level (ocean floor).
         let ground_r = terrain_r.max(planet.sea_level_radius as f32 + 1.0);
         let up = local_up_from_world_pos(world_pos.0);
@@ -584,7 +583,6 @@ fn camera_gravity(
     time: Res<Time>,
     planet: Res<PlanetConfig>,
     v2_gen: Option<Res<V2TerrainGen>>,
-    origin: Res<RenderOrigin>,
     mut cam_q: Query<(&mut FpsCamera, &mut WorldPosition, &Transform)>,
 ) {
     let Ok((mut cam, mut world_pos, _)) = cam_q.single_mut() else {
@@ -606,11 +604,10 @@ fn camera_gravity(
         let vert_delta = local_up * cam.vertical_velocity * dt;
         world_pos.0 += DVec3::new(vert_delta.x as f64, vert_delta.y as f64, vert_delta.z as f64);
 
-        // Ground collision: use render-space position for terrain sampling
-        let render_pos = world_pos.render_offset(&origin);
+        // Ground collision: use world-space position for terrain sampling
         let ground_r = v2_gen
             .as_ref()
-            .map(|tg| ground_height_from_terrain_gen(render_pos, &tg.0))
+            .map(|tg| ground_height_from_terrain_gen(world_pos.0, &tg.0))
             // Never let the player fall below sea level.
             .map(|r| r.max(planet.sea_level_radius as f32 + 1.0));
 
