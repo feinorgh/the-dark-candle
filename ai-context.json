@@ -92,7 +92,7 @@
       {
         "name": "persistence",
         "path": "src/persistence/",
-        "responsibility": "Save/load with 3 manual slots + autosave. Persists player state, RLE-compressed chunks, creatures, items, enemies, factions. SaveId system for stable entity references. Version 3 with migration"
+        "responsibility": "Save/load with 3 manual slots + autosave. Persists player state (f64 WorldPosition), RLE-compressed chunks, creatures, items, enemies, factions. SaveId system for stable entity references. Version 3 with migration. On load, resets RenderOrigin to player position"
       },
       {
         "name": "diagnostics",
@@ -102,7 +102,12 @@
       {
         "name": "camera",
         "path": "src/camera/",
-        "responsibility": "First-person camera with gravity toggle (G key). Walk 5 m/s, sprint 8 m/s, fly 20 m/s. Tangent-plane movement for spherical terrain. Spherical mode: camera orientation aligned to local surface normal via Quat::from_rotation_arc base rotation. 1.7m eye height, realistic jump physics"
+        "responsibility": "First-person camera with gravity toggle (G key). Walk 5 m/s, sprint 8 m/s, fly 20 m/s. Tangent-plane movement for spherical terrain. Spherical mode: camera orientation aligned to local surface normal via Quat::from_rotation_arc base rotation. 1.7m eye height, realistic jump physics. Uses WorldPosition(DVec3) for f64 precision; Transform is render-space only (derived from WorldPosition - RenderOrigin)"
+      },
+      {
+        "name": "floating_origin",
+        "path": "src/floating_origin.rs",
+        "responsibility": "Camera-relative rendering for Earth-scale planets. WorldPosition(DVec3) component holds true f64 positions. RenderOrigin(DVec3) resource defines the f32 zero point. Rebase triggers at 512m offset threshold, shifting all entity Transforms. Eliminates f32 vertex jitter at planetary distances"
       },
       {
         "name": "hud",
@@ -1661,7 +1666,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "fcd2814",
+    "generated_from_commit": "7891f45",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
