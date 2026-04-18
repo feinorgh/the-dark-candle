@@ -737,10 +737,10 @@
       "src/world/v2/greedy_mesh.rs",
       "src/world/v2/terrain_gen.rs"
     ],
-    "suspected_cause": "NeighborSlices::empty() was always passed to greedy_mesh. Boundary voxels treated neighbors as AIR, generating exposed faces at every chunk boundary. Additionally, adjacent chunks have different rotations so flat mesh boundary vertices don't coincide in world space.",
+    "suspected_cause": "Two issues: (1) NeighborSlices::empty() was always passed to greedy_mesh, causing false boundary faces. (2) The gnomonic (cubed-sphere) projection creates non-uniform angular spacing: chunks at face centers need to cover ~27% more arc length than their 32m local extent, causing 8.7m gaps. Chunks at face edges overlap by ~11.6m.",
     "related_commits": [],
-    "resolution": "Changed NeighborSlices to use efficient 2D boundary slices (CHUNK_SIZE² per direction instead of full CHUNK_VOLUME). Extended generate_v2_chunk to produce boundary slices by sampling the actual neighbor chunk's boundary-layer voxels in the neighbor's coordinate frame. Greedy mesh now receives real neighbor data, suppressing false boundary faces between solid chunks.",
-    "notes": ["Geometric gaps from cubed-sphere vertex mismatch may still be visible at extreme positions. Phase 3 (vertex warping) can be applied if needed."]
+    "resolution": "Phase 1: Changed NeighborSlices to 2D boundary slices sampled in the current chunk's own local frame. Phase 2: Added world_transform_scaled() that computes per-chunk tangent-plane scale factors from the gnomonic angular footprint. Terrain generation and boundary slices now use scaled local offsets. Chunk entity Transforms include non-uniform (scale_x, 1.0, scale_z) so meshes cover the correct angular extent. Tests verify adjacent chunk edges meet within 1m.",
+    "notes": ["Each voxel now covers slightly more or less than 1m depending on position (0.6m at face edges, 1.27m at face centers). This is geometrically correct — there's more surface area to cover at face centers."]
   },
   {
     "id": "RENDER-005",

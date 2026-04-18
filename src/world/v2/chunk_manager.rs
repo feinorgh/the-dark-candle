@@ -319,7 +319,7 @@ pub fn v2_collect_results(
     mut task_q: Query<(Entity, &mut V2ChunkTask)>,
 ) {
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
-    let cs_half = Vec3::splat(CHUNK_SIZE as f32 / 2.0);
+    let cs_half_f = CHUNK_SIZE as f32 / 2.0;
 
     let chunk_material = cached_mat
         .get_or_insert_with(|| {
@@ -348,12 +348,20 @@ pub fn v2_collect_results(
             // No visible geometry — record as loaded but don't spawn a mesh entity
             chunk_map.loaded.insert(result.coord);
             // Spawn a minimal entity so we track it for despawn
-            let (center, rotation) = result.coord.world_transform(planet.mean_radius, fce);
-            let adjusted = center - rotation * cs_half;
+            let (center, rotation, tangent_scale) =
+                result.coord.world_transform_scaled(planet.mean_radius, fce);
+            let cs_half_scaled = Vec3::new(
+                cs_half_f * tangent_scale.x,
+                cs_half_f,
+                cs_half_f * tangent_scale.z,
+            );
+            let adjusted = center - rotation * cs_half_scaled;
             commands.spawn((
                 V2ChunkMarker,
                 V2ChunkCoord(result.coord),
-                Transform::from_translation(adjusted).with_rotation(rotation),
+                Transform::from_translation(adjusted)
+                    .with_rotation(rotation)
+                    .with_scale(tangent_scale),
             ));
             continue;
         }
@@ -362,10 +370,17 @@ pub fn v2_collect_results(
         let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
         let mesh_handle = meshes.add(bevy_mesh);
 
-        let (center, rotation) = result.coord.world_transform(planet.mean_radius, fce);
+        let (center, rotation, tangent_scale) =
+            result.coord.world_transform_scaled(planet.mean_radius, fce);
         // Offset translation: mesh vertices are in [0, CS], so local origin (0,0,0)
-        // should map to the chunk's "base corner" in world space.
-        let adjusted = center - rotation * cs_half;
+        // should map to the chunk's "base corner" in world space. With non-uniform
+        // scale, the offset must account for the tangent-plane stretch.
+        let cs_half_scaled = Vec3::new(
+            cs_half_f * tangent_scale.x,
+            cs_half_f,
+            cs_half_f * tangent_scale.z,
+        );
+        let adjusted = center - rotation * cs_half_scaled;
 
         commands.spawn((
             V2ChunkMarker,
@@ -373,7 +388,9 @@ pub fn v2_collect_results(
             ChunkMeshMarker,
             Mesh3d(mesh_handle),
             MeshMaterial3d(chunk_material.clone()),
-            Transform::from_translation(adjusted).with_rotation(rotation),
+            Transform::from_translation(adjusted)
+                .with_rotation(rotation)
+                .with_scale(tangent_scale),
         ));
 
         chunk_map.loaded.insert(result.coord);

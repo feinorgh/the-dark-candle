@@ -7,7 +7,7 @@
 // The cubed-sphere projection normalizes cube-face points to the unit sphere,
 // giving near-uniform cell sizes (max distortion ratio ~1.22 at face corners).
 
-use bevy::math::{DVec3, Quat, Vec3};
+use bevy::math::{DVec3, Mat3, Quat, Vec3};
 
 use crate::world::chunk::CHUNK_SIZE;
 
@@ -151,21 +151,75 @@ impl CubeSphereCoord {
     /// `mean_radius` is the planet's mean surface radius in meters.
     /// `face_chunks_per_edge` is how many chunks span one face edge.
     pub fn world_transform(&self, mean_radius: f64, face_chunks_per_edge: f64) -> (Vec3, Quat) {
+        let (translation, rotation, _scale) =
+            self.world_transform_scaled(mean_radius, face_chunks_per_edge);
+        (translation, rotation)
+    }
+
+    /// World-space transform with tangent-plane scale factors.
+    ///
+    /// Returns `(translation, rotation, scale)` where:
+    /// - `translation` is the world position of the chunk's local origin
+    /// - `rotation` is face-aligned: local X → face U direction (projected
+    ///   onto tangent plane), local Y → radial up, local Z → right-hand cross
+    /// - `scale.x` and `scale.z` compensate for gnomonic projection distortion
+    ///   so that each chunk covers its correct angular footprint on the sphere.
+    ///   `scale.y` is always 1.0 (radial layers are uniform).
+    ///
+    /// At face center the scale is ~1.27 (chunk must cover more arc than CS),
+    /// at face edges ~0.64 (chunk must cover less arc). Without this scaling,
+    /// there are visible gaps at face centers and overlaps at edges.
+    pub fn world_transform_scaled(
+        &self,
+        mean_radius: f64,
+        face_chunks_per_edge: f64,
+    ) -> (Vec3, Quat, Vec3) {
         let dir = self.unit_sphere_dir(face_chunks_per_edge);
         let cs = CHUNK_SIZE as f64;
 
-        // Layer 0 center is at mean_radius so the terrain surface cuts through
-        // the middle of the chunk. Layer ±N offsets by N × CHUNK_SIZE.
         let center_r = mean_radius + self.layer as f64 * cs;
 
         let world_pos = dir * center_r;
         let translation = Vec3::new(world_pos.x as f32, world_pos.y as f32, world_pos.z as f32);
 
-        // Build rotation: align local Y with the radial direction.
+        // ── Deterministic face-aligned rotation ──
+        // Local Y = radial up.
+        // Local X = face U tangent axis projected onto the tangent plane.
+        // Local Z = right × up (right-handed cross product).
         let local_up = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
-        let rotation = Quat::from_rotation_arc(Vec3::Y, local_up);
+        let (face_right_d, _) = self.face.tangent_axes();
+        let face_right =
+            Vec3::new(face_right_d.x as f32, face_right_d.y as f32, face_right_d.z as f32);
 
-        (translation, rotation)
+        let right = (face_right - local_up * face_right.dot(local_up)).normalize();
+        let forward = right.cross(local_up);
+
+        let rotation = Quat::from_mat3(&Mat3::from_cols(right, local_up, forward));
+
+        // ── Tangent-plane scale from gnomonic angular footprint ──
+        let half = face_chunks_per_edge / 2.0;
+        let nu = (self.u as f64 + 0.5 - half) / half;
+        let nv = (self.v as f64 + 0.5 - half) / half;
+        let dnu = 0.5 / half; // half-width of one chunk in cube-face coords
+
+        let normal_d = self.face.normal();
+        let (right_d, up_d) = self.face.tangent_axes();
+
+        // Directions at the chunk's U and V edges on the unit cube, projected
+        // to the unit sphere. The angle between them gives the true arc extent.
+        let dir_u_lo = (normal_d + right_d * (nu - dnu) + up_d * nv).normalize();
+        let dir_u_hi = (normal_d + right_d * (nu + dnu) + up_d * nv).normalize();
+        let dir_v_lo = (normal_d + right_d * nu + up_d * (nv - dnu)).normalize();
+        let dir_v_hi = (normal_d + right_d * nu + up_d * (nv + dnu)).normalize();
+
+        let angle_u = dir_u_lo.dot(dir_u_hi).clamp(-1.0, 1.0).acos();
+        let angle_v = dir_v_lo.dot(dir_v_hi).clamp(-1.0, 1.0).acos();
+
+        // Scale = (actual arc extent at this radius) / (nominal chunk size CS).
+        let scale_x = (center_r * angle_u / cs) as f32;
+        let scale_z = (center_r * angle_v / cs) as f32;
+
+        (translation, rotation, Vec3::new(scale_x, 1.0, scale_z))
     }
 
     /// The 6 face-neighbors of this chunk (±u, ±v, ±layer).
@@ -504,5 +558,69 @@ mod tests {
         let below = nbrs[5]; // -layer
         assert_eq!(above, CubeSphereCoord::new(CubeFace::NegX, 300, 400, 3));
         assert_eq!(below, CubeSphereCoord::new(CubeFace::NegX, 300, 400, 1));
+    }
+
+    #[test]
+    fn tangent_scale_larger_at_face_center_than_edge() {
+        // Gnomonic distortion: face center needs larger scale than face edge.
+        let half = TEST_FACE_CHUNKS_I / 2;
+        let center = CubeSphereCoord::new(CubeFace::PosZ, half, half, 0);
+        let edge = CubeSphereCoord::new(CubeFace::PosZ, TEST_FACE_CHUNKS_I - 1, half, 0);
+
+        let (_, _, scale_center) =
+            center.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (_, _, scale_edge) =
+            edge.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+
+        assert!(
+            scale_center.x > scale_edge.x,
+            "Face center scale_x ({}) should be > edge scale_x ({})",
+            scale_center.x,
+            scale_edge.x,
+        );
+    }
+
+    #[test]
+    fn tangent_scale_is_symmetric() {
+        // Chunks equidistant from face center should have the same scale.
+        let half = TEST_FACE_CHUNKS_I / 2;
+        let left = CubeSphereCoord::new(CubeFace::PosZ, half - 100, half, 0);
+        let right = CubeSphereCoord::new(CubeFace::PosZ, half + 100, half, 0);
+
+        let (_, _, scale_l) = left.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (_, _, scale_r) = right.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+
+        assert!(
+            (scale_l.x - scale_r.x).abs() < 0.01,
+            "Symmetric chunks should have similar scale: {} vs {}",
+            scale_l.x,
+            scale_r.x,
+        );
+    }
+
+    #[test]
+    fn adjacent_chunks_edges_meet() {
+        // After scaling, adjacent chunks' world-space edges should approximately meet.
+        let half = TEST_FACE_CHUNKS_I / 2;
+        let cs = CHUNK_SIZE as f32;
+
+        let a = CubeSphereCoord::new(CubeFace::PosZ, half, half, 0);
+        let b = CubeSphereCoord::new(CubeFace::PosZ, half + 1, half, 0);
+
+        let (center_a, rot_a, scale_a) =
+            a.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (center_b, rot_b, scale_b) =
+            b.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+
+        // Right edge of chunk A: center_a + rot_a * (cs/2 * scale_a.x, 0, 0)
+        let edge_a = center_a + rot_a * Vec3::new(cs / 2.0 * scale_a.x, 0.0, 0.0);
+        // Left edge of chunk B: center_b + rot_b * (-cs/2 * scale_b.x, 0, 0)
+        let edge_b = center_b + rot_b * Vec3::new(-cs / 2.0 * scale_b.x, 0.0, 0.0);
+
+        let gap = (edge_a - edge_b).length();
+        assert!(
+            gap < 1.0,
+            "Adjacent chunk edges should meet within 1m, got {gap:.3}m gap"
+        );
     }
 }

@@ -39,7 +39,8 @@ pub fn generate_v2_chunk(
 ) -> V2ChunkData {
     let cs = CHUNK_SIZE;
     let half = cs as f32 / 2.0;
-    let (center, rotation) = coord.world_transform(mean_radius, face_chunks_per_edge);
+    let (center, rotation, tangent_scale) =
+        coord.world_transform_scaled(mean_radius, face_chunks_per_edge);
 
     // Surface radius cache: sample once per (lx, lz) column at the vertical
     // midpoint (ly = CHUNK_SIZE/2). The angular span of a 32m chunk at 32km
@@ -47,7 +48,11 @@ pub fn generate_v2_chunk(
     let mut surface_cache = [[0.0_f64; CHUNK_SIZE]; CHUNK_SIZE];
     for lz in 0..cs {
         for lx in 0..cs {
-            let local = Vec3::new(lx as f32 + 0.5 - half, 0.0, lz as f32 + 0.5 - half);
+            let local = Vec3::new(
+                (lx as f32 + 0.5 - half) * tangent_scale.x,
+                0.0,
+                (lz as f32 + 0.5 - half) * tangent_scale.z,
+            );
             let world = center + rotation * local;
             let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
             let (lat, lon) = tgen.planet_config().lat_lon(wpos);
@@ -58,7 +63,11 @@ pub fn generate_v2_chunk(
     // Early exit: check if entire chunk is above or below all surfaces.
     let base_r = mean_radius + coord.layer as f64 * cs as f64;
     let top_r = base_r + cs as f64;
-    let half_diag_tangent = (2.0_f64).sqrt() * cs as f64 / 2.0;
+    // Half-diagonal of the tangent plane extent, accounting for gnomonic scale.
+    let half_diag_tangent = ((tangent_scale.x as f64).powi(2) + (tangent_scale.z as f64).powi(2))
+        .sqrt()
+        * cs as f64
+        / 2.0;
 
     let mut min_surface = f64::MAX;
     let mut max_surface = f64::MIN;
@@ -106,9 +115,9 @@ pub fn generate_v2_chunk(
             let surface_r = surface_cache[lz][lx];
             for ly in 0..cs {
                 let local = Vec3::new(
-                    lx as f32 + 0.5 - half,
+                    (lx as f32 + 0.5 - half) * tangent_scale.x,
                     ly as f32 + 0.5 - half,
-                    lz as f32 + 0.5 - half,
+                    (lz as f32 + 0.5 - half) * tangent_scale.z,
                 );
                 let world = center + rotation * local;
                 let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
@@ -151,7 +160,8 @@ fn generate_boundary_slices(
 ) -> NeighborSlices {
     let cs = CHUNK_SIZE;
     let half = cs as f32 / 2.0;
-    let (center, rotation) = coord.world_transform(mean_radius, face_chunks_per_edge);
+    let (center, rotation, tangent_scale) =
+        coord.world_transform_scaled(mean_radius, face_chunks_per_edge);
     let sea = tgen.planet_config().sea_level_radius;
 
     let slice_size = cs * cs;
@@ -163,42 +173,41 @@ fn generate_boundary_slices(
         for a in 0..cs {
             for b in 0..cs {
                 // Build local position one voxel past the chunk boundary.
-                // (a, b) are the two free axes; the fixed axis is one step
-                // outside [0, CS).
+                // Tangent axes (X, Z) are scaled; radial axis (Y) is not.
                 //
                 // sample_material index order per direction:
                 //   +X/−X → (y, z),  +Y/−Y → (x, z),  +Z/−Z → (x, y)
                 let local = match dir {
                     0 => Vec3::new(
-                        cs as f32 + 0.5 - half,
+                        (cs as f32 + 0.5 - half) * tangent_scale.x,
                         a as f32 + 0.5 - half,
-                        b as f32 + 0.5 - half,
-                    ), // +X: lx = CS
+                        (b as f32 + 0.5 - half) * tangent_scale.z,
+                    ), // +X
                     1 => Vec3::new(
-                        -1.0 + 0.5 - half,
+                        (-1.0 + 0.5 - half) * tangent_scale.x,
                         a as f32 + 0.5 - half,
-                        b as f32 + 0.5 - half,
-                    ), // -X: lx = -1
+                        (b as f32 + 0.5 - half) * tangent_scale.z,
+                    ), // -X
                     2 => Vec3::new(
-                        a as f32 + 0.5 - half,
+                        (a as f32 + 0.5 - half) * tangent_scale.x,
                         cs as f32 + 0.5 - half,
-                        b as f32 + 0.5 - half,
-                    ), // +Y: ly = CS
+                        (b as f32 + 0.5 - half) * tangent_scale.z,
+                    ), // +Y
                     3 => Vec3::new(
-                        a as f32 + 0.5 - half,
+                        (a as f32 + 0.5 - half) * tangent_scale.x,
                         -1.0 + 0.5 - half,
-                        b as f32 + 0.5 - half,
-                    ), // -Y: ly = -1
+                        (b as f32 + 0.5 - half) * tangent_scale.z,
+                    ), // -Y
                     4 => Vec3::new(
-                        a as f32 + 0.5 - half,
+                        (a as f32 + 0.5 - half) * tangent_scale.x,
                         b as f32 + 0.5 - half,
-                        cs as f32 + 0.5 - half,
-                    ), // +Z: lz = CS
+                        (cs as f32 + 0.5 - half) * tangent_scale.z,
+                    ), // +Z
                     _ => Vec3::new(
-                        a as f32 + 0.5 - half,
+                        (a as f32 + 0.5 - half) * tangent_scale.x,
                         b as f32 + 0.5 - half,
-                        -1.0 + 0.5 - half,
-                    ), // -Z: lz = -1
+                        (-1.0 + 0.5 - half) * tangent_scale.z,
+                    ), // -Z
                 };
 
                 let world = center + rotation * local;
