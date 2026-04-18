@@ -1295,7 +1295,7 @@
     {
       "name": "V2 cubed-sphere rendering pipeline",
       "status": "complete",
-      "description": "Cubed-sphere rendering pipeline with local tangent plane chunks, greedy meshing, 29 tests. Switch via --pipeline v2.",
+      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, greedy meshing, voxel cache for boundary reuse. 39 tests.",
       "paths": [
         "src/world/v2/mod.rs",
         "src/world/v2/cubed_sphere.rs",
@@ -1310,7 +1310,7 @@
       "files": [
         "src/world/v2/"
       ],
-      "notes": "Default pipeline. Greedy mesh + terrain-gen ground collision."
+      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache for boundary slice reuse. Greedy mesh + terrain-gen ground collision."
     },
     {
       "name": "Configurable player spawn location",
@@ -2836,7 +2836,7 @@
     {
       "name": "V2 cubed-sphere rendering pipeline",
       "status": "complete",
-      "description": "Cubed-sphere rendering pipeline with local tangent plane chunks, greedy meshing, 29 tests. Switch via --pipeline v2.",
+      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, greedy meshing, voxel cache for boundary reuse. 39 tests.",
       "paths": [
         "src/world/v2/mod.rs",
         "src/world/v2/cubed_sphere.rs",
@@ -2851,7 +2851,7 @@
       "files": [
         "src/world/v2/"
       ],
-      "notes": "Default pipeline. Greedy mesh + terrain-gen ground collision."
+      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache for boundary slice reuse. Greedy mesh + terrain-gen ground collision."
     },
     {
       "name": "Configurable player spawn location",

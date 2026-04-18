@@ -1,10 +1,13 @@
 // V2 chunk manager for cubed-sphere coordinates.
 //
-// Computes desired chunk set on the cubed sphere around the camera,
-// dispatches async terrain generation + greedy meshing, collects results,
-// and spawns entities with correct local-tangent-plane Transforms.
+// Two-stage async pipeline:
+// Stage 1 (terrain): generate voxels → store in voxel cache
+// Stage 2 (meshing): build mesh from cached voxels + neighbor boundaries
+//
+// Boundary slices are extracted from the voxel cache for same-face neighbors.
+// Cross-face boundaries fall back to terrain resampling.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::math::DVec3;
@@ -21,13 +24,21 @@ use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
 use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord, world_pos_to_coord};
 use crate::world::v2::greedy_mesh;
-use crate::world::v2::terrain_gen::generate_v2_chunk;
+use crate::world::v2::greedy_mesh::NeighborSlices;
+use crate::world::v2::terrain_gen::{
+    CachedVoxels, V2TerrainData, cached_voxels_to_vec, extract_edge_slice,
+    generate_single_boundary_slice, generate_v2_voxels,
+};
 
 // ── Limits ────────────────────────────────────────────────────────────────
 
-const MAX_DISPATCHES_PER_FRAME: usize = 32;
-const MAX_PENDING: usize = 128;
-const MAX_COLLECTS_PER_FRAME: usize = 32;
+const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 32;
+const MAX_TERRAIN_PENDING: usize = 128;
+const MAX_TERRAIN_COLLECTS_PER_FRAME: usize = 32;
+
+const MAX_MESH_DISPATCHES_PER_FRAME: usize = 16;
+const MAX_MESH_PENDING: usize = 64;
+const MAX_MESH_COLLECTS_PER_FRAME: usize = 16;
 
 /// Maximum horizontal load radius in chunks (prevents runaway at extreme altitudes).
 const MAX_HORIZONTAL_CHUNKS: i32 = 48;
@@ -72,15 +83,68 @@ impl V2ChunkMap {
     }
 }
 
-/// Tracks which CubeSphereCoords are pending (task dispatched, not yet collected).
+/// Tracks which CubeSphereCoords have a terrain task dispatched.
 #[derive(Resource, Default)]
-pub struct V2PendingChunks {
+pub struct V2PendingTerrain {
     pending: HashSet<CubeSphereCoord>,
 }
 
-impl V2PendingChunks {
+impl V2PendingTerrain {
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+}
+
+/// Tracks which CubeSphereCoords have a mesh task dispatched.
+#[derive(Resource, Default)]
+pub struct V2PendingMeshes {
+    pending: HashSet<CubeSphereCoord>,
+}
+
+impl V2PendingMeshes {
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+/// Cached voxel data for chunks that have completed terrain generation.
+///
+/// Entries are stored as `Arc`-wrapped data for zero-copy sharing with mesh tasks.
+/// Chunks are evicted when they leave the desired set + margin.
+#[derive(Resource, Default)]
+pub struct V2VoxelCache {
+    entries: HashMap<CubeSphereCoord, CachedVoxels>,
+    byte_size: usize,
+}
+
+impl V2VoxelCache {
+    pub fn get(&self, coord: &CubeSphereCoord) -> Option<&CachedVoxels> {
+        self.entries.get(coord)
+    }
+
+    pub fn contains(&self, coord: &CubeSphereCoord) -> bool {
+        self.entries.contains_key(coord)
+    }
+
+    pub fn insert(&mut self, coord: CubeSphereCoord, voxels: CachedVoxels) {
+        self.byte_size += voxels.byte_size();
+        if let Some(old) = self.entries.insert(coord, voxels) {
+            self.byte_size -= old.byte_size();
+        }
+    }
+
+    pub fn remove(&mut self, coord: &CubeSphereCoord) {
+        if let Some(old) = self.entries.remove(coord) {
+            self.byte_size -= old.byte_size();
+        }
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn byte_size(&self) -> usize {
+        self.byte_size
     }
 }
 
@@ -94,12 +158,16 @@ pub struct V2ChunkMarker;
 #[derive(Component, Clone, Copy)]
 pub struct V2ChunkCoord(pub CubeSphereCoord);
 
-/// Async task that produces a completed V2 chunk (voxels + mesh).
+/// Async terrain generation task (stage 1).
 #[derive(Component)]
-pub struct V2ChunkTask(pub Task<V2ChunkResult>);
+pub struct V2TerrainTask(pub Task<V2TerrainData>);
 
-/// Result of a combined terrain generation + meshing task.
-pub struct V2ChunkResult {
+/// Async mesh generation task (stage 2).
+#[derive(Component)]
+pub struct V2MeshTask(pub Task<V2MeshResult>);
+
+/// Result of a mesh generation task.
+pub struct V2MeshResult {
     pub coord: CubeSphereCoord,
     pub mesh: ChunkMesh,
 }
@@ -234,17 +302,18 @@ fn wrap_cross_face(
     None
 }
 
-/// Main V2 chunk update system: compute desired set, dispatch generation,
-/// despawn out-of-range chunks.
+/// Main V2 chunk update system: compute desired set, dispatch terrain tasks,
+/// despawn out-of-range chunks, evict stale cache entries.
 #[allow(clippy::too_many_arguments)]
 pub fn v2_update_chunks(
     mut commands: Commands,
     mut chunk_map: ResMut<V2ChunkMap>,
-    mut pending: ResMut<V2PendingChunks>,
+    mut pending_terrain: ResMut<V2PendingTerrain>,
+    pending_meshes: Res<V2PendingMeshes>,
+    mut cache: ResMut<V2VoxelCache>,
     load_radius: Res<V2LoadRadius>,
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
-    color_map: Res<MaterialColorMap>,
     camera_q: Query<&WorldPosition, With<FpsCamera>>,
     v2_chunks_q: Query<(Entity, &V2ChunkCoord), With<V2ChunkMarker>>,
 ) {
@@ -254,19 +323,32 @@ pub fn v2_update_chunks(
 
     let desired = desired_chunks_v2(cam_world_pos.0, &planet, &load_radius);
 
-    // Despawn chunks no longer desired
+    // Despawn chunk entities no longer desired and evict cache
     for (entity, coord) in &v2_chunks_q {
-        if !desired.contains(&coord.0) && !pending.pending.contains(&coord.0) {
+        if !desired.contains(&coord.0) {
             commands.entity(entity).despawn();
             chunk_map.loaded.remove(&coord.0);
+            cache.remove(&coord.0);
         }
     }
 
-    // Dispatch new chunks, closest to camera first.
+    // Evict cache entries that are no longer in the desired set
+    // (covers entries with no spawned entity yet)
+    let stale: Vec<CubeSphereCoord> = cache
+        .entries
+        .keys()
+        .filter(|c| !desired.contains(c))
+        .copied()
+        .collect();
+    for c in stale {
+        cache.remove(&c);
+    }
+
+    // Dispatch terrain generation tasks, closest to camera first.
     let pool = AsyncComputeTaskPool::get();
-    let budget = MAX_PENDING
-        .saturating_sub(pending.pending.len())
-        .min(MAX_DISPATCHES_PER_FRAME);
+    let budget = MAX_TERRAIN_PENDING
+        .saturating_sub(pending_terrain.pending.len())
+        .min(MAX_TERRAIN_DISPATCHES_PER_FRAME);
 
     let mean_radius = planet.mean_radius;
     let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
@@ -274,13 +356,17 @@ pub fn v2_update_chunks(
 
     let mut to_dispatch: Vec<CubeSphereCoord> = desired
         .iter()
-        .filter(|c| !chunk_map.loaded.contains(c) && !pending.pending.contains(c))
+        .filter(|c| {
+            !chunk_map.loaded.contains(c)
+                && !pending_terrain.pending.contains(c)
+                && !pending_meshes.pending.contains(c)
+                && !cache.contains(c)
+        })
         .copied()
         .collect();
 
     // Sort: prioritize surface-layer chunks, then by distance to camera.
     to_dispatch.sort_unstable_by_key(|c| {
-        // Surface chunks (layer 0) get priority bonus
         let surface_bonus = if c.layer == 0 { 0 } else { 1_000_000 };
         let dist = if c.face == cam_coord.face {
             let du = c.u - cam_coord.u;
@@ -295,31 +381,173 @@ pub fn v2_update_chunks(
 
     for coord in to_dispatch.into_iter().take(budget) {
         let tgen = terrain_gen.0.clone();
-        let cmap = color_map.clone();
 
         let task = pool.spawn(async move {
-            let data = generate_v2_chunk(coord, mean_radius, fce, &tgen);
-            let mesh = greedy_mesh::greedy_mesh(&data.voxels, &data.neighbor_slices, &cmap);
-            V2ChunkResult { coord, mesh }
+            generate_v2_voxels(coord, mean_radius, fce, &tgen)
         });
 
-        commands.spawn(V2ChunkTask(task));
-        pending.pending.insert(coord);
+        commands.spawn(V2TerrainTask(task));
+        pending_terrain.pending.insert(coord);
     }
 }
 
-/// Collect completed V2 chunk tasks and spawn renderable entities.
+/// Helper: compute the same-face neighbor coord for a given mesh direction.
+///
+/// Returns `None` if the neighbor crosses a face boundary (or is a radial neighbor).
+/// The direction indices match greedy_mesh conventions:
+///   0: +X → +U,  1: -X → -U,  2: +Y → +layer,  3: -Y → -layer,
+///   4: +Z → -V,  5: -Z → +V
+fn same_face_neighbor_for_dir(
+    coord: CubeSphereCoord,
+    dir: usize,
+    max_uv: i32,
+) -> Option<CubeSphereCoord> {
+    let (du, dv, dl) = match dir {
+        0 => (1, 0, 0),   // +X → +U
+        1 => (-1, 0, 0),  // -X → -U
+        2 => (0, 0, 1),   // +Y → +layer
+        3 => (0, 0, -1),  // -Y → -layer
+        4 => (0, -1, 0),  // +Z → -V
+        5 => (0, 1, 0),   // -Z → +V
+        _ => return None,
+    };
+
+    let new_u = coord.u + du;
+    let new_v = coord.v + dv;
+    let new_layer = coord.layer + dl;
+
+    // Only same-face neighbors
+    if new_u < 0 || new_u >= max_uv || new_v < 0 || new_v >= max_uv {
+        return None;
+    }
+
+    Some(CubeSphereCoord::new(coord.face, new_u, new_v, new_layer))
+}
+
+/// Build neighbor slices from the voxel cache, falling back to terrain resampling.
+///
+/// For each of the 6 directions, tries to extract the boundary slice from the
+/// cached voxels of the neighbor chunk. If the neighbor is not cached (or is on
+/// a different face), falls back to terrain resampling.
+fn build_neighbor_slices(
+    coord: CubeSphereCoord,
+    cache: &V2VoxelCache,
+    mean_radius: f64,
+    fce: f64,
+    tgen: &UnifiedTerrainGenerator,
+) -> NeighborSlices {
+    let max_uv = fce as i32;
+    let mut slices: [Option<Vec<crate::world::voxel::Voxel>>; 6] = [const { None }; 6];
+
+    for dir in 0..6usize {
+        if let Some(neighbor_coord) = same_face_neighbor_for_dir(coord, dir, max_uv) {
+            if let Some(cached) = cache.get(&neighbor_coord) {
+                // Extract the opposite edge from the neighbor
+                let opposite_dir = dir ^ 1; // 0↔1, 2↔3, 4↔5
+                slices[dir] = Some(extract_edge_slice(cached, opposite_dir));
+                continue;
+            }
+        }
+        // Fallback: resample terrain for this boundary
+        slices[dir] = Some(generate_single_boundary_slice(
+            coord, dir, mean_radius, fce, tgen,
+        ));
+    }
+
+    NeighborSlices { slices }
+}
+
+/// Collect completed terrain tasks, cache voxels, and dispatch mesh tasks.
 #[allow(clippy::too_many_arguments)]
-pub fn v2_collect_results(
+pub fn v2_collect_terrain(
+    mut commands: Commands,
+    mut pending_terrain: ResMut<V2PendingTerrain>,
+    mut pending_meshes: ResMut<V2PendingMeshes>,
+    mut cache: ResMut<V2VoxelCache>,
+    chunk_map: Res<V2ChunkMap>,
+    terrain_gen: Res<V2TerrainGen>,
+    planet: Res<PlanetConfig>,
+    color_map: Res<MaterialColorMap>,
+    mut task_q: Query<(Entity, &mut V2TerrainTask)>,
+) {
+    let mean_radius = planet.mean_radius;
+    let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+
+    // Stage 1: collect completed terrain tasks
+    let mut newly_cached = Vec::new();
+    let mut collected = 0usize;
+
+    for (task_entity, mut task) in &mut task_q {
+        if collected >= MAX_TERRAIN_COLLECTS_PER_FRAME {
+            break;
+        }
+        let Some(result) = block_on(poll_once(&mut task.0)) else {
+            continue;
+        };
+        collected += 1;
+
+        commands.entity(task_entity).despawn();
+        pending_terrain.pending.remove(&result.coord);
+
+        // Store in cache
+        cache.insert(result.coord, result.voxels);
+        newly_cached.push(result.coord);
+    }
+
+    // Stage 2: dispatch mesh tasks for newly cached chunks
+    // (also try chunks that were waiting for a neighbor to complete)
+    let pool = AsyncComputeTaskPool::get();
+    let mesh_budget = MAX_MESH_PENDING
+        .saturating_sub(pending_meshes.pending.len())
+        .min(MAX_MESH_DISPATCHES_PER_FRAME);
+
+    // Candidates: any cached chunk that doesn't have a mesh yet and isn't pending
+    let candidates: Vec<CubeSphereCoord> = cache
+        .entries
+        .keys()
+        .filter(|c| {
+            !chunk_map.loaded.contains(c) && !pending_meshes.pending.contains(c)
+        })
+        .copied()
+        .collect();
+
+    let mut dispatched = 0usize;
+    for coord in candidates {
+        if dispatched >= mesh_budget {
+            break;
+        }
+
+        let tgen = terrain_gen.0.clone();
+        let cmap = color_map.clone();
+        let voxel_data = cache.get(&coord).unwrap().clone();
+
+        // Build neighbor slices (from cache where possible, resample otherwise)
+        let neighbor_slices = build_neighbor_slices(coord, &cache, mean_radius, fce, &tgen);
+
+        let task = pool.spawn(async move {
+            let voxels = cached_voxels_to_vec(&voxel_data);
+            let mesh = greedy_mesh::greedy_mesh(&voxels, &neighbor_slices, &cmap);
+            V2MeshResult { coord, mesh }
+        });
+
+        commands.spawn(V2MeshTask(task));
+        pending_meshes.pending.insert(coord);
+        dispatched += 1;
+    }
+}
+
+/// Collect completed mesh tasks and spawn renderable entities.
+#[allow(clippy::too_many_arguments)]
+pub fn v2_collect_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut chunk_map: ResMut<V2ChunkMap>,
-    mut pending: ResMut<V2PendingChunks>,
+    mut pending_meshes: ResMut<V2PendingMeshes>,
     planet: Res<PlanetConfig>,
     origin: Res<RenderOrigin>,
     mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
-    mut task_q: Query<(Entity, &mut V2ChunkTask)>,
+    mut task_q: Query<(Entity, &mut V2MeshTask)>,
 ) {
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
     let cs_half_f = CHUNK_SIZE as f32 / 2.0;
@@ -335,7 +563,7 @@ pub fn v2_collect_results(
 
     let mut collected = 0usize;
     for (task_entity, mut task) in &mut task_q {
-        if collected >= MAX_COLLECTS_PER_FRAME {
+        if collected >= MAX_MESH_COLLECTS_PER_FRAME {
             break;
         }
         let Some(result) = block_on(poll_once(&mut task.0)) else {
@@ -343,27 +571,24 @@ pub fn v2_collect_results(
         };
         collected += 1;
 
-        // Remove the task entity
         commands.entity(task_entity).despawn();
-        pending.pending.remove(&result.coord);
+        pending_meshes.pending.remove(&result.coord);
+
+        let (center_f64, rotation, tangent_scale) =
+            result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
+        let cs_half_scaled = Vec3::new(
+            cs_half_f * tangent_scale.x,
+            cs_half_f,
+            cs_half_f * tangent_scale.z,
+        );
+        let center_render = {
+            let d = center_f64 - origin.0;
+            Vec3::new(d.x as f32, d.y as f32, d.z as f32)
+        };
+        let adjusted = center_render - rotation * cs_half_scaled;
 
         if result.mesh.is_empty() {
-            // No visible geometry — record as loaded but don't spawn a mesh entity
             chunk_map.loaded.insert(result.coord);
-            // Spawn a minimal entity so we track it for despawn
-            let (center_f64, rotation, tangent_scale) =
-                result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
-            let cs_half_scaled = Vec3::new(
-                cs_half_f * tangent_scale.x,
-                cs_half_f,
-                cs_half_f * tangent_scale.z,
-            );
-            // Compute render-space position relative to RenderOrigin
-            let center_render = {
-                let d = center_f64 - origin.0;
-                Vec3::new(d.x as f32, d.y as f32, d.z as f32)
-            };
-            let adjusted = center_render - rotation * cs_half_scaled;
             commands.spawn((
                 V2ChunkMarker,
                 V2ChunkCoord(result.coord),
@@ -374,26 +599,8 @@ pub fn v2_collect_results(
             continue;
         }
 
-        // Build Bevy mesh and spawn entity
         let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
         let mesh_handle = meshes.add(bevy_mesh);
-
-        let (center_f64, rotation, tangent_scale) =
-            result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
-        // Offset translation: mesh vertices are in [0, CS], so local origin (0,0,0)
-        // should map to the chunk's "base corner" in world space. With non-uniform
-        // scale, the offset must account for the tangent-plane stretch.
-        let cs_half_scaled = Vec3::new(
-            cs_half_f * tangent_scale.x,
-            cs_half_f,
-            cs_half_f * tangent_scale.z,
-        );
-        // Compute render-space position relative to RenderOrigin
-        let center_render = {
-            let d = center_f64 - origin.0;
-            Vec3::new(d.x as f32, d.y as f32, d.z as f32)
-        };
-        let adjusted = center_render - rotation * cs_half_scaled;
 
         commands.spawn((
             V2ChunkMarker,
@@ -431,11 +638,13 @@ impl Plugin for V2WorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<V2LoadRadius>()
             .init_resource::<V2ChunkMap>()
-            .init_resource::<V2PendingChunks>()
+            .init_resource::<V2PendingTerrain>()
+            .init_resource::<V2PendingMeshes>()
+            .init_resource::<V2VoxelCache>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
-                (v2_update_chunks, v2_collect_results, v2_diagnostics)
+                (v2_update_chunks, v2_collect_terrain, v2_collect_meshes, v2_diagnostics)
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
@@ -450,7 +659,9 @@ impl Plugin for V2WorldPlugin {
 /// Periodic diagnostic logging for the V2 pipeline.
 fn v2_diagnostics(
     chunk_map: Res<V2ChunkMap>,
-    pending: Res<V2PendingChunks>,
+    pending_terrain: Res<V2PendingTerrain>,
+    pending_meshes: Res<V2PendingMeshes>,
+    cache: Res<V2VoxelCache>,
     mesh_q: Query<Entity, (With<V2ChunkMarker>, With<Mesh3d>)>,
     mut timer: Local<f32>,
     time: Res<Time>,
@@ -463,9 +674,12 @@ fn v2_diagnostics(
 
     let mesh_count = mesh_q.iter().count();
     info!(
-        "V2 pipeline: loaded={}, pending={}, meshed={}",
+        "V2 pipeline: loaded={}, terrain_pending={}, mesh_pending={}, cached={} ({:.1} MB), meshed={}",
         chunk_map.loaded.len(),
-        pending.pending.len(),
+        pending_terrain.pending.len(),
+        pending_meshes.pending.len(),
+        cache.entry_count(),
+        cache.byte_size() as f64 / (1024.0 * 1024.0),
         mesh_count,
     );
 }
@@ -601,7 +815,9 @@ mod tests {
             vertical: 1,
         });
         app.init_resource::<V2ChunkMap>();
-        app.init_resource::<V2PendingChunks>();
+        app.init_resource::<V2PendingTerrain>();
+        app.init_resource::<V2PendingMeshes>();
+        app.init_resource::<V2VoxelCache>();
         app.insert_resource(MaterialColorMap::from_defaults());
 
         // RenderOrigin at the camera position so chunk Transforms are near zero.
@@ -616,15 +832,15 @@ mod tests {
         ));
 
         // Register update systems (bypassing GameState gating for the test).
-        app.add_systems(Update, (v2_update_chunks, v2_collect_results).chain());
+        app.add_systems(Update, (v2_update_chunks, v2_collect_terrain, v2_collect_meshes).chain());
 
         // Frame 1: dispatch tasks.
         app.update();
 
-        let pending_count = app.world().resource::<V2PendingChunks>().pending.len();
+        let pending_count = app.world().resource::<V2PendingTerrain>().pending.len();
         assert!(
             pending_count > 0,
-            "Should have dispatched pending chunks, got 0"
+            "Should have dispatched pending terrain tasks, got 0"
         );
 
         // Give async tasks time to complete, then run several frames to collect.
