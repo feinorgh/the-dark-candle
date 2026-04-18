@@ -459,6 +459,7 @@ mod tests {
             u: fce as i32 / 2,
             v: fce as i32 / 2,
             layer: 0,
+            lod: 0,
         };
         let data = generate_v2_chunk(coord, cfg.mean_radius, fce, &tgen);
 
@@ -485,6 +486,7 @@ mod tests {
             u: fce as i32 / 2,
             v: fce as i32 / 2,
             layer: -4,
+            lod: 0,
         };
         let data = generate_v2_chunk(coord, cfg.mean_radius, fce, &tgen);
 
@@ -510,6 +512,7 @@ mod tests {
             u: fce as i32 / 2,
             v: fce as i32 / 2,
             layer: 3,
+            lod: 0,
         };
         let data = generate_v2_chunk(coord, cfg.mean_radius, fce, &tgen);
 
@@ -530,6 +533,7 @@ mod tests {
             u: 0,
             v: 0,
             layer: 0,
+            lod: 0,
         };
         let data = generate_v2_chunk(coord, cfg.mean_radius, fce, &tgen);
         assert_eq!(data.voxels.len(), CHUNK_VOLUME);

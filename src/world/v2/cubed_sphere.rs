@@ -97,19 +97,41 @@ impl CubeFace {
 /// Chunk coordinate on the cubed sphere.
 ///
 /// - `face`: which of the 6 cube faces this chunk belongs to
-/// - `u, v`: integer position on the face grid, in chunk units (each = CHUNK_SIZE meters)
+/// - `u, v`: integer position on the face grid, in chunk units
 /// - `layer`: radial layer relative to the mean surface (0 = surface, +1 = above, −1 = below)
+/// - `lod`: level of detail (0 = full resolution, each level doubles the world footprint)
+///
+/// At LOD 0, each chunk covers `CHUNK_SIZE` meters. At LOD `l`, each chunk covers
+/// `CHUNK_SIZE * 2^l` meters. The face grid has `face_chunks_per_edge >> lod` cells
+/// per edge at LOD `l`, so `u` and `v` range over `[0, fce_lod)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CubeSphereCoord {
     pub face: CubeFace,
     pub u: i32,
     pub v: i32,
     pub layer: i32,
+    pub lod: u8,
 }
 
 impl CubeSphereCoord {
     pub const fn new(face: CubeFace, u: i32, v: i32, layer: i32) -> Self {
-        Self { face, u, v, layer }
+        Self {
+            face,
+            u,
+            v,
+            layer,
+            lod: 0,
+        }
+    }
+
+    pub const fn new_with_lod(face: CubeFace, u: i32, v: i32, layer: i32, lod: u8) -> Self {
+        Self {
+            face,
+            u,
+            v,
+            layer,
+            lod,
+        }
     }
 
     /// How many chunks span one edge of a cube face for a given planet radius.
@@ -119,6 +141,19 @@ impl CubeSphereCoord {
     pub fn face_chunks_per_edge(mean_radius: f64) -> f64 {
         let cs = CHUNK_SIZE as f64;
         (std::f64::consts::FRAC_PI_2 * mean_radius / cs).ceil()
+    }
+
+    /// Face chunks per edge at this coord's LOD level.
+    ///
+    /// Each LOD level halves the grid resolution (and doubles chunk footprint).
+    pub fn face_chunks_per_edge_lod(mean_radius: f64, lod: u8) -> f64 {
+        let base = Self::face_chunks_per_edge(mean_radius);
+        (base / (1u64 << lod) as f64).ceil().max(1.0)
+    }
+
+    /// The effective face_chunks_per_edge for this coordinate's LOD level.
+    pub fn effective_fce(&self, mean_radius: f64) -> f64 {
+        Self::face_chunks_per_edge_lod(mean_radius, self.lod)
     }
 
     /// Compute the unit-sphere direction for the center of this chunk's (u, v) cell.
@@ -245,36 +280,62 @@ impl CubeSphereCoord {
     /// For ±u and ±v, handles cross-face wrapping when the neighbor falls
     /// off the edge of this face.
     pub fn neighbors(&self, face_chunks_per_edge: i32) -> [CubeSphereCoord; 6] {
-        let max = face_chunks_per_edge; // valid range: [0, max)
+        let max = face_chunks_per_edge;
         [
             self.neighbor_u(1, max),
             self.neighbor_u(-1, max),
             self.neighbor_v(1, max),
             self.neighbor_v(-1, max),
-            // Layer neighbors are always on the same face
-            CubeSphereCoord::new(self.face, self.u, self.v, self.layer + 1),
-            CubeSphereCoord::new(self.face, self.u, self.v, self.layer - 1),
+            CubeSphereCoord::new_with_lod(self.face, self.u, self.v, self.layer + 1, self.lod),
+            CubeSphereCoord::new_with_lod(self.face, self.u, self.v, self.layer - 1, self.lod),
         ]
     }
 
     fn neighbor_u(&self, delta: i32, max: i32) -> CubeSphereCoord {
         let nu = self.u + delta;
         if nu >= 0 && nu < max {
-            return CubeSphereCoord::new(self.face, nu, self.v, self.layer);
+            return CubeSphereCoord::new_with_lod(self.face, nu, self.v, self.layer, self.lod);
         }
-        // Cross-face: step off the u-edge
         let (adj_face, adj_u, adj_v) = cross_face_u(self.face, self.v, nu, max);
-        CubeSphereCoord::new(adj_face, adj_u, adj_v, self.layer)
+        CubeSphereCoord::new_with_lod(adj_face, adj_u, adj_v, self.layer, self.lod)
     }
 
     fn neighbor_v(&self, delta: i32, max: i32) -> CubeSphereCoord {
         let nv = self.v + delta;
         if nv >= 0 && nv < max {
-            return CubeSphereCoord::new(self.face, self.u, nv, self.layer);
+            return CubeSphereCoord::new_with_lod(self.face, self.u, nv, self.layer, self.lod);
         }
-        // Cross-face: step off the v-edge
         let (adj_face, adj_u, adj_v) = cross_face_v(self.face, self.u, nv, max);
-        CubeSphereCoord::new(adj_face, adj_u, adj_v, self.layer)
+        CubeSphereCoord::new_with_lod(adj_face, adj_u, adj_v, self.layer, self.lod)
+    }
+
+    /// The LOD-0 children of this chunk (4 children for LOD > 0).
+    ///
+    /// At LOD `l`, this chunk covers the same area as `2×2` chunks at LOD `l-1`.
+    pub fn children(&self) -> Option<[CubeSphereCoord; 4]> {
+        if self.lod == 0 {
+            return None;
+        }
+        let child_lod = self.lod - 1;
+        let bu = self.u * 2;
+        let bv = self.v * 2;
+        Some([
+            CubeSphereCoord::new_with_lod(self.face, bu, bv, self.layer, child_lod),
+            CubeSphereCoord::new_with_lod(self.face, bu + 1, bv, self.layer, child_lod),
+            CubeSphereCoord::new_with_lod(self.face, bu, bv + 1, self.layer, child_lod),
+            CubeSphereCoord::new_with_lod(self.face, bu + 1, bv + 1, self.layer, child_lod),
+        ])
+    }
+
+    /// The parent chunk at the next coarser LOD level.
+    pub fn parent(&self) -> CubeSphereCoord {
+        CubeSphereCoord::new_with_lod(
+            self.face,
+            self.u / 2,
+            self.v / 2,
+            self.layer,
+            self.lod + 1,
+        )
     }
 }
 

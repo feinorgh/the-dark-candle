@@ -45,6 +45,20 @@ const MAX_HORIZONTAL_CHUNKS: i32 = 48;
 /// Maximum vertical load extent in layers.
 const MAX_VERTICAL_LAYERS: i32 = 64;
 
+/// Maximum LOD level (L7 = 2^7 = 128× base chunk size ≈ 4096m per chunk).
+const MAX_LOD: u8 = 7;
+
+/// LOD ring configuration: (lod_level, radius_in_chunks_at_that_lod).
+/// Each ring extends outward from the previous ring's boundary.
+/// At LOD `l`, each chunk covers `CHUNK_SIZE * 2^l` meters.
+const LOD_RINGS: [(u8, i32); 5] = [
+    (0, 12), // L0: 12 chunks × 32m = 384m
+    (1, 8),  // L1: 8 chunks × 64m = 512m (total ~896m)
+    (2, 8),  // L2: 8 chunks × 128m = 1024m (total ~1920m)
+    (3, 8),  // L3: 8 chunks × 256m = 2048m (total ~3968m)
+    (4, 12), // L4: 12 chunks × 512m = 6144m (total ~10112m)
+];
+
 // ── Resources ─────────────────────────────────────────────────────────────
 
 /// Thread-safe handle to the terrain generator for V2 async tasks.
@@ -198,49 +212,93 @@ fn desired_chunks_v2(
     planet: &PlanetConfig,
     radius: &V2LoadRadius,
 ) -> HashSet<CubeSphereCoord> {
-    let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
-    let cam_coord = world_pos_to_coord(cam_world_pos, planet.mean_radius, fce);
+    let base_fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+    let cam_coord = world_pos_to_coord(cam_world_pos, planet.mean_radius, base_fce);
 
-    // Altitude above mean surface
     let altitude_m = cam_world_pos.length() - planet.mean_radius;
-
-    let h = horizon_load_radius(altitude_m, planet.mean_radius, radius.horizontal);
-    let max_uv = fce as i32;
-    let mut set = HashSet::new();
-
-    // Vertical range: always include surface (layer 0) and extend to camera.
-    // The base vertical padding extends above/below this range.
     let cam_layer = cam_coord.layer;
+
+    // Vertical range at LOD 0 (used for all LOD levels for surface coverage)
     let layer_lo = (0.min(cam_layer) - radius.vertical).max(-MAX_VERTICAL_LAYERS);
     let layer_hi = (0.max(cam_layer) + radius.vertical).min(MAX_VERTICAL_LAYERS);
 
-    for du in -h..=h {
-        for dv in -h..=h {
-            for layer in layer_lo..=layer_hi {
-                let u = cam_coord.u + du;
-                let vi = cam_coord.v + dv;
-                let face = cam_coord.face;
+    let mut set = HashSet::new();
 
-                // Use cross-face wrapping for out-of-range u/v coords
-                // so terrain loads seamlessly across cube faces.
-                if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
-                    // Resolve via the neighbor wrapping system on the camera coord.
-                    // Build the target coord on the camera's face and let the
-                    // cross-face lookup translate it.
-                    if let Some(wrapped) =
-                        wrap_cross_face(face, u, vi, layer, max_uv)
-                    {
-                        set.insert(wrapped);
-                    }
+    // Track the cumulative world-space radius covered by finer LODs
+    // so coarser LODs only fill the ring beyond.
+    let mut covered_world_radius = 0.0_f64;
+
+    for &(lod, ring_chunks) in &LOD_RINGS {
+        let fce_lod = CubeSphereCoord::face_chunks_per_edge_lod(planet.mean_radius, lod);
+        let max_uv = fce_lod as i32;
+        if max_uv <= 0 {
+            continue;
+        }
+
+        // Camera coord at this LOD level
+        let cam_coord_lod = world_pos_to_coord_lod(cam_world_pos, planet.mean_radius, fce_lod, lod);
+
+        let chunk_world_size = CHUNK_SIZE as f64 * (1u64 << lod) as f64;
+
+        // Effective radius at this LOD
+        let h = if lod == 0 {
+            let horizon = horizon_load_radius(altitude_m, planet.mean_radius, radius.horizontal);
+            horizon.min(ring_chunks).min(MAX_HORIZONTAL_CHUNKS)
+        } else {
+            ring_chunks.min(MAX_HORIZONTAL_CHUNKS)
+        };
+
+        // The inner radius (in world meters) already covered by finer LODs
+        let inner_radius_chunks = (covered_world_radius / chunk_world_size).ceil() as i32;
+
+        for du in -h..=h {
+            for dv in -h..=h {
+                // Skip inner area already covered by finer LOD
+                let dist_chunks = du.abs().max(dv.abs());
+                if lod > 0 && dist_chunks < inner_radius_chunks {
                     continue;
                 }
 
-                set.insert(CubeSphereCoord::new(face, u, vi, layer));
+                // Only surface-layer chunks at coarser LODs
+                let (lo, hi) = if lod == 0 {
+                    (layer_lo, layer_hi)
+                } else {
+                    (0, 0)
+                };
+
+                for layer in lo..=hi {
+                    let u = cam_coord_lod.u + du;
+                    let vi = cam_coord_lod.v + dv;
+                    let face = cam_coord_lod.face;
+
+                    if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
+                        if let Some(wrapped) = wrap_cross_face(face, u, vi, layer, max_uv, lod) {
+                            set.insert(wrapped);
+                        }
+                        continue;
+                    }
+
+                    set.insert(CubeSphereCoord::new_with_lod(face, u, vi, layer, lod));
+                }
             }
         }
+
+        covered_world_radius += h as f64 * chunk_world_size;
     }
 
     set
+}
+
+/// Convert world position to CubeSphereCoord at a specific LOD level.
+fn world_pos_to_coord_lod(
+    pos: DVec3,
+    mean_radius: f64,
+    fce_lod: f64,
+    lod: u8,
+) -> CubeSphereCoord {
+    let mut coord = world_pos_to_coord(pos, mean_radius, fce_lod);
+    coord.lod = lod;
+    coord
 }
 
 /// Resolve an out-of-range (u, v) on `face` to the correct cross-face coord.
@@ -251,6 +309,7 @@ fn wrap_cross_face(
     v: i32,
     layer: i32,
     max_uv: i32,
+    lod: u8,
 ) -> Option<CubeSphereCoord> {
 
     // Only handle single-axis overflow (edge); skip corners where both are OOB.
@@ -264,7 +323,7 @@ fn wrap_cross_face(
     // the neighbor system to find the actual cross-face coord.
     if u_oob {
         let clamped_u = if u < 0 { 0 } else { max_uv - 1 };
-        let base = CubeSphereCoord::new(face, clamped_u, v, layer);
+        let base = CubeSphereCoord::new_with_lod(face, clamped_u, v, layer, lod);
         let delta = if u < 0 { -(clamped_u - u) } else { u - clamped_u };
         // Walk across the face boundary
         let neighbor = if u < 0 {
@@ -275,8 +334,8 @@ fn wrap_cross_face(
         // For deeper steps, we'd need recursive walking. For now, only load
         // the immediate cross-face layer (1 chunk deep across boundary).
         if delta.abs() <= 1 {
-            return Some(CubeSphereCoord::new(
-                neighbor.face, neighbor.u, neighbor.v, layer,
+            return Some(CubeSphereCoord::new_with_lod(
+                neighbor.face, neighbor.u, neighbor.v, layer, lod,
             ));
         }
         return None;
@@ -284,7 +343,7 @@ fn wrap_cross_face(
 
     if v_oob {
         let clamped_v = if v < 0 { 0 } else { max_uv - 1 };
-        let base = CubeSphereCoord::new(face, u, clamped_v, layer);
+        let base = CubeSphereCoord::new_with_lod(face, u, clamped_v, layer, lod);
         let delta = if v < 0 { -(clamped_v - v) } else { v - clamped_v };
         let neighbor = if v < 0 {
             base.neighbors(max_uv)[3] // -V neighbor
@@ -292,8 +351,8 @@ fn wrap_cross_face(
             base.neighbors(max_uv)[2] // +V neighbor
         };
         if delta.abs() <= 1 {
-            return Some(CubeSphereCoord::new(
-                neighbor.face, neighbor.u, neighbor.v, layer,
+            return Some(CubeSphereCoord::new_with_lod(
+                neighbor.face, neighbor.u, neighbor.v, layer, lod,
             ));
         }
         return None;
@@ -351,8 +410,6 @@ pub fn v2_update_chunks(
         .min(MAX_TERRAIN_DISPATCHES_PER_FRAME);
 
     let mean_radius = planet.mean_radius;
-    let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-    let cam_coord = world_pos_to_coord(cam_world_pos.0, mean_radius, fce);
 
     let mut to_dispatch: Vec<CubeSphereCoord> = desired
         .iter()
@@ -365,25 +422,32 @@ pub fn v2_update_chunks(
         .copied()
         .collect();
 
-    // Sort: prioritize surface-layer chunks, then by distance to camera.
+    // Sort: prioritize L0, then surface-layer, then by distance to camera.
+    // Distance is approximate — we compare in the chunk's own LOD grid space.
+    let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+    let cam_coord_l0 = world_pos_to_coord(cam_world_pos.0, mean_radius, base_fce);
     to_dispatch.sort_unstable_by_key(|c| {
+        let lod_penalty = (c.lod as i32) * 2_000_000;
         let surface_bonus = if c.layer == 0 { 0 } else { 1_000_000 };
-        let dist = if c.face == cam_coord.face {
-            let du = c.u - cam_coord.u;
-            let dv = c.v - cam_coord.v;
-            let dl = c.layer - cam_coord.layer;
+        // Scale chunk distance to L0 grid for comparison
+        let scale = (1i32 << c.lod) as i32;
+        let dist = if c.face == cam_coord_l0.face {
+            let du = c.u * scale - cam_coord_l0.u;
+            let dv = c.v * scale - cam_coord_l0.v;
+            let dl = c.layer - cam_coord_l0.layer;
             du * du + dv * dv + dl * dl
         } else {
-            i32::MAX / 2
+            i32::MAX / 4
         };
-        surface_bonus + dist
+        lod_penalty + surface_bonus + dist
     });
 
     for coord in to_dispatch.into_iter().take(budget) {
         let tgen = terrain_gen.0.clone();
+        let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
 
         let task = pool.spawn(async move {
-            generate_v2_voxels(coord, mean_radius, fce, &tgen)
+            generate_v2_voxels(coord, mean_radius, coord_fce, &tgen)
         });
 
         commands.spawn(V2TerrainTask(task));
@@ -421,7 +485,7 @@ fn same_face_neighbor_for_dir(
         return None;
     }
 
-    Some(CubeSphereCoord::new(coord.face, new_u, new_v, new_layer))
+    Some(CubeSphereCoord::new_with_lod(coord.face, new_u, new_v, new_layer, coord.lod))
 }
 
 /// Build neighbor slices from the voxel cache, falling back to terrain resampling.
@@ -471,7 +535,6 @@ pub fn v2_collect_terrain(
     mut task_q: Query<(Entity, &mut V2TerrainTask)>,
 ) {
     let mean_radius = planet.mean_radius;
-    let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
 
     // Stage 1: collect completed terrain tasks
     let mut newly_cached = Vec::new();
@@ -521,8 +584,9 @@ pub fn v2_collect_terrain(
         let cmap = color_map.clone();
         let voxel_data = cache.get(&coord).unwrap().clone();
 
+        let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
         // Build neighbor slices (from cache where possible, resample otherwise)
-        let neighbor_slices = build_neighbor_slices(coord, &cache, mean_radius, fce, &tgen);
+        let neighbor_slices = build_neighbor_slices(coord, &cache, mean_radius, coord_fce, &tgen);
 
         let task = pool.spawn(async move {
             let voxels = cached_voxels_to_vec(&voxel_data);
@@ -549,7 +613,7 @@ pub fn v2_collect_meshes(
     mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
     mut task_q: Query<(Entity, &mut V2MeshTask)>,
 ) {
-    let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+    let mean_radius = planet.mean_radius;
     let cs_half_f = CHUNK_SIZE as f32 / 2.0;
 
     let chunk_material = cached_mat
@@ -574,8 +638,9 @@ pub fn v2_collect_meshes(
         commands.entity(task_entity).despawn();
         pending_meshes.pending.remove(&result.coord);
 
+        let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, result.coord.lod);
         let (center_f64, rotation, tangent_scale) =
-            result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
+            result.coord.world_transform_scaled_f64(mean_radius, coord_fce);
         let cs_half_scaled = Vec3::new(
             cs_half_f * tangent_scale.x,
             cs_half_f,
@@ -762,11 +827,13 @@ mod tests {
         let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
 
-        // Expected: (2h+1)² × (2v+1) = 5² × 3 = 75 chunks max
-        // May be less due to edge clamping
+        // With multi-LOD rings, the desired set includes L0 chunks plus coarser LOD rings.
+        // L0 ring: (2*2+1)² × (2*1+1) = 5² × 3 = 75 chunks
+        // Plus additional chunks from coarser LOD levels.
+        // Just verify reasonable bounds.
         assert!(
-            desired.len() <= 75,
-            "Should not exceed expected count, got {}",
+            desired.len() <= 5000,
+            "Should not exceed reasonable count, got {}",
             desired.len()
         );
         assert!(
