@@ -94,7 +94,7 @@ pub struct SaveGame {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlayerSave {
-    pub position: [f32; 3],
+    pub position: [f64; 3],
     pub pitch: f32,
     pub yaw: f32,
     pub health_current: f32,

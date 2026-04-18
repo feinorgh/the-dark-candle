@@ -222,6 +222,24 @@ impl CubeSphereCoord {
         (translation, rotation, Vec3::new(scale_x, 1.0, scale_z))
     }
 
+    /// Like `world_transform_scaled` but returns the center position as f64
+    /// for use with the floating-origin system.
+    pub fn world_transform_scaled_f64(
+        &self,
+        mean_radius: f64,
+        face_chunks_per_edge: f64,
+    ) -> (DVec3, Quat, Vec3) {
+        let dir = self.unit_sphere_dir(face_chunks_per_edge);
+        let cs = CHUNK_SIZE as f64;
+        let center_r = mean_radius + self.layer as f64 * cs;
+        let world_pos = dir * center_r;
+
+        // Rotation and scale are the same as f32 variant
+        let (_, rotation, scale) = self.world_transform_scaled(mean_radius, face_chunks_per_edge);
+
+        (world_pos, rotation, scale)
+    }
+
     /// The 6 face-neighbors of this chunk (±u, ±v, ±layer).
     ///
     /// For ±u and ±v, handles cross-face wrapping when the neighbor falls

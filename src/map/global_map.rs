@@ -32,7 +32,7 @@ pub fn update_global_map(
     state: Res<MapViewState>,
     planetary: Option<Res<PlanetaryData>>,
     planet_config: Option<Res<PlanetConfig>>,
-    cam_q: Query<&Transform, (With<FpsCamera>, With<Player>)>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, (With<FpsCamera>, With<Player>)>,
     mut images: ResMut<Assets<Image>>,
     mut map_node_q: Query<(&mut ImageNode, &mut Node), (With<MapImageNode>, Without<PlayerMarker>)>,
     mut coord_text_q: Query<&mut Text, With<MapCoordText>>,
@@ -100,13 +100,13 @@ pub fn update_global_map(
     }
 
     // Compute player position on the map.
-    let Ok(cam_tf) = cam_q.single() else {
+    let Ok(cam_wp) = cam_q.single() else {
         return;
     };
 
-    let player_pos = cam_tf.translation;
+    let player_pos = cam_wp.0;
     let (lat, lon) = if let Some(ref config) = planet_config {
-        config.lat_lon(player_pos.as_dvec3())
+        config.lat_lon(player_pos)
     } else {
         (0.0, 0.0)
     };

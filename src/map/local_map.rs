@@ -22,7 +22,7 @@ const BASE_MAP_SIZE: u32 = 256;
 pub fn update_local_map(
     state: Res<MapViewState>,
     discovered: Res<DiscoveredColumns>,
-    cam_q: Query<&Transform, (With<FpsCamera>, With<Player>)>,
+    cam_q: Query<&crate::floating_origin::WorldPosition, (With<FpsCamera>, With<Player>)>,
     mut images: ResMut<Assets<Image>>,
     mut map_node_q: Query<&mut ImageNode, With<MapImageNode>>,
     mut coord_text_q: Query<&mut Text, With<MapCoordText>>,
@@ -33,11 +33,11 @@ pub fn update_local_map(
         return;
     }
 
-    let Ok(cam_tf) = cam_q.single() else {
+    let Ok(cam_wp) = cam_q.single() else {
         return;
     };
 
-    let player_pos = cam_tf.translation;
+    let player_pos = cam_wp.0.as_vec3();
     let player_chunk_x = (player_pos.x as i32).div_euclid(CHUNK_SIZE as i32);
     let player_chunk_z = (player_pos.z as i32).div_euclid(CHUNK_SIZE as i32);
 

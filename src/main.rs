@@ -191,6 +191,7 @@ fn main() {
         ..default()
     }))
     .add_plugins((
+        the_dark_candle::floating_origin::FloatingOriginPlugin,
         DataPlugin,
         GameStatePlugin,
         CameraPlugin,

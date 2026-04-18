@@ -107,7 +107,7 @@ struct EcsDump {
 fn ecs_dump_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     chunks: Query<&Chunk>,
-    camera_q: Query<(&Transform, &FpsCamera)>,
+    camera_q: Query<(&crate::floating_origin::WorldPosition, &FpsCamera)>,
     chunk_map: Option<Res<ChunkMap>>,
 ) {
     if !keyboard.just_pressed(KeyCode::F11) {
@@ -117,8 +117,8 @@ fn ecs_dump_system(
     info!("Capturing ECS state dump...");
 
     // Camera snapshot
-    let camera = camera_q.iter().next().map(|(tf, fps)| CameraSnapshot {
-        position: [tf.translation.x, tf.translation.y, tf.translation.z],
+    let camera = camera_q.iter().next().map(|(wp, fps)| CameraSnapshot {
+        position: [wp.0.x as f32, wp.0.y as f32, wp.0.z as f32],
         pitch_deg: fps.pitch.to_degrees(),
         yaw_deg: fps.yaw.to_degrees(),
         speed: fps.speed,

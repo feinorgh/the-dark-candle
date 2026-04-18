@@ -7,10 +7,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 
 use crate::camera::FpsCamera;
+use crate::floating_origin::{RenderOrigin, RenderOriginShift, WorldPosition};
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::chunk_manager::SharedTerrainGen;
 use crate::world::lod::MaterialColorMap;
@@ -124,15 +126,15 @@ fn horizon_load_radius(altitude_m: f64, mean_radius: f64, base_horizontal: i32) 
 /// Vertical range always extends from the surface layer (0) to the camera layer,
 /// plus the base vertical padding in both directions.
 fn desired_chunks_v2(
-    cam_pos: Vec3,
+    cam_world_pos: DVec3,
     planet: &PlanetConfig,
     radius: &V2LoadRadius,
 ) -> HashSet<CubeSphereCoord> {
     let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
-    let cam_coord = world_pos_to_coord(cam_pos.as_dvec3(), planet.mean_radius, fce);
+    let cam_coord = world_pos_to_coord(cam_world_pos, planet.mean_radius, fce);
 
     // Altitude above mean surface
-    let altitude_m = cam_pos.as_dvec3().length() - planet.mean_radius;
+    let altitude_m = cam_world_pos.length() - planet.mean_radius;
 
     let h = horizon_load_radius(altitude_m, planet.mean_radius, radius.horizontal);
     let max_uv = fce as i32;
@@ -243,14 +245,14 @@ pub fn v2_update_chunks(
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
     color_map: Res<MaterialColorMap>,
-    camera_q: Query<&Transform, With<FpsCamera>>,
+    camera_q: Query<&WorldPosition, With<FpsCamera>>,
     v2_chunks_q: Query<(Entity, &V2ChunkCoord), With<V2ChunkMarker>>,
 ) {
-    let Ok(cam_transform) = camera_q.single() else {
+    let Ok(cam_world_pos) = camera_q.single() else {
         return;
     };
 
-    let desired = desired_chunks_v2(cam_transform.translation, &planet, &load_radius);
+    let desired = desired_chunks_v2(cam_world_pos.0, &planet, &load_radius);
 
     // Despawn chunks no longer desired
     for (entity, coord) in &v2_chunks_q {
@@ -268,7 +270,7 @@ pub fn v2_update_chunks(
 
     let mean_radius = planet.mean_radius;
     let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-    let cam_coord = world_pos_to_coord(cam_transform.translation.as_dvec3(), mean_radius, fce);
+    let cam_coord = world_pos_to_coord(cam_world_pos.0, mean_radius, fce);
 
     let mut to_dispatch: Vec<CubeSphereCoord> = desired
         .iter()
@@ -315,6 +317,7 @@ pub fn v2_collect_results(
     mut chunk_map: ResMut<V2ChunkMap>,
     mut pending: ResMut<V2PendingChunks>,
     planet: Res<PlanetConfig>,
+    origin: Res<RenderOrigin>,
     mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
     mut task_q: Query<(Entity, &mut V2ChunkTask)>,
 ) {
@@ -348,14 +351,19 @@ pub fn v2_collect_results(
             // No visible geometry — record as loaded but don't spawn a mesh entity
             chunk_map.loaded.insert(result.coord);
             // Spawn a minimal entity so we track it for despawn
-            let (center, rotation, tangent_scale) =
-                result.coord.world_transform_scaled(planet.mean_radius, fce);
+            let (center_f64, rotation, tangent_scale) =
+                result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
             let cs_half_scaled = Vec3::new(
                 cs_half_f * tangent_scale.x,
                 cs_half_f,
                 cs_half_f * tangent_scale.z,
             );
-            let adjusted = center - rotation * cs_half_scaled;
+            // Compute render-space position relative to RenderOrigin
+            let center_render = {
+                let d = center_f64 - origin.0;
+                Vec3::new(d.x as f32, d.y as f32, d.z as f32)
+            };
+            let adjusted = center_render - rotation * cs_half_scaled;
             commands.spawn((
                 V2ChunkMarker,
                 V2ChunkCoord(result.coord),
@@ -370,8 +378,8 @@ pub fn v2_collect_results(
         let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
         let mesh_handle = meshes.add(bevy_mesh);
 
-        let (center, rotation, tangent_scale) =
-            result.coord.world_transform_scaled(planet.mean_radius, fce);
+        let (center_f64, rotation, tangent_scale) =
+            result.coord.world_transform_scaled_f64(planet.mean_radius, fce);
         // Offset translation: mesh vertices are in [0, CS], so local origin (0,0,0)
         // should map to the chunk's "base corner" in world space. With non-uniform
         // scale, the offset must account for the tangent-plane stretch.
@@ -380,7 +388,12 @@ pub fn v2_collect_results(
             cs_half_f,
             cs_half_f * tangent_scale.z,
         );
-        let adjusted = center - rotation * cs_half_scaled;
+        // Compute render-space position relative to RenderOrigin
+        let center_render = {
+            let d = center_f64 - origin.0;
+            Vec3::new(d.x as f32, d.y as f32, d.z as f32)
+        };
+        let adjusted = center_render - rotation * cs_half_scaled;
 
         commands.spawn((
             V2ChunkMarker,
@@ -399,6 +412,18 @@ pub fn v2_collect_results(
 
 // ── Plugin ────────────────────────────────────────────────────────────────
 
+/// When a `RenderOriginShift` occurs, update all V2 chunk Transforms.
+fn v2_apply_origin_shift(
+    shift: Option<Res<RenderOriginShift>>,
+    mut chunk_q: Query<&mut Transform, With<V2ChunkMarker>>,
+) {
+    let Some(shift) = shift else { return };
+    let delta = Vec3::new(shift.0.x as f32, shift.0.y as f32, shift.0.z as f32);
+    for mut transform in &mut chunk_q {
+        transform.translation -= delta;
+    }
+}
+
 /// Plugin for the V2 cubed-sphere rendering pipeline.
 pub struct V2WorldPlugin;
 
@@ -414,6 +439,10 @@ impl Plugin for V2WorldPlugin {
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
+            )
+            .add_systems(
+                PostUpdate,
+                v2_apply_origin_shift.run_if(resource_exists::<RenderOriginShift>),
             );
     }
 }
@@ -492,13 +521,13 @@ mod tests {
         };
         let radius = V2LoadRadius::default();
         let fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
-        let cam_pos = Vec3::new(cfg.mean_radius as f32, 0.0, 0.0);
+        let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
 
         assert!(!desired.is_empty(), "Desired set should not be empty");
 
         // The camera's own coord should be in the set
-        let cam_coord = world_pos_to_coord(cam_pos.as_dvec3(), cfg.mean_radius, fce);
+        let cam_coord = world_pos_to_coord(cam_pos, cfg.mean_radius, fce);
         assert!(
             desired.contains(&cam_coord),
             "Camera's own chunk should be desired"
@@ -516,7 +545,7 @@ mod tests {
             vertical: 1,
         };
 
-        let cam_pos = Vec3::new(cfg.mean_radius as f32, 0.0, 0.0);
+        let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
 
         // Expected: (2h+1)² × (2v+1) = 5² × 3 = 75 chunks max
@@ -540,6 +569,8 @@ mod tests {
         use bevy::asset::AssetPlugin;
         use bevy::image::Image;
         use bevy::pbr::StandardMaterial;
+
+        use crate::floating_origin::RenderOrigin;
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
@@ -573,10 +604,15 @@ mod tests {
         app.init_resource::<V2PendingChunks>();
         app.insert_resource(MaterialColorMap::from_defaults());
 
-        // Spawn camera at the surface of the +X face.
+        // RenderOrigin at the camera position so chunk Transforms are near zero.
+        let cam_world = DVec3::new(200.0, 0.0, 0.0);
+        app.insert_resource(RenderOrigin(cam_world));
+
+        // Spawn camera at the surface of the +X face with WorldPosition.
         app.world_mut().spawn((
             FpsCamera::default(),
-            Transform::from_translation(Vec3::new(200.0, 0.0, 0.0)),
+            WorldPosition::from_dvec3(cam_world),
+            Transform::from_translation(Vec3::ZERO),
         ));
 
         // Register update systems (bypassing GameState gating for the test).
@@ -627,14 +663,17 @@ mod tests {
              (loaded={loaded_count}, entities={entity_count})"
         );
 
-        // Verify transforms are near the planet surface.
+        // Verify transforms are near the camera (render-space, origin at camera).
+        // With RenderOrigin at (200,0,0), chunks should have Translation near
+        // their offset from that point.
         for (_entity, coord, transform) in marker_query.iter(app.world()) {
             let dist = transform.translation.length();
-            let expected_r = 200.0 + (coord.0.layer as f32) * CHUNK_SIZE as f32;
+            // Chunks within load radius should be within a few chunk-sizes of origin
+            let max_expected = (2 + 1) as f32 * CHUNK_SIZE as f32 * 3.0;
             assert!(
-                (dist - expected_r).abs() < CHUNK_SIZE as f32 * 2.0,
-                "Chunk at {:?} has distance {dist:.1} from origin, \
-                 expected ~{expected_r:.1}",
+                dist < max_expected,
+                "Chunk at {:?} has render distance {dist:.1}, \
+                 expected < {max_expected:.1}",
                 coord.0,
             );
         }

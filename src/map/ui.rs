@@ -2,6 +2,7 @@
 
 use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -349,6 +350,7 @@ pub fn pixel_to_lat_lon(
 // ---------------------------------------------------------------------------
 
 use crate::camera::{EYE_HEIGHT, FpsCamera};
+use crate::floating_origin::{RenderOrigin, WorldPosition};
 use crate::game_state::GameState;
 use crate::hud::Player;
 use crate::world::chunk_manager::TerrainGeneratorRes;
@@ -362,7 +364,8 @@ pub fn map_teleport(
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     window_q: Query<&Window, With<PrimaryWindow>>,
     map_node_q: Query<(&ComputedNode, &UiGlobalTransform), With<MapContainer>>,
-    mut camera_q: Query<(&mut Transform, &mut FpsCamera), With<Player>>,
+    mut camera_q: Query<(&mut WorldPosition, &mut FpsCamera), With<Player>>,
+    mut render_origin: ResMut<RenderOrigin>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if state.view != MapView::Global {
@@ -401,17 +404,18 @@ pub fn map_teleport(
     let sea_r = planet.sea_level_radius as f32;
 
     // Build world position.
-    let dir = Vec3::new(
-        lat.cos() as f32 * lon.cos() as f32,
-        lat.sin() as f32,
-        lat.cos() as f32 * lon.sin() as f32,
+    let dir = DVec3::new(
+        lat.cos() * lon.cos(),
+        lat.sin(),
+        lat.cos() * lon.sin(),
     )
     .normalize();
-    let teleport_pos = dir * (surface_r.max(sea_r) + EYE_HEIGHT);
+    let teleport_pos = dir * ((surface_r.max(sea_r) + EYE_HEIGHT) as f64);
 
     // Move the camera.
-    if let Ok((mut tf, mut fps)) = camera_q.single_mut() {
-        tf.translation = teleport_pos;
+    if let Ok((mut wp, mut fps)) = camera_q.single_mut() {
+        wp.0 = teleport_pos;
+        render_origin.0 = teleport_pos;
         // Reset vertical velocity so we don't carry momentum.
         fps.vertical_velocity = 0.0;
         fps.grounded = false;

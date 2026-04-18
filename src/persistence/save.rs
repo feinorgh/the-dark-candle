@@ -14,6 +14,7 @@ use crate::{
     biology::{growth::Growth, health::Health, metabolism::Metabolism},
     camera::FpsCamera,
     entities::Enemy,
+    floating_origin::WorldPosition,
     hud::Player,
     interaction::Hotbar,
     physics::{collision::Collider, gravity::PhysicsBody},
@@ -89,7 +90,7 @@ pub fn save_game(
     creature_query: CreatureQuery,
     item_query: ItemQuery,
     enemy_query: Query<(Entity, &SaveId, &Transform, &Enemy)>,
-    player_query: Query<(&Transform, &FpsCamera, &Health), With<Player>>,
+    player_query: Query<(&WorldPosition, &FpsCamera, &Health), With<Player>>,
     hotbar: Option<Res<Hotbar>>,
     discovered: Res<crate::map::DiscoveredColumns>,
 ) {
@@ -111,11 +112,11 @@ pub fn save_game(
     info!("Saving game to {path}…");
 
     // --- Player ----------------------------------------------------------
-    let player = player_query.single().ok().map(|(transform, cam, health)| {
-        let t = transform.translation;
+    let player = player_query.single().ok().map(|(world_pos, cam, health)| {
+        let p = world_pos.0;
         let hb = hotbar.as_deref();
         PlayerSave {
-            position: [t.x, t.y, t.z],
+            position: [p.x, p.y, p.z],
             pitch: cam.pitch,
             yaw: cam.yaw,
             health_current: health.current,

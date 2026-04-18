@@ -11,6 +11,7 @@ pub mod chemistry;
 pub mod data;
 pub mod diagnostics;
 pub mod entities;
+pub mod floating_origin;
 pub mod game_state;
 pub mod gpu;
 pub mod hud;

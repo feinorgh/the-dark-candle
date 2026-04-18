@@ -89,7 +89,7 @@ pub fn toggle_overlay(
 #[allow(clippy::too_many_arguments)]
 pub fn update_overlay_text(
     budget: Res<FrameBudget>,
-    cam_q: Query<(&Transform, &FpsCamera)>,
+    cam_q: Query<(&crate::floating_origin::WorldPosition, &FpsCamera)>,
     chunk_map: Option<Res<ChunkMap>>,
     load_radius: Option<Res<ChunkLoadRadius>>,
     orbital: Option<Res<OrbitalState>>,
@@ -122,8 +122,8 @@ pub fn update_overlay_text(
         }
 
         // Line 3-4: Player info
-        if let Ok((transform, cam)) = cam_q.single() {
-            let pos = transform.translation;
+        if let Ok((world_pos, cam)) = cam_q.single() {
+            let pos = world_pos.0;
             let cc = ChunkCoord::from_voxel_pos(pos.x as i32, pos.y as i32, pos.z as i32);
             lines.push_str(&format!(
                 "\nPos: ({:.1}, {:.1}, {:.1})  Chunk: ({}, {}, {})",

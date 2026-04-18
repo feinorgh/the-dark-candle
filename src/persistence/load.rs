@@ -6,12 +6,14 @@
 
 use std::collections::HashMap;
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::{
     biology::health::Health,
     camera::FpsCamera,
     entities::Enemy,
+    floating_origin::{RenderOrigin, WorldPosition},
     hud::Player,
     interaction::Hotbar,
     physics::{collision::Collider, gravity::PhysicsBody},
@@ -118,8 +120,9 @@ pub fn load_game(
     creature_query: Query<Entity, With<Creature>>,
     item_query: Query<Entity, With<Item>>,
     enemy_query: Query<Entity, With<Enemy>>,
-    mut player_query: Query<(&mut Transform, &mut FpsCamera, &mut Health), With<Player>>,
+    mut player_query: Query<(&mut WorldPosition, &mut Transform, &mut FpsCamera, &mut Health), With<Player>>,
     mut hotbar: Option<ResMut<Hotbar>>,
+    mut render_origin: ResMut<RenderOrigin>,
     mut discovered: ResMut<crate::map::DiscoveredColumns>,
 ) {
     // Determine target slot: from LoadRequest resource, or F9 quick-load.
@@ -380,8 +383,11 @@ pub fn load_game(
 
     // --- Restore player state --------------------------------------------
     if let Some(ps) = &save.player {
-        if let Ok((mut transform, mut cam, mut health)) = player_query.single_mut() {
-            transform.translation = Vec3::new(ps.position[0], ps.position[1], ps.position[2]);
+        if let Ok((mut world_pos, mut transform, mut cam, mut health)) = player_query.single_mut() {
+            let pos = DVec3::new(ps.position[0], ps.position[1], ps.position[2]);
+            world_pos.0 = pos;
+            render_origin.0 = pos;
+            transform.translation = Vec3::ZERO;
             cam.pitch = ps.pitch;
             cam.yaw = ps.yaw;
             cam.gravity_enabled = ps.gravity_enabled;

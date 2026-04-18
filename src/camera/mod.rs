@@ -1,4 +1,5 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use bevy::math::DVec3;
 use bevy::pbr::{Atmosphere, DistanceFog, FogFalloff, ScatteringMedium};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -6,6 +7,7 @@ use bevy::ui::IsDefaultUiCamera;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::biology::health::Health;
+use crate::floating_origin::{RenderOrigin, WorldPosition};
 use crate::game_state::GameState;
 use crate::hud::{FallTracker, Player};
 use crate::physics::constants;
@@ -22,7 +24,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, cursor_grab.run_if(in_state(GameState::Playing)))
             .add_systems(
                 Update,
-                (camera_look, camera_move, camera_gravity)
+                (camera_look, camera_move, camera_gravity, sync_camera_transform)
                     .chain()
                     .after(cursor_grab)
                     .run_if(in_state(GameState::Playing)),
@@ -83,12 +85,17 @@ impl Default for FpsCamera {
     }
 }
 
-/// Compute the local "up" direction (surface normal) for a position on a
-/// spherical planet.  Returns the normalized radial direction from the planet
-/// center, falling back to `Vec3::Y` near the origin.
-fn local_up_from_position(pos: Vec3) -> Vec3 {
+/// Compute the local "up" direction (surface normal) for an f64 world position
+/// on a spherical planet.  Returns the normalized radial direction from the
+/// planet center, falling back to `Vec3::Y` near the origin.
+fn local_up_from_world_pos(pos: DVec3) -> Vec3 {
     let len = pos.length();
-    if len > 1e-6 { pos / len } else { Vec3::Y }
+    if len > 1e-6 {
+        let n = pos / len;
+        Vec3::new(n.x as f32, n.y as f32, n.z as f32)
+    } else {
+        Vec3::Y
+    }
 }
 
 /// Requested spawn location for the player camera (lat/lon in radians).
@@ -183,12 +190,16 @@ fn spawn_camera(
     planet: Res<PlanetConfig>,
     spawn_loc: Option<Res<SpawnLocation>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
+    mut render_origin: ResMut<RenderOrigin>,
 ) {
     // Pick a spawn position on the terrain surface.
     //
     // Flat mode:  spawn at world origin (0, surface_height, 0).
     // Spherical mode: use SpawnLocation if provided, otherwise default 45°N, 0°E.
-    let (spawn_pos, look_target, up_hint) = if let Some(ref tg) = terrain_gen {
+    //
+    // Positions are computed in f64 (WorldPosition) and the RenderOrigin is
+    // set to the spawn point so that initial Transform.translation ≈ (0,0,0).
+    let (spawn_world_pos, look_target, up_hint) = if let Some(ref tg) = terrain_gen {
         if tg.0.is_spherical() {
             let (lat, lon) = if let Some(ref loc) = spawn_loc {
                 info!(
@@ -223,35 +234,42 @@ fn spawn_camera(
                     (std::f64::consts::FRAC_PI_4, 0.0)
                 }
             };
-            let surface_r = tg.0.sample_surface_radius_at(lat, lon) as f32;
-            // Construct the spawn direction from lat/lon (Y-up planet, axis = Y).
-            let dir = Vec3::new(
-                lat.cos() as f32 * lon.cos() as f32,
-                lat.sin() as f32,
-                lat.cos() as f32 * lon.sin() as f32,
+            let surface_r = tg.0.sample_surface_radius_at(lat, lon);
+            // Construct the spawn direction from lat/lon in f64 (Y-up planet).
+            let dir_f64 = DVec3::new(
+                lat.cos() * lon.cos(),
+                lat.sin(),
+                lat.cos() * lon.sin(),
             )
             .normalize();
-            let spawn = dir * (surface_r.max(planet.sea_level_radius as f32) + EYE_HEIGHT);
+            let spawn_r = surface_r.max(planet.sea_level_radius) + EYE_HEIGHT as f64;
+            let spawn = dir_f64 * spawn_r;
             // Look tangent to the surface (slightly ahead along the equator direction).
-            let look = spawn + Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
+            let dir = Vec3::new(dir_f64.x as f32, dir_f64.y as f32, dir_f64.z as f32);
+            let look_offset = Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
             // Use local surface normal as the up hint so the initial frame is
             // consistent with the spherical camera_look rotation.
-            (spawn, look, dir)
+            (spawn, look_offset, dir)
         } else {
-            let spawn_x = 0.0_f32;
-            let spawn_z = 0.0_f32;
-            let surface_y = tg.0.sample_height(spawn_x as f64, spawn_z as f64) as f32 + 1.0;
-            let spawn_y = surface_y + EYE_HEIGHT;
-            let pos = Vec3::new(spawn_x, spawn_y, spawn_z);
-            let look = Vec3::new(10.0, spawn_y - 1.0, 10.0);
-            (pos, look, Vec3::Y)
+            let spawn_x = 0.0_f64;
+            let spawn_z = 0.0_f64;
+            let surface_y = tg.0.sample_height(spawn_x, spawn_z) + 1.0;
+            let spawn_y = surface_y + EYE_HEIGHT as f64;
+            let pos = DVec3::new(spawn_x, spawn_y, spawn_z);
+            let look_offset = Vec3::new(10.0, -1.0, 10.0);
+            (pos, look_offset, Vec3::Y)
         }
     } else {
         // No terrain generator yet — safe fallback.
-        let pos = Vec3::new(0.0, 100.0 + EYE_HEIGHT, 0.0);
-        let look = Vec3::new(10.0, 99.0, 10.0);
-        (pos, look, Vec3::Y)
+        let pos = DVec3::new(0.0, 100.0 + EYE_HEIGHT as f64, 0.0);
+        let look_offset = Vec3::new(10.0, -1.0, 10.0);
+        (pos, look_offset, Vec3::Y)
     };
+
+    // Set the render origin to the spawn position so that the camera
+    // starts with Transform.translation ≈ (0,0,0).
+    render_origin.0 = spawn_world_pos;
+    let spawn_render = Vec3::ZERO; // WorldPosition - RenderOrigin at spawn
 
     let medium = media.add(ScatteringMedium::default());
 
@@ -278,7 +296,8 @@ fn spawn_camera(
         commands.spawn((
             Camera3d::default(),
             IsDefaultUiCamera,
-            Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
+            Transform::from_translation(spawn_render)
+                .looking_at(spawn_render + look_target, up_hint),
             Bloom::NATURAL,
             DistanceFog {
                 color: Color::srgba(0.7, 0.78, 0.9, 1.0),
@@ -287,6 +306,7 @@ fn spawn_camera(
                 falloff: FogFalloff::from_visibility(500.0),
             },
             FpsCamera::default(),
+            WorldPosition::from_dvec3(spawn_world_pos),
             Player,
             Health::new(100.0),
             FallTracker::default(),
@@ -295,7 +315,8 @@ fn spawn_camera(
         commands.spawn((
             Camera3d::default(),
             IsDefaultUiCamera,
-            Transform::from_translation(spawn_pos).looking_at(look_target, up_hint),
+            Transform::from_translation(spawn_render)
+                .looking_at(spawn_render + look_target, up_hint),
             Bloom::NATURAL,
             atmosphere,
             DistanceFog {
@@ -305,6 +326,7 @@ fn spawn_camera(
                 falloff: FogFalloff::from_visibility(500.0),
             },
             FpsCamera::default(),
+            WorldPosition::from_dvec3(spawn_world_pos),
             Player,
             Health::new(100.0),
             FallTracker::default(),
@@ -352,9 +374,10 @@ fn release_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) 
 fn snap_to_surface(
     v2_gen: Option<Res<V2TerrainGen>>,
     planet: Res<PlanetConfig>,
-    mut cam_q: Query<(&mut Transform, &mut FpsCamera)>,
+    origin: Res<RenderOrigin>,
+    mut cam_q: Query<(&mut WorldPosition, &mut Transform, &mut FpsCamera)>,
 ) {
-    let Ok((mut transform, mut cam)) = cam_q.single_mut() else {
+    let Ok((mut world_pos, mut transform, mut cam)) = cam_q.single_mut() else {
         return;
     };
 
@@ -364,11 +387,15 @@ fn snap_to_surface(
 
     let tgen = v2_gen.as_ref().map(|r| r.0.as_ref());
     if let Some(tg) = tgen {
-        let terrain_r = ground_height_from_terrain_gen(transform.translation, tg);
+        let render_pos = world_pos.render_offset(&origin);
+        let terrain_r = ground_height_from_terrain_gen(render_pos, tg);
         // Never place the player below sea level (ocean floor).
         let ground_r = terrain_r.max(planet.sea_level_radius as f32 + 1.0);
-        let up = transform.translation.normalize_or(Vec3::Y);
-        transform.translation = up * (ground_r + EYE_HEIGHT);
+        let up = local_up_from_world_pos(world_pos.0);
+        // Set WorldPosition in f64
+        world_pos.0 = DVec3::new(up.x as f64, up.y as f64, up.z as f64)
+            * (ground_r + EYE_HEIGHT) as f64;
+        transform.translation = world_pos.render_offset(&origin);
         cam.vertical_velocity = 0.0;
         cam.grounded = true;
     }
@@ -384,7 +411,7 @@ fn camera_look(
     cursor_q: Query<&CursorOptions, With<PrimaryWindow>>,
     accumulated: Res<AccumulatedMouseMotion>,
     planet: Res<PlanetConfig>,
-    mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
+    mut cam_q: Query<(&mut FpsCamera, &WorldPosition, &mut Transform)>,
 ) {
     let Ok(cursor) = cursor_q.single() else {
         return;
@@ -398,7 +425,7 @@ fn camera_look(
         return;
     }
 
-    let Ok((mut cam, mut transform)) = cam_q.single_mut() else {
+    let Ok((mut cam, world_pos, mut transform)) = cam_q.single_mut() else {
         return;
     };
 
@@ -410,7 +437,7 @@ fn camera_look(
         Quat::from_axis_angle(Vec3::Y, cam.yaw) * Quat::from_axis_angle(Vec3::X, cam.pitch);
 
     if planet.is_spherical() {
-        let local_up = local_up_from_position(transform.translation);
+        let local_up = local_up_from_world_pos(world_pos.0);
         let base = Quat::from_rotation_arc(Vec3::Y, local_up);
         transform.rotation = base * yaw_pitch;
     } else {
@@ -429,13 +456,13 @@ fn camera_move(
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
     planet: Res<PlanetConfig>,
-    mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
+    mut cam_q: Query<(&mut FpsCamera, &mut WorldPosition, &Transform)>,
 ) {
     let Ok(cursor) = cursor_q.single() else {
         return;
     };
 
-    let Ok((mut cam, mut transform)) = cam_q.single_mut() else {
+    let Ok((mut cam, mut world_pos, transform)) = cam_q.single_mut() else {
         return;
     };
 
@@ -459,7 +486,7 @@ fn camera_move(
     if cam.gravity_enabled {
         // Project movement onto the local tangent plane (perpendicular to gravity).
         let local_up = if planet.is_spherical() {
-            local_up_from_position(transform.translation)
+            local_up_from_world_pos(world_pos.0)
         } else {
             Vec3::Y
         };
@@ -500,7 +527,7 @@ fn camera_move(
             direction -= right;
         }
         let up = if planet.is_spherical() {
-            local_up_from_position(transform.translation)
+            local_up_from_world_pos(world_pos.0)
         } else {
             Vec3::Y
         };
@@ -544,7 +571,9 @@ fn camera_move(
         cam.speed
     };
 
-    transform.translation += direction * effective_speed * time.delta_secs();
+    // Accumulate movement into WorldPosition (f64 precision)
+    let delta = direction * effective_speed * time.delta_secs();
+    world_pos.0 += DVec3::new(delta.x as f64, delta.y as f64, delta.z as f64);
 }
 
 /// Apply gravity and ground collision to the camera.
@@ -555,9 +584,10 @@ fn camera_gravity(
     time: Res<Time>,
     planet: Res<PlanetConfig>,
     v2_gen: Option<Res<V2TerrainGen>>,
-    mut cam_q: Query<(&mut FpsCamera, &mut Transform)>,
+    origin: Res<RenderOrigin>,
+    mut cam_q: Query<(&mut FpsCamera, &mut WorldPosition, &Transform)>,
 ) {
-    let Ok((mut cam, mut transform)) = cam_q.single_mut() else {
+    let Ok((mut cam, mut world_pos, _)) = cam_q.single_mut() else {
         return;
     };
 
@@ -566,27 +596,29 @@ fn camera_gravity(
     }
 
     let dt = time.delta_secs();
-    let pos = transform.translation;
 
     if planet.is_spherical() {
         // Radial gravity: pull toward planet center.
-        let local_up = local_up_from_position(pos);
+        let local_up = local_up_from_world_pos(world_pos.0);
 
         cam.vertical_velocity -= constants::GRAVITY * dt;
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
-        transform.translation += local_up * cam.vertical_velocity * dt;
+        let vert_delta = local_up * cam.vertical_velocity * dt;
+        world_pos.0 += DVec3::new(vert_delta.x as f64, vert_delta.y as f64, vert_delta.z as f64);
 
+        // Ground collision: use render-space position for terrain sampling
+        let render_pos = world_pos.render_offset(&origin);
         let ground_r = v2_gen
             .as_ref()
-            .map(|tg| ground_height_from_terrain_gen(pos, &tg.0))
+            .map(|tg| ground_height_from_terrain_gen(render_pos, &tg.0))
             // Never let the player fall below sea level.
             .map(|r| r.max(planet.sea_level_radius as f32 + 1.0));
 
         if let Some(ground_r) = ground_r {
-            let feet_r = transform.translation.length() - EYE_HEIGHT;
-            if feet_r <= ground_r {
-                let up = transform.translation.normalize_or(Vec3::Y);
-                transform.translation = up * (ground_r + EYE_HEIGHT);
+            let feet_r = world_pos.0.length() - EYE_HEIGHT as f64;
+            if feet_r <= ground_r as f64 {
+                let up_f64 = world_pos.0.normalize_or(DVec3::Y);
+                world_pos.0 = up_f64 * (ground_r + EYE_HEIGHT) as f64;
                 cam.vertical_velocity = 0.0;
                 cam.grounded = true;
             } else {
@@ -600,8 +632,22 @@ fn camera_gravity(
         // no longer supported in V2; player floats until spherical mode is used).
         cam.vertical_velocity -= constants::GRAVITY * dt;
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
-        transform.translation.y += cam.vertical_velocity * dt;
+        world_pos.0.y += cam.vertical_velocity as f64 * dt as f64;
         cam.grounded = false;
+    }
+}
+
+/// Derive camera `Transform.translation` from `WorldPosition - RenderOrigin`.
+///
+/// Runs after camera_move and camera_gravity so the render-space position
+/// reflects the latest f64 world position. Rotation is already set by
+/// camera_look.
+fn sync_camera_transform(
+    origin: Res<RenderOrigin>,
+    mut cam_q: Query<(&WorldPosition, &mut Transform), With<FpsCamera>>,
+) {
+    for (world_pos, mut transform) in &mut cam_q {
+        transform.translation = world_pos.render_offset(&origin);
     }
 }
 
@@ -689,25 +735,25 @@ mod tests {
     #[test]
     fn local_up_at_north_pole_is_y() {
         // At the north pole, position is along +Y → local up = +Y (same as flat mode).
-        let up = local_up_from_position(Vec3::new(0.0, 6_371_000.0, 0.0));
+        let up = local_up_from_world_pos(DVec3::new(0.0, 6_371_000.0, 0.0));
         assert!((up - Vec3::Y).length() < 1e-5);
     }
 
     #[test]
     fn local_up_at_equator_is_radial() {
         // At the equator (lon=0), position is along +X → local up = +X.
-        let up = local_up_from_position(Vec3::new(6_371_000.0, 0.0, 0.0));
+        let up = local_up_from_world_pos(DVec3::new(6_371_000.0, 0.0, 0.0));
         assert!((up - Vec3::X).length() < 1e-5);
     }
 
     #[test]
     fn local_up_at_45_lat() {
         // At 45° latitude (lon=0), local up should be (cos45, sin45, 0).
-        let r = 6_371_000.0_f32;
-        let lat = std::f32::consts::FRAC_PI_4;
-        let pos = Vec3::new(r * lat.cos(), r * lat.sin(), 0.0);
-        let up = local_up_from_position(pos);
-        let expected = Vec3::new(lat.cos(), lat.sin(), 0.0);
+        let lat = std::f64::consts::FRAC_PI_4;
+        let r = 6_371_000.0_f64;
+        let pos = DVec3::new(r * lat.cos(), r * lat.sin(), 0.0);
+        let up = local_up_from_world_pos(pos);
+        let expected = Vec3::new(lat.cos() as f32, lat.sin() as f32, 0.0);
         assert!(
             (up - expected).length() < 1e-5,
             "local_up at 45° lat should be ({}, {}, 0), got {up}",
@@ -721,8 +767,8 @@ mod tests {
         // At 45° latitude, the base rotation should align the camera's Y axis
         // with the local surface normal, not with global Y.
         let lat = std::f32::consts::FRAC_PI_4;
-        let pos = Vec3::new(6_371_000.0 * lat.cos(), 6_371_000.0 * lat.sin(), 0.0);
-        let local_up = local_up_from_position(pos);
+        let pos = DVec3::new(6_371_000.0 * (lat.cos() as f64), 6_371_000.0 * (lat.sin() as f64), 0.0);
+        let local_up = local_up_from_world_pos(pos);
         let base = Quat::from_rotation_arc(Vec3::Y, local_up);
         let yaw_pitch = Quat::from_axis_angle(Vec3::Y, 0.0) * Quat::from_axis_angle(Vec3::X, 0.0);
         let rotation = base * yaw_pitch;
@@ -744,7 +790,7 @@ mod tests {
 
     #[test]
     fn local_up_near_origin_falls_back_to_y() {
-        let up = local_up_from_position(Vec3::new(1e-8, 1e-8, 1e-8));
+        let up = local_up_from_world_pos(DVec3::new(1e-8, 1e-8, 1e-8));
         assert_eq!(up, Vec3::Y);
     }
 
