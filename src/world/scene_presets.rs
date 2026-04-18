@@ -144,37 +144,45 @@ pub fn valley_river_erosion_config() -> ErosionConfig {
 // ── Spherical Planet ───────────────────────────────────────────────────────
 
 /// Spherical planet: configures the voxel world for spherical mode.
-/// The tectonic/biome generation pass is triggered separately by `--planet`.
+/// Uses Earth-scale dimensions (6,371 km radius) with real-world geological
+/// structure. The floating-origin system ensures f32 precision is maintained
+/// at any position on the surface.
 fn spherical_planet_preset() -> PlanetConfig {
     use super::planet::GeologicalLayer;
     PlanetConfig {
         mode: TerrainMode::Spherical,
-        mean_radius: 32_000.0,
-        sea_level_radius: 32_000.0,
+        mean_radius: 6_371_000.0,
+        sea_level_radius: 6_371_000.0,
         surface_gravity: 9.806_65,
         rotation_rate: 7.292e-5,
         rotation_axis: [0.0, 1.0, 0.0],
         axial_tilt: 0.0,
         libration_amplitude: 0.0,
         libration_period: 0.0,
-        height_scale: 4_000.0,
+        height_scale: 8_848.0, // Everest-scale relief
         layers: vec![
             GeologicalLayer {
                 name: "inner_core".into(),
                 inner_radius: 0.0,
-                outer_radius: 5_000.0,
+                outer_radius: 1_220_000.0,
+                material: "Iron".into(),
+            },
+            GeologicalLayer {
+                name: "outer_core".into(),
+                inner_radius: 1_220_000.0,
+                outer_radius: 3_486_000.0,
                 material: "Iron".into(),
             },
             GeologicalLayer {
                 name: "mantle".into(),
-                inner_radius: 5_000.0,
-                outer_radius: 28_000.0,
+                inner_radius: 3_486_000.0,
+                outer_radius: 6_336_000.0,
                 material: "Stone".into(),
             },
             GeologicalLayer {
                 name: "crust".into(),
-                inner_radius: 28_000.0,
-                outer_radius: 32_000.0,
+                inner_radius: 6_336_000.0,
+                outer_radius: 6_371_000.0,
                 material: "Stone".into(),
             },
         ],
