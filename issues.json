@@ -740,7 +740,9 @@
     "suspected_cause": "Two issues: (1) NeighborSlices::empty() was always passed to greedy_mesh, causing false boundary faces. (2) The gnomonic (cubed-sphere) projection creates non-uniform angular spacing: chunks at face centers need to cover ~27% more arc length than their 32m local extent, causing 8.7m gaps. Chunks at face edges overlap by ~11.6m.",
     "related_commits": [],
     "resolution": "Phase 1: Changed NeighborSlices to 2D boundary slices sampled in the current chunk's own local frame. Phase 2: Added world_transform_scaled() that computes per-chunk tangent-plane scale factors from the gnomonic angular footprint. Terrain generation and boundary slices now use scaled local offsets. Chunk entity Transforms include non-uniform (scale_x, 1.0, scale_z) so meshes cover the correct angular extent. Tests verify adjacent chunk edges meet within 1m.",
-    "notes": ["Each voxel now covers slightly more or less than 1m depending on position (0.6m at face edges, 1.27m at face centers). This is geometrically correct — there's more surface area to cover at face centers."]
+    "notes": [
+      "Each voxel now covers slightly more or less than 1m depending on position (0.6m at face edges, 1.27m at face centers). This is geometrically correct — there's more surface area to cover at face centers."
+    ]
   },
   {
     "id": "RENDER-005",
@@ -760,5 +762,33 @@
     "notes": [
       "Long-term: proper LOD/impostor system still needed for very high altitudes where even 48-chunk radius is insufficient."
     ]
+  },
+  {
+    "id": "COLLISION-001",
+    "title": "Terrain collision broken after floating-origin changes",
+    "category": "collision",
+    "severity": "critical",
+    "status": "resolved",
+    "suspected_cause": "ground_height_from_terrain_gen() received render-space Vec3 but lat_lon() expects absolute world position.",
+    "affected_files": [
+      "src/world/collision.rs",
+      "src/camera/mod.rs",
+      "src/physics/gravity.rs"
+    ],
+    "resolution": "Changed ground_height_from_terrain_gen to accept DVec3 world positions directly. Camera systems pass WorldPosition.0 instead of render offset.",
+    "resolved_commit": "3cf51c620ecf2c05002b03b25f15ecbe2a998981"
+  },
+  {
+    "id": "TELEPORT-001",
+    "title": "Map click-to-teleport places player at wrong location",
+    "category": "map",
+    "severity": "major",
+    "status": "resolved",
+    "suspected_cause": "map_teleport() updated WorldPosition and RenderOrigin but did not sync Transform.translation.",
+    "affected_files": [
+      "src/map/ui.rs"
+    ],
+    "resolution": "Added Transform sync to teleport system. Set translation to Vec3::ZERO since WorldPosition == RenderOrigin after teleport.",
+    "resolved_commit": "3cf51c620ecf2c05002b03b25f15ecbe2a998981"
   }
 ]
