@@ -17,7 +17,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use crate::camera::FpsCamera;
 use crate::floating_origin::{RenderOrigin, RenderOriginShift, WorldPosition};
 use crate::gpu::voxel_compute::{
-    GpuChunkRequest, GpuVoxelCompute, chunk_desc_from_coord,
+    GpuChunkRequest, GpuVoxelCompute, MAX_CHUNKS_PER_BATCH, chunk_desc_from_coord,
 };
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::chunk_manager::SharedTerrainGen;
@@ -465,33 +465,57 @@ pub fn v2_update_chunks(
         lod_penalty + surface_bonus + dist
     });
 
-    for coord in to_dispatch.into_iter().take(budget) {
-        // Try GPU path first: batch up to MAX_CHUNKS_PER_BATCH coords and
-        // dispatch a single GPU batch task on a worker thread.
-        if let Some(ref compute) = gpu_dispatcher.compute {
-            // Collect a batch of coords for GPU dispatch.
+    // Separate GPU-eligible and CPU-fallback chunks.
+    let dispatched: Vec<CubeSphereCoord> = to_dispatch
+        .into_iter()
+        .take(budget.min(MAX_CHUNKS_PER_BATCH))
+        .collect();
+
+    if let Some(ref compute) = gpu_dispatcher.compute {
+        // GPU path: batch all chunks into a single task to avoid concurrent
+        // buffer access (staging buffers are pre-allocated and not thread-safe).
+        if !dispatched.is_empty() {
             let compute = compute.clone();
             let mean_r = mean_radius;
             let sea_level = planet.sea_level_radius;
             let soil_depth = planet.soil_depth;
             let cave_threshold = planet.cave_threshold;
             let rot_axis = planet.rotation_axis;
-            let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+            let batch_coords: Vec<(CubeSphereCoord, f64)> = dispatched
+                .iter()
+                .map(|c| (*c, CubeSphereCoord::face_chunks_per_edge_lod(mean_r, c.lod)))
+                .collect();
+
+            for coord in &dispatched {
+                pending_terrain.pending.insert(*coord);
+            }
 
             let task = pool.spawn(async move {
-                let fce = coord_fce;
-                let desc = chunk_desc_from_coord(
-                    coord, mean_r, fce, sea_level, soil_depth, cave_threshold, 0,
-                );
-                let req = GpuChunkRequest { coord, desc };
-                let result = compute.generate_batch(&[req], rot_axis);
+                let requests: Vec<GpuChunkRequest> = batch_coords
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (coord, fce))| {
+                        let desc = chunk_desc_from_coord(
+                            *coord,
+                            mean_r,
+                            *fce,
+                            sea_level,
+                            soil_depth,
+                            cave_threshold,
+                            i as u32,
+                        );
+                        GpuChunkRequest { coord: *coord, desc }
+                    })
+                    .collect();
+                let result = compute.generate_batch(&requests, rot_axis);
                 result.terrain_data
             });
 
             commands.spawn(V2GpuTerrainTask(task));
-            pending_terrain.pending.insert(coord);
-        } else {
-            // CPU fallback path.
+        }
+    } else {
+        // CPU fallback path: one task per chunk via AsyncComputeTaskPool.
+        for coord in dispatched {
             let tgen = terrain_gen.0.clone();
             let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
 
