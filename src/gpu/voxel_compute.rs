@@ -32,6 +32,166 @@ const CLASS_MIXED: u32 = 0;
 const CLASS_ALL_AIR: u32 = 1;
 const CLASS_ALL_SOLID: u32 = 2;
 
+// Permutation table layout: fixed-index slots for each noise function.
+// Each table is 256 u32 values. Total: NUM_PERM_TABLES × 256 = 8192 u32s.
+const MAX_OCTAVES: usize = 8;
+const PERM_TABLE_SIZE: usize = 256;
+
+// Table index constants (must match WGSL constants).
+const PERM_FBM_START: usize = 0; // 0..8
+const PERM_RIDGED_START: usize = 8; // 8..16
+const PERM_SELECTOR: usize = 16;
+const PERM_WARP_X: usize = 17;
+const PERM_WARP_Z: usize = 18;
+const PERM_MICRO: usize = 19;
+const PERM_CONTINENT: usize = 20;
+const PERM_OCEAN_FLOOR: usize = 21;
+const PERM_STRATA: usize = 22;
+const PERM_ORE_COAL: usize = 23;
+const PERM_ORE_COPPER: usize = 24;
+const PERM_ORE_IRON: usize = 25;
+const PERM_ORE_GOLD: usize = 26;
+const PERM_CAVE_CAVERN: usize = 27;
+const PERM_CAVE_TUNNEL: usize = 28;
+const PERM_CAVE_TUBE_XZ: usize = 29;
+const PERM_CAVE_TUBE_XY: usize = 30;
+const PERM_CRYSTAL: usize = 31;
+const NUM_PERM_TABLES: usize = 32;
+
+// ─── Permutation table generation (matches noise crate exactly) ────────────
+
+/// Replicate `noise::PermutationTable::new(seed)` exactly.
+///
+/// Uses the same XorShift RNG seeding and Fisher-Yates shuffle as the `noise`
+/// crate (rand_xorshift 0.3 + rand 0.8).
+fn generate_perm_table(seed: u32) -> [u8; 256] {
+    // Step 1: Build XorShiftRng seed bytes (from noise crate's PermutationTable::new).
+    let mut seed_bytes = [0u8; 16];
+    seed_bytes[0] = 1;
+    for i in 1..4 {
+        seed_bytes[i * 4] = seed as u8;
+        seed_bytes[i * 4 + 1] = (seed >> 8) as u8;
+        seed_bytes[i * 4 + 2] = (seed >> 16) as u8;
+        seed_bytes[i * 4 + 3] = (seed >> 24) as u8;
+    }
+
+    // Step 2: Parse as 4 little-endian u32 values → XorShiftRng state.
+    let mut state = [
+        u32::from_le_bytes([seed_bytes[0], seed_bytes[1], seed_bytes[2], seed_bytes[3]]),
+        u32::from_le_bytes([seed_bytes[4], seed_bytes[5], seed_bytes[6], seed_bytes[7]]),
+        u32::from_le_bytes([seed_bytes[8], seed_bytes[9], seed_bytes[10], seed_bytes[11]]),
+        u32::from_le_bytes([
+            seed_bytes[12],
+            seed_bytes[13],
+            seed_bytes[14],
+            seed_bytes[15],
+        ]),
+    ];
+    // All-zero guard (matching rand_xorshift 0.3):
+    if state.iter().all(|&x| x == 0) {
+        state = [0xBAD_5EED, 0xBAD_5EED, 0xBAD_5EED, 0xBAD_5EED];
+    }
+
+    // Step 3: Initialize identity permutation [0, 1, 2, ..., 255].
+    let mut values = [0u8; 256];
+    for (i, v) in values.iter_mut().enumerate() {
+        *v = i as u8;
+    }
+
+    // Step 4: Fisher-Yates shuffle using gen_index (matches rand 0.8's SliceRandom::shuffle).
+    for i in (1..256usize).rev() {
+        let j = xorshift_gen_index(&mut state, (i + 1) as u32) as usize;
+        values.swap(i, j);
+    }
+
+    values
+}
+
+/// XorShift128 next_u32 (matches rand_xorshift 0.3).
+fn xorshift_next_u32(state: &mut [u32; 4]) -> u32 {
+    let x = state[0];
+    let t = x ^ (x << 11);
+    state[0] = state[1];
+    state[1] = state[2];
+    state[2] = state[3];
+    let w = state[3];
+    state[3] = w ^ (w >> 19) ^ (t ^ (t >> 8));
+    state[3]
+}
+
+/// Uniform random index in `[0, ubound)` matching rand 0.8's
+/// `UniformInt<u32>::sample_single_inclusive` with widening multiply.
+fn xorshift_gen_index(state: &mut [u32; 4], ubound: u32) -> u32 {
+    let range = ubound;
+    if range == 0 {
+        return xorshift_next_u32(state);
+    }
+
+    let zone = (range << range.leading_zeros()).wrapping_sub(1);
+
+    loop {
+        let v = xorshift_next_u32(state);
+        let wide = (v as u64) * (range as u64);
+        let hi = (wide >> 32) as u32;
+        let lo = wide as u32;
+        if lo <= zone {
+            return hi;
+        }
+    }
+}
+
+/// Generate all permutation tables needed for the noise pipeline.
+///
+/// Returns a flat `Vec<u32>` of `NUM_PERM_TABLES × 256` values, where each
+/// `[u8; 256]` table is promoted to `u32` for GPU buffer alignment.
+fn generate_all_perm_tables(seed: u32, config: &NoiseConfig) -> Vec<u32> {
+    let mut tables = vec![0u32; NUM_PERM_TABLES * PERM_TABLE_SIZE];
+
+    let mut store = |slot: usize, table_seed: u32| {
+        let table = generate_perm_table(table_seed);
+        let base = slot * PERM_TABLE_SIZE;
+        for (i, &v) in table.iter().enumerate() {
+            tables[base + i] = v as u32;
+        }
+    };
+
+    // FBM octaves: seed + 0, seed + 1, ..., seed + N-1
+    for i in 0..MAX_OCTAVES {
+        if i < config.fbm_octaves as usize {
+            store(PERM_FBM_START + i, seed.wrapping_add(i as u32));
+        }
+    }
+
+    // Ridged octaves: seed + 50, seed + 51, ..., seed + 50 + M-1
+    for i in 0..MAX_OCTAVES {
+        if i < config.ridged_octaves as usize {
+            store(PERM_RIDGED_START + i, seed.wrapping_add(50 + i as u32));
+        }
+    }
+
+    // Single-instance noise functions
+    store(PERM_SELECTOR, seed.wrapping_add(100));
+    store(PERM_WARP_X, seed.wrapping_add(200));
+    store(PERM_WARP_Z, seed.wrapping_add(201));
+    store(PERM_MICRO, seed.wrapping_add(300));
+    store(PERM_CONTINENT, seed.wrapping_add(350));
+    store(PERM_OCEAN_FLOOR, seed.wrapping_add(360));
+
+    // 3D material noise (matches CachedGeologyPerlin seeds in terrain.rs)
+    store(PERM_STRATA, seed.wrapping_add(400));
+    store(PERM_ORE_COAL, seed.wrapping_add(500));
+    store(PERM_ORE_COPPER, seed.wrapping_add(501));
+    store(PERM_ORE_IRON, seed.wrapping_add(502));
+    store(PERM_ORE_GOLD, seed.wrapping_add(503));
+    store(PERM_CAVE_CAVERN, seed.wrapping_add(600));
+    store(PERM_CAVE_TUNNEL, seed.wrapping_add(601));
+    store(PERM_CAVE_TUBE_XZ, seed.wrapping_add(602));
+    store(PERM_CAVE_TUBE_XY, seed.wrapping_add(603));
+    store(PERM_CRYSTAL, seed.wrapping_add(604));
+
+    tables
+}
+
 // ─── GPU data structures ───────────────────────────────────────────────────
 
 /// Noise parameters — matches WGSL `NoiseParams` struct (96 bytes, 16-byte aligned).
@@ -156,6 +316,7 @@ pub struct GpuVoxelCompute {
     chunk_info_buffer: wgpu::Buffer,
     materials_buffer: wgpu::Buffer,
     densities_buffer: wgpu::Buffer,
+    perm_tables_buffer: wgpu::Buffer,
     // Staging buffers for CPU readback.
     materials_staging: wgpu::Buffer,
     densities_staging: wgpu::Buffer,
@@ -206,12 +367,12 @@ impl GpuVoxelCompute {
                 entries: &[bgl_uniform(0), bgl_uniform(1)],
             });
 
-        // Bind group 1: chunk descriptors (read-only storage)
+        // Bind group 1: chunk descriptors + permutation tables (read-only storage)
         let bgl_chunks = ctx
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("voxel_chunks_layout"),
-                entries: &[bgl_storage_ro(0)],
+                entries: &[bgl_storage_ro(0), bgl_storage_ro(1)],
             });
 
         // Bind group 2: surface pass outputs (surface_radii + chunk_info)
@@ -356,6 +517,17 @@ impl GpuVoxelCompute {
             mapped_at_creation: false,
         });
 
+        // Permutation tables: 32 tables × 256 u32 = 32 KB
+        let perm_data = generate_all_perm_tables(seed, config);
+        let perm_tables_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voxel_perm_tables"),
+            size: (NUM_PERM_TABLES * PERM_TABLE_SIZE * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        ctx.queue
+            .write_buffer(&perm_tables_buffer, 0, bytemuck::cast_slice(&perm_data));
+
         Self {
             ctx,
             surface_pipeline,
@@ -372,6 +544,7 @@ impl GpuVoxelCompute {
             chunk_info_buffer,
             materials_buffer,
             densities_buffer,
+            perm_tables_buffer,
             materials_staging,
             densities_staging,
             chunk_info_staging,
@@ -466,7 +639,10 @@ impl GpuVoxelCompute {
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("voxel_chunks_bg"),
                 layout: &self.bgl_chunks,
-                entries: &[bg_entry(0, &self.chunks_buffer)],
+                entries: &[
+                    bg_entry(0, &self.chunks_buffer),
+                    bg_entry(1, &self.perm_tables_buffer),
+                ],
             });
 
         let bg_surface = self
@@ -721,6 +897,10 @@ fn bg_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 mod tests {
     use super::*;
 
+    // GPU tests crash with SIGSEGV when multiple tests concurrently create
+    // wgpu devices. Serialize through crate-level lock.
+    use crate::gpu::GPU_TEST_LOCK;
+
     #[test]
     fn noise_params_gpu_size() {
         assert_eq!(std::mem::size_of::<NoiseParamsGpu>(), 96);
@@ -741,6 +921,7 @@ mod tests {
 
     #[test]
     fn empty_batch_returns_empty() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
         let config = NoiseConfig::default();
         let Some(compute) = GpuVoxelCompute::try_new(&config, 42, 6_371_000.0, 8_800.0) else {
             eprintln!("skipping GPU test: no adapter");
@@ -752,6 +933,7 @@ mod tests {
 
     #[test]
     fn single_chunk_generates_terrain() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -783,6 +965,7 @@ mod tests {
 
     #[test]
     fn all_air_chunk_classification() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -815,6 +998,7 @@ mod tests {
 
     #[test]
     fn multi_chunk_batch() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -852,5 +1036,344 @@ mod tests {
         for (i, td) in result.terrain_data.iter().enumerate() {
             assert_eq!(td.coord.u, i as i32);
         }
+    }
+
+    /// Diagnostic test: compare GPU and CPU terrain for a surface-crossing chunk.
+    ///
+    /// Uses the actual planet_config.ron parameters (32 km planet, height_scale=4000).
+    /// Finds the actual surface layer by sampling CPU noise, then compares GPU and CPU
+    /// terrain generation for that chunk.
+    #[test]
+    fn gpu_vs_cpu_surface_chunk_comparison() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        use crate::world::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
+        use crate::world::v2::terrain_gen::generate_v2_voxels;
+
+        let config = NoiseConfig {
+            fbm_base_freq: 1.0,
+            ridged_base_freq: 1.5,
+            selector_freq: 0.5,
+            warp_strength: 0.1,
+            warp_freq: 0.8,
+            micro_freq: 15.0,
+            micro_amplitude: 0.02,
+            continent_enabled: false,
+            ..Default::default()
+        };
+        let mean_radius = 32_000.0;
+        let height_scale = 4_000.0;
+        let sea_level = 32_000.0;
+        let seed = 42u32;
+
+        // GPU path
+        let Some(compute) = GpuVoxelCompute::try_new(&config, seed, mean_radius, height_scale)
+        else {
+            eprintln!("skipping GPU test: no adapter");
+            return;
+        };
+
+        // CPU path
+        let planet = crate::world::planet::PlanetConfig {
+            mean_radius,
+            sea_level_radius: sea_level,
+            height_scale,
+            seed,
+            noise: Some(config.clone()),
+            ..Default::default()
+        };
+        let tgen = SphericalTerrainGenerator::new(planet.clone());
+        let unified = std::sync::Arc::new(UnifiedTerrainGenerator::Spherical(Box::new(tgen)));
+
+        let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+        let half_fce = (fce / 2.0) as i32;
+
+        // First, find the actual surface height at the center of PosX face
+        // by sampling CPU noise at (lat=0, lon=0).
+        let surface_r = unified.sample_surface_radius_at(0.0, 0.0);
+        let surface_layer = ((surface_r - mean_radius) / CHUNK_SIZE as f64) as i32;
+        eprintln!(
+            "Surface radius at (0,0): {surface_r:.1}, mean_radius: {mean_radius}, \
+             surface_layer: {surface_layer}"
+        );
+
+        // Test the surface-crossing layer
+        let coord = CubeSphereCoord::new_with_lod(
+            crate::world::v2::cubed_sphere::CubeFace::PosX,
+            half_fce,
+            half_fce,
+            surface_layer,
+            0, // LOD 0
+        );
+
+        // GPU generation
+        let desc = chunk_desc_from_coord(
+            coord,
+            mean_radius,
+            fce,
+            sea_level,
+            planet.soil_depth,
+            planet.cave_threshold,
+            0,
+        );
+        eprintln!(
+            "ChunkDesc: base_r={}, top_r={}, sea_level={}, half_diag={}",
+            desc.base_r, desc.top_r, desc.sea_level, desc.half_diag
+        );
+
+        let request = GpuChunkRequest { coord, desc };
+        let gpu_result = compute.generate_batch(&[request], planet.rotation_axis);
+        let gpu_td = &gpu_result.terrain_data[0];
+
+        // CPU generation
+        let cpu_td = generate_v2_voxels(coord, mean_radius, fce, &unified);
+
+        // Analyze classifications
+        let label = |v: &CachedVoxels| match v {
+            CachedVoxels::AllAir => "AllAir".to_string(),
+            CachedVoxels::AllSolid(m) => format!("AllSolid({})", m.0),
+            CachedVoxels::Mixed(_) => "Mixed".to_string(),
+        };
+        eprintln!("GPU classification: {}", label(&gpu_td.voxels));
+        eprintln!("CPU classification: {}", label(&cpu_td.voxels));
+
+        // Count materials for both
+        let gpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&gpu_td.voxels);
+        let cpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&cpu_td.voxels);
+
+        let count_materials = |voxels: &[Voxel]| -> Vec<(u16, usize)> {
+            let mut counts: std::collections::HashMap<u16, usize> =
+                std::collections::HashMap::new();
+            for v in voxels {
+                *counts.entry(v.material.0).or_default() += 1;
+            }
+            let mut sorted: Vec<_> = counts.into_iter().collect();
+            sorted.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+            sorted
+        };
+
+        eprintln!("GPU materials (top 5):");
+        for (mat, count) in count_materials(&gpu_voxels).iter().take(5) {
+            eprintln!(
+                "  mat {mat}: {count} voxels ({:.1}%)",
+                *count as f64 / CHUNK_VOLUME as f64 * 100.0
+            );
+        }
+        eprintln!("CPU materials (top 5):");
+        for (mat, count) in count_materials(&cpu_voxels).iter().take(5) {
+            eprintln!(
+                "  mat {mat}: {count} voxels ({:.1}%)",
+                *count as f64 / CHUNK_VOLUME as f64 * 100.0
+            );
+        }
+
+        // The critical check: GPU and CPU must AGREE on classification.
+        assert_eq!(
+            label(&gpu_td.voxels),
+            label(&cpu_td.voxels),
+            "GPU and CPU classifications must match for layer {surface_layer}"
+        );
+
+        // Compare material distributions.
+        let gpu_air = gpu_voxels
+            .iter()
+            .filter(|v| v.material == MaterialId::AIR)
+            .count();
+        let gpu_solid = gpu_voxels.len() - gpu_air;
+        let cpu_air = cpu_voxels
+            .iter()
+            .filter(|v| v.material == MaterialId::AIR)
+            .count();
+        let cpu_solid = cpu_voxels.len() - cpu_air;
+        eprintln!(
+            "GPU: {gpu_air} air, {gpu_solid} solid ({:.1}% solid)",
+            gpu_solid as f64 / gpu_voxels.len() as f64 * 100.0
+        );
+        eprintln!(
+            "CPU: {cpu_air} air, {cpu_solid} solid ({:.1}% solid)",
+            cpu_solid as f64 / cpu_voxels.len() as f64 * 100.0
+        );
+
+        // Air/solid ratio should be close (allow f32 vs f64 drift).
+        let gpu_pct = gpu_solid as f64 / gpu_voxels.len() as f64;
+        let cpu_pct = cpu_solid as f64 / cpu_voxels.len() as f64;
+        let pct_diff = (gpu_pct - cpu_pct).abs();
+        eprintln!("Solid% diff: {pct_diff:.4}");
+        assert!(
+            pct_diff < 0.10,
+            "GPU and CPU solid% differ too much: GPU {gpu_pct:.3} vs CPU {cpu_pct:.3}"
+        );
+    }
+
+    /// Verify that our perm table generation matches the `noise` crate's Perlin.
+    ///
+    /// We can't access the internal perm table directly, so we verify by
+    /// computing a Perlin noise reference value and comparing our CPU-side
+    /// implementation using the generated table.
+    #[test]
+    fn perm_table_matches_noise_crate() {
+        use noise::{NoiseFn, Perlin};
+
+        let seed = 42u32;
+        let table = generate_perm_table(seed);
+
+        let perlin = Perlin::new(seed);
+
+        // Compare 2D Perlin output at several test points.
+        // We implement the same algorithm as the noise crate using our table.
+        let test_points_2d: &[(f64, f64)] = &[
+            (0.5, 0.5),
+            (1.0, 2.0),
+            (-0.3, 0.7),
+            (100.123, -50.456),
+            (0.001, 0.001),
+            (-1.0, -1.0),
+            (255.5, 255.5),
+        ];
+
+        for &(x, z) in test_points_2d {
+            let expected = perlin.get([x, z]);
+            let actual = cpu_perlin2d(x, z, &table);
+            let diff = (expected - actual).abs();
+            assert!(
+                diff < 1e-6,
+                "2D Perlin mismatch at ({x}, {z}): expected {expected}, got {actual}, diff {diff}"
+            );
+        }
+
+        // Compare 3D Perlin output.
+        let test_points_3d: &[(f64, f64, f64)] = &[
+            (0.5, 0.5, 0.5),
+            (1.0, 2.0, 3.0),
+            (-0.3, 0.7, -1.5),
+            (100.123, -50.456, 25.789),
+        ];
+
+        for &(x, y, z) in test_points_3d {
+            let expected = perlin.get([x, y, z]);
+            let actual = cpu_perlin3d(x, y, z, &table);
+            let diff = (expected - actual).abs();
+            assert!(
+                diff < 1e-6,
+                "3D Perlin mismatch at ({x}, {y}, {z}): expected {expected}, got {actual}, diff {diff}"
+            );
+        }
+    }
+
+    // ── CPU reference Perlin using our generated perm table ──────────────
+
+    fn noise_floor_cpu(x: f64) -> isize {
+        if x <= 0.0 { x as isize - 1 } else { x as isize }
+    }
+
+    fn fade_cpu(t: f64) -> f64 {
+        t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+    }
+
+    fn grad2d_cpu(hash: u8, x: f64, y: f64) -> f64 {
+        let h = hash & 3;
+        let gx = if h & 1 == 0 { 1.0 } else { -1.0 };
+        let gy = if h & 2 == 0 { 1.0 } else { -1.0 };
+        gx * x + gy * y
+    }
+
+    fn grad3d_cpu(hash: u8, x: f64, y: f64, z: f64) -> f64 {
+        // Must match the noise crate's exact gradient table (not the classic
+        // Perlin shortcut, which differs at cases 13 and 14).
+        match hash & 15 {
+            0 | 12 => x + y,
+            1 | 13 => -x + y,
+            2 => x - y,
+            3 => -x - y,
+            4 => x + z,
+            5 => -x + z,
+            6 => x - z,
+            7 => -x - z,
+            8 => y + z,
+            9 | 14 => -y + z,
+            10 => y - z,
+            11 | 15 => -y - z,
+            _ => unreachable!(),
+        }
+    }
+
+    fn cpu_perlin2d(x: f64, z: f64, table: &[u8; 256]) -> f64 {
+        let scale = 2.0_f64 / std::f64::consts::SQRT_2;
+        let ix = noise_floor_cpu(x);
+        let iz = noise_floor_cpu(z);
+        let fx = x - ix as f64;
+        let fz = z - iz as f64;
+
+        let ux = (ix & 0xff) as usize;
+        let uz = (iz & 0xff) as usize;
+
+        let h00 = table[table[ux] as usize ^ uz];
+        let h10 = table[table[(ux + 1) & 0xff] as usize ^ uz];
+        let h01 = table[table[ux] as usize ^ ((uz + 1) & 0xff)];
+        let h11 = table[table[(ux + 1) & 0xff] as usize ^ ((uz + 1) & 0xff)];
+
+        let g00 = grad2d_cpu(h00, fx, fz);
+        let g10 = grad2d_cpu(h10, fx - 1.0, fz);
+        let g01 = grad2d_cpu(h01, fx, fz - 1.0);
+        let g11 = grad2d_cpu(h11, fx - 1.0, fz - 1.0);
+
+        let cu = fade_cpu(fx);
+        let cv = fade_cpu(fz);
+
+        fn lerp(a: f64, b: f64, t: f64) -> f64 {
+            a + (b - a) * t
+        }
+
+        let result = lerp(lerp(g00, g01, cv), lerp(g10, g11, cv), cu) * scale;
+        result.clamp(-1.0, 1.0)
+    }
+
+    fn cpu_perlin3d(x: f64, y: f64, z: f64, table: &[u8; 256]) -> f64 {
+        let scale = 2.0_f64 / 3.0_f64.sqrt();
+        let ix = noise_floor_cpu(x);
+        let iy = noise_floor_cpu(y);
+        let iz = noise_floor_cpu(z);
+        let fx = x - ix as f64;
+        let fy = y - iy as f64;
+        let fz = z - iz as f64;
+
+        let ux = (ix & 0xff) as usize;
+        let uy = (iy & 0xff) as usize;
+        let uz = (iz & 0xff) as usize;
+
+        let hash = |dx: usize, dy: usize, dz: usize| -> u8 {
+            table[table[table[(ux + dx) & 0xff] as usize ^ ((uy + dy) & 0xff)] as usize
+                ^ ((uz + dz) & 0xff)]
+        };
+
+        let h000 = hash(0, 0, 0);
+        let h100 = hash(1, 0, 0);
+        let h010 = hash(0, 1, 0);
+        let h110 = hash(1, 1, 0);
+        let h001 = hash(0, 0, 1);
+        let h101 = hash(1, 0, 1);
+        let h011 = hash(0, 1, 1);
+        let h111 = hash(1, 1, 1);
+
+        let g000 = grad3d_cpu(h000, fx, fy, fz);
+        let g100 = grad3d_cpu(h100, fx - 1.0, fy, fz);
+        let g010 = grad3d_cpu(h010, fx, fy - 1.0, fz);
+        let g110 = grad3d_cpu(h110, fx - 1.0, fy - 1.0, fz);
+        let g001 = grad3d_cpu(h001, fx, fy, fz - 1.0);
+        let g101 = grad3d_cpu(h101, fx - 1.0, fy, fz - 1.0);
+        let g011 = grad3d_cpu(h011, fx, fy - 1.0, fz - 1.0);
+        let g111 = grad3d_cpu(h111, fx - 1.0, fy - 1.0, fz - 1.0);
+
+        let cu = fade_cpu(fx);
+        let cv = fade_cpu(fy);
+        let cw = fade_cpu(fz);
+
+        fn lerp(a: f64, b: f64, t: f64) -> f64 {
+            a + (b - a) * t
+        }
+
+        let x0 = lerp(lerp(g000, g001, cw), lerp(g010, g011, cw), cv);
+        let x1 = lerp(lerp(g100, g101, cw), lerp(g110, g111, cw), cv);
+        let result = lerp(x0, x1, cu) * scale;
+        result.clamp(-1.0, 1.0)
     }
 }

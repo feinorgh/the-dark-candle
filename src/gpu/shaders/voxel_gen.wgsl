@@ -1,11 +1,12 @@
 // GPU-accelerated voxel generation for V2 cubed-sphere chunks.
 //
-// Two-pass pipeline:
-//   Pass 1 (surface_pass): 1024 threads/chunk compute surface_radius per column
-//                          + parallel reduction for min/max → chunk classification.
-//   Pass 2 (voxel_pass):   32768 threads/chunk fill material + density for mixed chunks.
+// Three-pass pipeline:
+//   Pass 1 (surface_pass):  1024 threads/chunk compute surface_radius per column
+//                           + parallel reduction for min/max → chunk classification.
+//   Pass 2 (classify_pass): 1 thread/chunk classifies as AllAir/AllSolid/Mixed.
+//   Pass 3 (voxel_pass):    32768 threads/chunk fill material + density for mixed chunks.
 //
-// Reuses hash-based Perlin3D from noise_eval.wgsl (identical implementation).
+// Uses permutation-table-based Perlin noise matching the CPU `noise` crate exactly.
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -36,9 +37,33 @@ const CLASS_MIXED: u32 = 0u;
 const CLASS_ALL_AIR: u32 = 1u;
 const CLASS_ALL_SOLID: u32 = 2u;
 
+// Permutation table slot indices (must match Rust constants).
+const PERM_FBM_START: u32 = 0u;
+const PERM_RIDGED_START: u32 = 8u;
+const PERM_SELECTOR: u32 = 16u;
+const PERM_WARP_X: u32 = 17u;
+const PERM_WARP_Z: u32 = 18u;
+const PERM_MICRO: u32 = 19u;
+const PERM_CONTINENT: u32 = 20u;
+const PERM_OCEAN_FLOOR: u32 = 21u;
+const PERM_STRATA: u32 = 22u;
+const PERM_ORE_COAL: u32 = 23u;
+const PERM_ORE_COPPER: u32 = 24u;
+const PERM_ORE_IRON: u32 = 25u;
+const PERM_ORE_GOLD: u32 = 26u;
+const PERM_CAVE_CAVERN: u32 = 27u;
+const PERM_CAVE_TUNNEL: u32 = 28u;
+const PERM_CAVE_TUBE_XZ: u32 = 29u;
+const PERM_CAVE_TUBE_XY: u32 = 30u;
+const PERM_CRYSTAL: u32 = 31u;
+const PERM_TABLE_SIZE: u32 = 256u;
+
+// Perlin scale factors matching the noise crate.
+const PERLIN_2D_SCALE: f32 = 1.4142135; // 2.0 / sqrt(2)
+const PERLIN_3D_SCALE: f32 = 1.1547005; // 2.0 / sqrt(3)
+
 // ─── Uniforms ────────────────────────────────────────────────────────────────
 
-// Noise parameters — same layout as noise_eval.wgsl NoiseParams (96 bytes).
 struct NoiseParams {
     fbm_octaves: u32,
     fbm_persistence: f32,
@@ -66,11 +91,10 @@ struct NoiseParams {
     height_scale: f32,
 }
 
-// Per-chunk descriptor uploaded for each chunk in the batch.
 struct ChunkDesc {
-    center: vec4<f32>,         // xyz = world center, w = unused
-    rotation: vec4<f32>,       // quaternion (x, y, z, w)
-    tangent_scale: vec4<f32>,  // xyz = scale per axis, w = unused
+    center: vec4<f32>,
+    rotation: vec4<f32>,
+    tangent_scale: vec4<f32>,
     base_r: f32,
     top_r: f32,
     sea_level: f32,
@@ -78,13 +102,12 @@ struct ChunkDesc {
     soil_depth: f32,
     cave_threshold: f32,
     half_diag: f32,
-    chunk_index: u32,          // index into output buffers
+    chunk_index: u32,
 }
 
-// Global dispatch parameters.
 struct DispatchParams {
     chunk_count: u32,
-    rotation_axis: vec4<f32>,  // planet rotation axis (xyz, w=unused)
+    rotation_axis: vec4<f32>,
 }
 
 // ─── Bind groups ─────────────────────────────────────────────────────────────
@@ -94,70 +117,139 @@ struct DispatchParams {
 
 @group(1) @binding(0) var<storage, read> chunks: array<ChunkDesc>;
 
-// Pass 1 outputs:
 @group(2) @binding(0) var<storage, read_write> surface_radii: array<f32>;
-// Per-chunk classification + min/max surface:
-// [chunk_index * 4 + 0] = classification (CLASS_*)
-// [chunk_index * 4 + 1] = min_surface (as u32 bits)
-// [chunk_index * 4 + 2] = max_surface (as u32 bits)
-// [chunk_index * 4 + 3] = solid_material (for AllSolid)
 @group(2) @binding(1) var<storage, read_write> chunk_info: array<atomic<u32>>;
 
-// Pass 2 outputs:
 @group(3) @binding(0) var<storage, read_write> voxel_materials: array<u32>;
 @group(3) @binding(1) var<storage, read_write> voxel_densities: array<f32>;
 
-// ─── Perlin noise (hash-based, identical to noise_eval.wgsl) ─────────────────
+// Permutation tables: NUM_PERM_TABLES × 256 u32 values.
+@group(1) @binding(1) var<storage, read> perm_tables: array<u32>;
 
-fn ihash(x: i32, y: i32, z: i32, seed: u32) -> u32 {
-    var n = u32(x) * 73856093u ^ u32(y) * 19349663u ^ u32(z) * 83492791u ^ seed;
-    n = n ^ (n >> 13u);
-    n = n * 1274126177u;
-    n = n ^ (n >> 16u);
-    return n;
+// ─── Permutation-table-based Perlin noise ────────────────────────────────────
+//
+// Replicates the `noise` crate's Perlin implementation exactly, including:
+// - PermutationTable hash chain
+// - noise_floor() quirk (0.0 → -1, not 0)
+// - True 2D with 4 gradients and scale 2/√2
+// - 3D with 16 Ken Perlin gradients and scale 2/√3
+// - Quintic interpolation
+
+/// Read from permutation table `table_idx` at position `pos`.
+fn perm(table_idx: u32, pos: u32) -> u32 {
+    return perm_tables[table_idx * PERM_TABLE_SIZE + (pos & 255u)];
 }
 
-fn grad3(hash: u32, x: f32, y: f32, z: f32) -> f32 {
-    let h = hash & 15u;
-    let u = select(y, x, h < 8u);
-    let v = select(select(x, z, h == 12u || h == 14u), y, h < 4u);
-    return select(-u, u, (h & 1u) == 0u) + select(-v, v, (h & 2u) == 0u);
+/// noise crate's floor_to_isize: NOT standard floor.
+/// 0.0 → -1, -1.0 → -2, 0.5 → 0, -0.5 → -1, 1.0 → 1
+fn noise_floor(x: f32) -> i32 {
+    return select(i32(x), i32(x) - 1, x <= 0.0);
 }
 
 fn fade(t: f32) -> f32 {
     return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
 }
 
-fn perlin3d(p: vec3<f32>, seed: u32) -> f32 {
-    let pi = vec3<i32>(vec3<f32>(floor(p.x), floor(p.y), floor(p.z)));
-    let pf = p - vec3<f32>(f32(pi.x), f32(pi.y), f32(pi.z));
-
-    let u = fade(pf.x);
-    let v = fade(pf.y);
-    let w = fade(pf.z);
-
-    let aaa = grad3(ihash(pi.x,     pi.y,     pi.z,     seed), pf.x,       pf.y,       pf.z);
-    let baa = grad3(ihash(pi.x + 1, pi.y,     pi.z,     seed), pf.x - 1.0, pf.y,       pf.z);
-    let aba = grad3(ihash(pi.x,     pi.y + 1, pi.z,     seed), pf.x,       pf.y - 1.0, pf.z);
-    let bba = grad3(ihash(pi.x + 1, pi.y + 1, pi.z,     seed), pf.x - 1.0, pf.y - 1.0, pf.z);
-    let aab = grad3(ihash(pi.x,     pi.y,     pi.z + 1, seed), pf.x,       pf.y,       pf.z - 1.0);
-    let bab = grad3(ihash(pi.x + 1, pi.y,     pi.z + 1, seed), pf.x - 1.0, pf.y,       pf.z - 1.0);
-    let abb = grad3(ihash(pi.x,     pi.y + 1, pi.z + 1, seed), pf.x,       pf.y - 1.0, pf.z - 1.0);
-    let bbb = grad3(ihash(pi.x + 1, pi.y + 1, pi.z + 1, seed), pf.x - 1.0, pf.y - 1.0, pf.z - 1.0);
-
-    let x1 = mix(aaa, baa, u);
-    let x2 = mix(aba, bba, u);
-    let x3 = mix(aab, bab, u);
-    let x4 = mix(abb, bbb, u);
-
-    let y1 = mix(x1, x2, v);
-    let y2 = mix(x3, x4, v);
-
-    return mix(y1, y2, w);
+/// 2D gradient: 4 directions {(1,1),(-1,1),(1,-1),(-1,-1)}
+fn grad2d(hash: u32, x: f32, y: f32) -> f32 {
+    let h = hash & 3u;
+    let gx = select(-1.0, 1.0, (h & 1u) == 0u);
+    let gy = select(-1.0, 1.0, (h & 2u) == 0u);
+    return gx * x + gy * y;
 }
 
-fn perlin2d(x: f32, z: f32, seed: u32) -> f32 {
-    return perlin3d(vec3<f32>(x, 0.0, z), seed);
+/// 3D gradient matching noise crate's exact table (NOT the classic Perlin
+/// shortcut which differs at cases 13 and 14).
+fn grad3d(hash: u32, x: f32, y: f32, z: f32) -> f32 {
+    let h = hash & 15u;
+    // Cases 12,13 alias to 0,1 (x±y); 14,15 alias to 9,11 (-y±z).
+    switch h {
+        case 0u, 12u  { return  x + y; }
+        case 1u, 13u  { return -x + y; }
+        case 2u       { return  x - y; }
+        case 3u       { return -x - y; }
+        case 4u       { return  x + z; }
+        case 5u       { return -x + z; }
+        case 6u       { return  x - z; }
+        case 7u       { return -x - z; }
+        case 8u       { return  y + z; }
+        case 9u, 14u  { return -y + z; }
+        case 10u      { return  y - z; }
+        case 11u, 15u { return -y - z; }
+        default       { return 0.0; }
+    }
+}
+
+/// 2D Perlin noise using permutation table at `table_idx`.
+fn perlin2d(x: f32, z: f32, table_idx: u32) -> f32 {
+    let ix = noise_floor(x);
+    let iz = noise_floor(z);
+    let fx = x - f32(ix);
+    let fz = z - f32(iz);
+
+    let ux = u32(ix) & 255u;
+    let uz = u32(iz) & 255u;
+
+    // Hash chain: perm[perm[ix] ^ iz]
+    let h00 = perm(table_idx, perm(table_idx, ux) ^ uz);
+    let h10 = perm(table_idx, perm(table_idx, ux + 1u) ^ uz);
+    let h01 = perm(table_idx, perm(table_idx, ux) ^ (uz + 1u));
+    let h11 = perm(table_idx, perm(table_idx, ux + 1u) ^ (uz + 1u));
+
+    let g00 = grad2d(h00, fx, fz);
+    let g10 = grad2d(h10, fx - 1.0, fz);
+    let g01 = grad2d(h01, fx, fz - 1.0);
+    let g11 = grad2d(h11, fx - 1.0, fz - 1.0);
+
+    let cu = fade(fx);
+    let cv = fade(fz);
+
+    // Interpolate: first along z, then along x (matching noise crate order)
+    let result = mix(mix(g00, g01, cv), mix(g10, g11, cv), cu) * PERLIN_2D_SCALE;
+    return clamp(result, -1.0, 1.0);
+}
+
+/// 3D Perlin noise using permutation table at `table_idx`.
+fn perlin3d(p: vec3<f32>, table_idx: u32) -> f32 {
+    let ix = noise_floor(p.x);
+    let iy = noise_floor(p.y);
+    let iz = noise_floor(p.z);
+    let fx = p.x - f32(ix);
+    let fy = p.y - f32(iy);
+    let fz = p.z - f32(iz);
+
+    let ux = u32(ix) & 255u;
+    let uy = u32(iy) & 255u;
+    let uz = u32(iz) & 255u;
+
+    // Hash chain: perm[perm[perm[ix] ^ iy] ^ iz]
+    let h000 = perm(table_idx, perm(table_idx, perm(table_idx, ux) ^ uy) ^ uz);
+    let h100 = perm(table_idx, perm(table_idx, perm(table_idx, ux + 1u) ^ uy) ^ uz);
+    let h010 = perm(table_idx, perm(table_idx, perm(table_idx, ux) ^ (uy + 1u)) ^ uz);
+    let h110 = perm(table_idx, perm(table_idx, perm(table_idx, ux + 1u) ^ (uy + 1u)) ^ uz);
+    let h001 = perm(table_idx, perm(table_idx, perm(table_idx, ux) ^ uy) ^ (uz + 1u));
+    let h101 = perm(table_idx, perm(table_idx, perm(table_idx, ux + 1u) ^ uy) ^ (uz + 1u));
+    let h011 = perm(table_idx, perm(table_idx, perm(table_idx, ux) ^ (uy + 1u)) ^ (uz + 1u));
+    let h111 = perm(table_idx, perm(table_idx, perm(table_idx, ux + 1u) ^ (uy + 1u)) ^ (uz + 1u));
+
+    let g000 = grad3d(h000, fx, fy, fz);
+    let g100 = grad3d(h100, fx - 1.0, fy, fz);
+    let g010 = grad3d(h010, fx, fy - 1.0, fz);
+    let g110 = grad3d(h110, fx - 1.0, fy - 1.0, fz);
+    let g001 = grad3d(h001, fx, fy, fz - 1.0);
+    let g101 = grad3d(h101, fx - 1.0, fy, fz - 1.0);
+    let g011 = grad3d(h011, fx, fy - 1.0, fz - 1.0);
+    let g111 = grad3d(h111, fx - 1.0, fy - 1.0, fz - 1.0);
+
+    let cu = fade(fx);
+    let cv = fade(fy);
+    let cw = fade(fz);
+
+    // Interpolate: z, then y, then x (matching noise crate order)
+    let x0 = mix(mix(g000, g001, cw), mix(g010, g011, cw), cv);
+    let x1 = mix(mix(g100, g101, cw), mix(g110, g111, cw), cv);
+    let result = mix(x0, x1, cu) * PERLIN_3D_SCALE;
+    return clamp(result, -1.0, 1.0);
 }
 
 // ─── Noise pipeline (mirrors NoiseStack::sample()) ───────────────────────────
@@ -168,9 +260,8 @@ fn fbm(x: f32, z: f32) -> f32 {
     var frequency = noise_params.fbm_base_freq;
     var normalization = 0.0;
 
-    let base_seed = noise_params.seed;
     for (var i = 0u; i < noise_params.fbm_octaves; i++) {
-        value += amplitude * perlin2d(x * frequency, z * frequency, base_seed + i);
+        value += amplitude * perlin2d(x * frequency, z * frequency, PERM_FBM_START + i);
         normalization += amplitude;
         amplitude *= noise_params.fbm_persistence;
         frequency *= noise_params.fbm_lacunarity;
@@ -190,9 +281,8 @@ fn ridged(x: f32, z: f32) -> f32 {
     let persistence = 0.5;
     var normalization = 0.0;
 
-    let base_seed = noise_params.seed + 50u;
     for (var i = 0u; i < noise_params.ridged_octaves; i++) {
-        let signal_raw = perlin2d(x * frequency, z * frequency, base_seed + i);
+        let signal_raw = perlin2d(x * frequency, z * frequency, PERM_RIDGED_START + i);
         var signal = 1.0 - abs(signal_raw);
         signal *= signal;
         signal *= weight;
@@ -215,15 +305,16 @@ fn smoothstep_custom(edge0: f32, edge1: f32, x: f32) -> f32 {
     return t * t * (3.0 - 2.0 * t);
 }
 
+/// Sample terrain height excluding micro-detail (matches CPU sample()).
 fn sample_terrain(x: f32, z: f32) -> f32 {
     // Domain warp
-    let wx = perlin2d(x * noise_params.warp_freq, z * noise_params.warp_freq, noise_params.seed + 200u) * noise_params.warp_strength;
-    let wz = perlin2d(x * noise_params.warp_freq, z * noise_params.warp_freq, noise_params.seed + 201u) * noise_params.warp_strength;
+    let wx = perlin2d(x * noise_params.warp_freq, z * noise_params.warp_freq, PERM_WARP_X) * noise_params.warp_strength;
+    let wz = perlin2d(x * noise_params.warp_freq, z * noise_params.warp_freq, PERM_WARP_Z) * noise_params.warp_strength;
     let sx = x + wx;
     let sz = z + wz;
 
     // Selector
-    let sel = perlin2d(sx * noise_params.selector_freq, sz * noise_params.selector_freq, noise_params.seed + 100u);
+    let sel = perlin2d(sx * noise_params.selector_freq, sz * noise_params.selector_freq, PERM_SELECTOR);
 
     // FBM and ridged blend
     var land: f32;
@@ -238,15 +329,14 @@ fn sample_terrain(x: f32, z: f32) -> f32 {
         land = mix(fbm_val, ridged_val, t);
     }
 
-    // Micro-detail
-    land += perlin2d(sx * noise_params.micro_freq, sz * noise_params.micro_freq, noise_params.seed + 300u) * noise_params.micro_amplitude;
+    // NO micro-detail here — matches CPU sample() which excludes it.
 
     if noise_params.continent_enabled == 0u {
         return land;
     }
 
-    // Continent blend
-    let cv = perlin2d(sx * noise_params.continent_freq, sz * noise_params.continent_freq, noise_params.seed + 350u);
+    // Continent blend uses ORIGINAL (un-warped) coordinates, matching CPU.
+    let cv = perlin2d(x * noise_params.continent_freq, z * noise_params.continent_freq, PERM_CONTINENT);
     let threshold = noise_params.continent_threshold;
     let shelf = noise_params.shelf_blend_width;
     let ocean_edge = threshold - shelf;
@@ -255,7 +345,7 @@ fn sample_terrain(x: f32, z: f32) -> f32 {
         return land;
     }
 
-    let ocean = -noise_params.ocean_floor_depth + perlin2d(sx * 0.01, sz * 0.01, noise_params.seed + 360u) * noise_params.ocean_floor_amplitude;
+    let ocean = -noise_params.ocean_floor_depth + perlin2d(x * 0.01, z * 0.01, PERM_OCEAN_FLOOR) * noise_params.ocean_floor_amplitude;
 
     if cv <= ocean_edge {
         return ocean;
@@ -267,13 +357,11 @@ fn sample_terrain(x: f32, z: f32) -> f32 {
 
 // ─── Coordinate helpers ──────────────────────────────────────────────────────
 
-// Rotate a vector by a quaternion.
 fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
 }
 
-// Compute (lat, lon) from a world position, given the planet rotation axis.
 fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     let len = length(pos);
     if len < 1e-6 {
@@ -281,11 +369,9 @@ fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     }
     let dir = pos / len;
 
-    // Latitude = asin(dot(dir, axis))
     let sin_lat = clamp(dot(dir, axis), -1.0, 1.0);
     let lat = asin(sin_lat);
 
-    // Project onto equatorial plane
     let equatorial = dir - axis * sin_lat;
     let eq_len = length(equatorial);
     if eq_len < 1e-6 {
@@ -293,7 +379,6 @@ fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     }
     let eq_norm = equatorial / eq_len;
 
-    // Build equatorial basis
     let ref_x = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(axis.x) < 0.9);
     let east = normalize(cross(axis, ref_x));
     let north_eq = normalize(cross(east, axis));
@@ -305,7 +390,7 @@ fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
 // ─── Material assignment (mirrors material_at_radius) ────────────────────────
 
 fn strata_material_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> u32 {
-    let n = perlin3d(vec3<f32>(wx * 0.02, wy * 0.02, wz * 0.02), noise_params.seed + 400u);
+    let n = perlin3d(vec3<f32>(wx * 0.02, wy * 0.02, wz * 0.02), PERM_STRATA);
 
     if depth < 20.0 {
         return select(MAT_LIMESTONE, MAT_SANDSTONE, n > 0.0);
@@ -317,47 +402,40 @@ fn strata_material_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> u32 {
 }
 
 fn ore_material_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> u32 {
-    // Coal: 5–30m
     if depth >= 5.0 && depth <= 30.0 {
-        if perlin3d(vec3<f32>(wx * 0.08, wy * 0.08, wz * 0.08), noise_params.seed + 500u) < -0.15 {
+        if perlin3d(vec3<f32>(wx * 0.08, wy * 0.08, wz * 0.08), PERM_ORE_COAL) < -0.15 {
             return MAT_COAL;
         }
     }
-    // Copper: 15–50m
     if depth >= 15.0 && depth <= 50.0 {
-        if perlin3d(vec3<f32>(wx * 0.06, wy * 0.06, wz * 0.06), noise_params.seed + 501u) < -0.20 {
+        if perlin3d(vec3<f32>(wx * 0.06, wy * 0.06, wz * 0.06), PERM_ORE_COPPER) < -0.20 {
             return MAT_COPPER_ORE;
         }
     }
-    // Iron: 30–80m
     if depth >= 30.0 && depth <= 80.0 {
-        if perlin3d(vec3<f32>(wx * 0.05, wy * 0.05, wz * 0.05), noise_params.seed + 502u) < -0.25 {
+        if perlin3d(vec3<f32>(wx * 0.05, wy * 0.05, wz * 0.05), PERM_ORE_IRON) < -0.25 {
             return MAT_IRON;
         }
     }
-    // Gold: 50m+
     if depth >= 50.0 {
-        if perlin3d(vec3<f32>(wx * 0.04, wy * 0.04, wz * 0.04), noise_params.seed + 503u) < -0.35 {
+        if perlin3d(vec3<f32>(wx * 0.04, wy * 0.04, wz * 0.04), PERM_ORE_GOLD) < -0.35 {
             return MAT_GOLD_ORE;
         }
     }
-    return 0xFFFFu; // Sentinel: no ore
+    return 0xFFFFu;
 }
 
 fn is_cave_gpu(cave_threshold: f32, wx: f32, wy: f32, wz: f32) -> bool {
-    // Caverns (cathedral-sized)
-    let cavern = perlin3d(vec3<f32>(wx * 0.01, wy * 0.01, wz * 0.01), noise_params.seed + 600u);
+    let cavern = perlin3d(vec3<f32>(wx * 0.01, wy * 0.01, wz * 0.01), PERM_CAVE_CAVERN);
     if cavern < cave_threshold * 0.5 {
         return true;
     }
-    // Tunnels (narrow)
-    let tunnel = perlin3d(vec3<f32>(wx * 0.04, wy * 0.04, wz * 0.04), noise_params.seed + 601u);
+    let tunnel = perlin3d(vec3<f32>(wx * 0.04, wy * 0.04, wz * 0.04), PERM_CAVE_TUNNEL);
     if tunnel < cave_threshold * 1.2 {
         return true;
     }
-    // Tube networks (worm-like)
-    let t_xz = perlin3d(vec3<f32>(wx * 0.025, 0.0, wz * 0.025), noise_params.seed + 602u);
-    let t_xy = perlin3d(vec3<f32>(wx * 0.025, wy * 0.025, 0.0), noise_params.seed + 603u);
+    let t_xz = perlin3d(vec3<f32>(wx * 0.025, 0.0, wz * 0.025), PERM_CAVE_TUBE_XZ);
+    let t_xy = perlin3d(vec3<f32>(wx * 0.025, wy * 0.025, 0.0), PERM_CAVE_TUBE_XY);
     if t_xz < cave_threshold * 0.85 && t_xy < cave_threshold * 0.85 {
         return true;
     }
@@ -377,7 +455,7 @@ fn is_crystal_deposit_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> bool {
     if depth < 40.0 {
         return false;
     }
-    return perlin3d(vec3<f32>(wx * 0.10, wy * 0.10, wz * 0.10), noise_params.seed + 604u) < -0.30;
+    return perlin3d(vec3<f32>(wx * 0.10, wy * 0.10, wz * 0.10), PERM_CRYSTAL) < -0.30;
 }
 
 fn material_at_radius_gpu(
@@ -405,7 +483,6 @@ fn material_at_radius_gpu(
         return MAT_DIRT;
     }
 
-    // Geological strata
     let strata_depth = depth - soil_depth;
     let ore = ore_material_gpu(strata_depth, wx, wy, wz);
     var base_mat: u32;
@@ -415,14 +492,12 @@ fn material_at_radius_gpu(
         base_mat = strata_material_gpu(strata_depth, wx, wy, wz);
     }
 
-    // Cave carving
     let cave_max_depth = 200.0;
     if depth > 2.0 && depth < cave_max_depth {
         if is_cave_gpu(cave_threshold, wx, wy, wz) {
             let sea_level_depth = max(sea_level - r, 0.0);
             return cave_fill_material_gpu(depth, sea_level_depth);
         }
-        // Crystal deposits on cave-adjacent walls
         if is_crystal_deposit_gpu(depth, wx, wy, wz) {
             return MAT_QUARTZ_CRYSTAL;
         }
@@ -436,10 +511,6 @@ fn terrain_density_gpu(depth: f32) -> f32 {
 }
 
 // ─── Pass 1: Surface radius computation ──────────────────────────────────────
-//
-// One thread per (chunk, column).
-// global_invocation_id.x = chunk_index * CHUNK_AREA + column_index
-// column_index = lz * 32 + lx
 
 @compute @workgroup_size(256)
 fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -456,7 +527,6 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lx = col_idx % CHUNK_SIZE;
     let half = f32(CHUNK_SIZE) / 2.0;
 
-    // Compute local position at column center (y=0)
     let local = vec3<f32>(
         (f32(lx) + 0.5 - half) * chunk.tangent_scale.x,
         0.0,
@@ -464,21 +534,15 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let world = chunk.center.xyz + quat_rotate(chunk.rotation, local);
 
-    // Convert to lat/lon
     let ll = lat_lon(world, dispatch_params.rotation_axis.xyz);
 
-    // Sample terrain noise → surface radius
-    let combined = sample_terrain(ll.y, ll.x); // sample_terrain(lon, lat)
+    // sample_terrain excludes micro-detail, matching CPU sample_surface_radius()
+    let combined = sample_terrain(ll.y, ll.x);
     let sr = noise_params.mean_radius + combined * noise_params.height_scale;
 
-    // Store surface radius
     let out_idx = chunk.chunk_index * CHUNK_AREA + col_idx;
     surface_radii[out_idx] = sr;
 
-    // Atomic min/max for classification.
-    // We use bitwise atomics on float bits. Since surface radii are positive
-    // and we only need min/max, we use atomicMin/Max on the raw u32 bits.
-    // IEEE 754 positive floats preserve ordering under integer comparison.
     let sr_bits = bitcast<u32>(sr);
     let info_base = chunk.chunk_index * 4u;
     atomicMin(&chunk_info[info_base + 1u], sr_bits);
@@ -486,10 +550,6 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // ─── Pass 2: Voxel fill ─────────────────────────────────────────────────────
-//
-// One thread per voxel.
-// global_invocation_id.x = chunk_index * CHUNK_VOLUME + voxel_index
-// voxel_index = lz * CS * CS + ly * CS + lx
 
 @compute @workgroup_size(256)
 fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -503,7 +563,6 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let chunk = chunks[chunk_idx];
 
-    // Check classification — skip if AllAir or AllSolid.
     let info_base = chunk.chunk_index * 4u;
     let classification = atomicLoad(&chunk_info[info_base]);
     if classification != CLASS_MIXED {
@@ -515,7 +574,6 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lx = voxel_idx % CHUNK_SIZE;
     let half = f32(CHUNK_SIZE) / 2.0;
 
-    // Compute world position
     let local = vec3<f32>(
         (f32(lx) + 0.5 - half) * chunk.tangent_scale.x,
         (f32(ly) + 0.5 - half) * chunk.tangent_scale.y,
@@ -524,12 +582,10 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     let world = chunk.center.xyz + quat_rotate(chunk.rotation, local);
     let r = length(world);
 
-    // Read cached surface radius for this column
     let col_idx = lz * CHUNK_SIZE + lx;
     let sr_idx = chunk.chunk_index * CHUNK_AREA + col_idx;
     let surface_r = surface_radii[sr_idx];
 
-    // Material assignment
     let material = material_at_radius_gpu(
         r, surface_r,
         chunk.sea_level,
@@ -538,7 +594,6 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
         world.x, world.y, world.z,
     );
 
-    // Density
     var density: f32;
     if material == MAT_WATER {
         density = terrain_density_gpu(chunk.sea_level - r);
@@ -546,15 +601,12 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
         density = terrain_density_gpu(surface_r - r);
     }
 
-    // Write output
     let out_idx = chunk.chunk_index * CHUNK_VOLUME + voxel_idx;
     voxel_materials[out_idx] = material;
     voxel_densities[out_idx] = density;
 }
 
-// ─── Classification pass (runs after surface_pass) ───────────────────────────
-//
-// One thread per chunk — reads min/max surface and determines classification.
+// ─── Classification pass ─────────────────────────────────────────────────────
 
 @compute @workgroup_size(64)
 fn classify_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -576,13 +628,11 @@ fn classify_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     let base_r = chunk.base_r;
     let top_r = chunk.top_r;
 
-    // Entirely above terrain AND above sea → all air
     if base_r - half_diag > max_surface && base_r - half_diag > sea {
         atomicStore(&chunk_info[info_base], CLASS_ALL_AIR);
         return;
     }
 
-    // Entirely below terrain (and below cave floor)
     let cave_floor = min_surface - 200.0;
     if top_r + half_diag < min_surface && top_r + half_diag < cave_floor {
         atomicStore(&chunk_info[info_base], CLASS_ALL_SOLID);

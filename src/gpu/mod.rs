@@ -17,3 +17,8 @@ pub use noise_compute::GpuNoiseCompute;
 pub use renderer::{GpuRenderParams, GpuRenderer};
 pub use terrain_projection::{GpuProjectionRenderer, render_animation_gpu, render_projection_gpu};
 pub use voxel_compute::{GpuVoxelCompute, chunk_desc_from_coord};
+
+/// Shared mutex for GPU tests. Concurrent wgpu device creation causes SIGSEGV,
+/// so all GPU tests across all submodules must serialize through this lock.
+#[cfg(test)]
+pub(crate) static GPU_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

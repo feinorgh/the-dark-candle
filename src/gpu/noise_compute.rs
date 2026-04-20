@@ -395,6 +395,7 @@ mod tests {
 
     #[test]
     fn empty_batch_returns_empty() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -407,6 +408,7 @@ mod tests {
 
     #[test]
     fn single_column_produces_valid_radius() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -429,6 +431,7 @@ mod tests {
 
     #[test]
     fn batch_is_deterministic() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -455,6 +458,7 @@ mod tests {
 
     #[test]
     fn batch_varies_with_position() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -476,6 +480,7 @@ mod tests {
 
     #[test]
     fn full_chunk_batch() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -513,6 +518,7 @@ mod tests {
     /// should be comparable for the same configuration.
     #[test]
     fn gpu_cpu_parity_statistics() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         use crate::world::noise::NoiseStack;
 
         let Some(ctx) = try_gpu_context() else {
@@ -599,6 +605,7 @@ mod tests {
     /// Benchmark: measure GPU batch evaluation throughput.
     #[test]
     fn benchmark_gpu_batch() {
+        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU benchmark: no adapter");
             return;
