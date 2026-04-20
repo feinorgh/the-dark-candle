@@ -199,44 +199,44 @@ impl GpuVoxelCompute {
             });
 
         // Bind group 0: uniforms (noise_params + dispatch_params)
-        let bgl_uniforms =
-            ctx.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("voxel_uniforms_layout"),
-                    entries: &[bgl_uniform(0), bgl_uniform(1)],
-                });
+        let bgl_uniforms = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("voxel_uniforms_layout"),
+                entries: &[bgl_uniform(0), bgl_uniform(1)],
+            });
 
         // Bind group 1: chunk descriptors (read-only storage)
-        let bgl_chunks =
-            ctx.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("voxel_chunks_layout"),
-                    entries: &[bgl_storage_ro(0)],
-                });
+        let bgl_chunks = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("voxel_chunks_layout"),
+                entries: &[bgl_storage_ro(0)],
+            });
 
         // Bind group 2: surface pass outputs (surface_radii + chunk_info)
-        let bgl_surface =
-            ctx.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("voxel_surface_layout"),
-                    entries: &[bgl_storage_rw(0), bgl_storage_rw(1)],
-                });
+        let bgl_surface = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("voxel_surface_layout"),
+                entries: &[bgl_storage_rw(0), bgl_storage_rw(1)],
+            });
 
         // Bind group 3: voxel pass outputs (materials + densities)
-        let bgl_voxels =
-            ctx.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("voxel_output_layout"),
-                    entries: &[bgl_storage_rw(0), bgl_storage_rw(1)],
-                });
+        let bgl_voxels = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("voxel_output_layout"),
+                entries: &[bgl_storage_rw(0), bgl_storage_rw(1)],
+            });
 
-        let pipeline_layout =
-            ctx.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("voxel_pipeline_layout"),
-                    bind_group_layouts: &[&bgl_uniforms, &bgl_chunks, &bgl_surface, &bgl_voxels],
-                    push_constant_ranges: &[],
-                });
+        let pipeline_layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("voxel_pipeline_layout"),
+                bind_group_layouts: &[&bgl_uniforms, &bgl_chunks, &bgl_surface, &bgl_voxels],
+                push_constant_ranges: &[],
+            });
 
         let surface_pipeline =
             ctx.device
@@ -260,16 +260,16 @@ impl GpuVoxelCompute {
                     cache: None,
                 });
 
-        let voxel_pipeline =
-            ctx.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("voxel_pass"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader_module,
-                    entry_point: Some("voxel_pass"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
+        let voxel_pipeline = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("voxel_pass"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: Some("voxel_pass"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Pre-allocate buffers at maximum capacity.
         let max_chunks = MAX_CHUNKS_PER_BATCH;
@@ -443,11 +443,9 @@ impl GpuVoxelCompute {
             info_init[i * 4 + 2] = 0; // max_surface (f32 +0.0)
             info_init[i * 4 + 3] = 0; // solid material
         }
-        self.ctx.queue.write_buffer(
-            &self.chunk_info_buffer,
-            0,
-            bytemuck::cast_slice(&info_init),
-        );
+        self.ctx
+            .queue
+            .write_buffer(&self.chunk_info_buffer, 0, bytemuck::cast_slice(&info_init));
 
         // Build bind groups.
         let bg_uniforms = self
@@ -582,7 +580,9 @@ impl GpuVoxelCompute {
         self.ctx.submit_and_wait(encoder);
 
         // Read back results.
-        let info_raw = self.ctx.read_buffer(&self.chunk_info_staging, info_copy_size);
+        let info_raw = self
+            .ctx
+            .read_buffer(&self.chunk_info_staging, info_copy_size);
         let info: &[u32] = bytemuck::cast_slice(&info_raw);
 
         let mat_raw = self.ctx.read_buffer(&self.materials_staging, mat_copy_size);
@@ -742,9 +742,7 @@ mod tests {
     #[test]
     fn empty_batch_returns_empty() {
         let config = NoiseConfig::default();
-        let Some(compute) =
-            GpuVoxelCompute::try_new(&config, 42, 6_371_000.0, 8_800.0)
-        else {
+        let Some(compute) = GpuVoxelCompute::try_new(&config, 42, 6_371_000.0, 8_800.0) else {
             eprintln!("skipping GPU test: no adapter");
             return;
         };
@@ -757,9 +755,7 @@ mod tests {
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
-        let Some(compute) =
-            GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale)
-        else {
+        let Some(compute) = GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale) else {
             eprintln!("skipping GPU test: no adapter");
             return;
         };
@@ -773,7 +769,8 @@ mod tests {
             0, // LOD 0
         );
         let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-        let desc = chunk_desc_from_coord(coord, mean_radius, fce, mean_radius - 100.0, 4.0, -0.3, 0);
+        let desc =
+            chunk_desc_from_coord(coord, mean_radius, fce, mean_radius - 100.0, 4.0, -0.3, 0);
 
         let request = GpuChunkRequest { coord, desc };
         let result = compute.generate_batch(&[request], [0.0, 1.0, 0.0]);
@@ -789,9 +786,7 @@ mod tests {
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
-        let Some(compute) =
-            GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale)
-        else {
+        let Some(compute) = GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale) else {
             eprintln!("skipping GPU test: no adapter");
             return;
         };
@@ -823,9 +818,7 @@ mod tests {
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
-        let Some(compute) =
-            GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale)
-        else {
+        let Some(compute) = GpuVoxelCompute::try_new(&config, 42, mean_radius, height_scale) else {
             eprintln!("skipping GPU test: no adapter");
             return;
         };

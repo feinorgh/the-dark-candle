@@ -351,11 +351,7 @@ fn update_spherical_sky(
     let south = east.cross(up).normalize();
 
     let wd = sun_world.0;
-    let local_sun = [
-        wd.dot(east) as f32,
-        wd.dot(up) as f32,
-        wd.dot(south) as f32,
-    ];
+    let local_sun = [wd.dot(east) as f32, wd.dot(up) as f32, wd.dot(south) as f32];
 
     // Compute zenith sky color using our Rayleigh scattering model.
     let zenith = [0.0_f32, 1.0, 0.0];
@@ -728,8 +724,14 @@ mod tests {
         let day_elev = sun_dir.dot(day_up);
         let night_elev = sun_dir.dot(night_up);
 
-        assert!(day_elev > 0.5, "Day-side should see sun high, got {day_elev}");
-        assert!(night_elev < -0.5, "Night-side should see sun below horizon, got {night_elev}");
+        assert!(
+            day_elev > 0.5,
+            "Day-side should see sun high, got {day_elev}"
+        );
+        assert!(
+            night_elev < -0.5,
+            "Night-side should see sun below horizon, got {night_elev}"
+        );
     }
 
     #[test]

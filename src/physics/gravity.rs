@@ -284,11 +284,12 @@ pub fn apply_forces(
         // Ground collision using V2 terrain generator (no chunk lookup needed).
         if is_spherical && let Some(ref tg) = v2_gen {
             // Reconstruct absolute world position from render-space + origin
-            let world_pos = origin.0 + DVec3::new(
-                transform.translation.x as f64,
-                transform.translation.y as f64,
-                transform.translation.z as f64,
-            );
+            let world_pos = origin.0
+                + DVec3::new(
+                    transform.translation.x as f64,
+                    transform.translation.y as f64,
+                    transform.translation.z as f64,
+                );
             let ground_r = ground_height_from_terrain_gen(world_pos, &tg.0);
             let entity_r = transform.translation.length();
             let feet_r = entity_r - body.foot_offset;

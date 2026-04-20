@@ -67,12 +67,10 @@ pub struct FloatingOriginPlugin;
 
 impl Plugin for FloatingOriginPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderOrigin>()
-            .add_systems(
-                PostUpdate,
-                rebase_origin
-                    .before(bevy::transform::TransformSystems::Propagate),
-            );
+        app.init_resource::<RenderOrigin>().add_systems(
+            PostUpdate,
+            rebase_origin.before(bevy::transform::TransformSystems::Propagate),
+        );
     }
 }
 

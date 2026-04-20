@@ -120,7 +120,15 @@ pub fn load_game(
     creature_query: Query<Entity, With<Creature>>,
     item_query: Query<Entity, With<Item>>,
     enemy_query: Query<Entity, With<Enemy>>,
-    mut player_query: Query<(&mut WorldPosition, &mut Transform, &mut FpsCamera, &mut Health), With<Player>>,
+    mut player_query: Query<
+        (
+            &mut WorldPosition,
+            &mut Transform,
+            &mut FpsCamera,
+            &mut Health,
+        ),
+        With<Player>,
+    >,
     mut hotbar: Option<ResMut<Hotbar>>,
     mut render_origin: ResMut<RenderOrigin>,
     mut discovered: ResMut<crate::map::DiscoveredColumns>,

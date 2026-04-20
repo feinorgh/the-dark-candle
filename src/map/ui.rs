@@ -404,12 +404,7 @@ pub fn map_teleport(
     let sea_r = planet.sea_level_radius as f32;
 
     // Build world position.
-    let dir = DVec3::new(
-        lat.cos() * lon.cos(),
-        lat.sin(),
-        lat.cos() * lon.sin(),
-    )
-    .normalize();
+    let dir = DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin()).normalize();
     let teleport_pos = dir * ((surface_r.max(sea_r) + EYE_HEIGHT) as f64);
 
     // Move the camera.

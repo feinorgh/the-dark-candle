@@ -7,8 +7,8 @@
 // step (A3) that replaces the sinusoidal sun model in the parent lighting
 // module.
 
-use bevy::prelude::*;
 use bevy::math::DVec3;
+use bevy::prelude::*;
 
 /// Tracks the planet's rotational and orbital position.
 ///

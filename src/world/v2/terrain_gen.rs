@@ -221,7 +221,10 @@ pub fn generate_v2_voxels(
         VoxelGenResult::AllSolid(mat) => CachedVoxels::AllSolid(mat),
         VoxelGenResult::Mixed(voxels) => CachedVoxels::Mixed(Arc::new(voxels)),
     };
-    V2TerrainData { coord, voxels: cached }
+    V2TerrainData {
+        coord,
+        voxels: cached,
+    }
 }
 
 /// Convert `CachedVoxels` to a flat `Vec<Voxel>` for the greedy mesher.
@@ -412,8 +415,7 @@ pub fn generate_single_boundary_slice(
             let (lat, lon) = tgen.planet_config().lat_lon(wpos);
             let surface_r = tgen.sample_surface_radius_at(lat, lon);
 
-            let material =
-                tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
+            let material = tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
             let density = if material == MaterialId::WATER {
                 terrain_density(sea - r)
             } else {
@@ -577,7 +579,12 @@ mod tests {
         let reconstituted = cached_voxels_to_vec(&terrain_data.voxels);
 
         assert_eq!(chunk_data.voxels.len(), reconstituted.len());
-        for (i, (a, b)) in chunk_data.voxels.iter().zip(reconstituted.iter()).enumerate() {
+        for (i, (a, b)) in chunk_data
+            .voxels
+            .iter()
+            .zip(reconstituted.iter())
+            .enumerate()
+        {
             assert_eq!(
                 a.material, b.material,
                 "Voxel {i} material mismatch: legacy={:?}, two-stage={:?}",
@@ -627,7 +634,8 @@ mod tests {
             for z in 0..cs {
                 let expected = MaterialId((0 + y + z) as u16);
                 assert_eq!(
-                    slice[y * cs + z].material, expected,
+                    slice[y * cs + z].material,
+                    expected,
                     "+X slice at (y={y}, z={z})"
                 );
             }
@@ -639,7 +647,8 @@ mod tests {
             for z in 0..cs {
                 let expected = MaterialId(((cs - 1) + y + z) as u16);
                 assert_eq!(
-                    slice[y * cs + z].material, expected,
+                    slice[y * cs + z].material,
+                    expected,
                     "-X slice at (y={y}, z={z})"
                 );
             }
@@ -651,7 +660,8 @@ mod tests {
             for z in 0..cs {
                 let expected = MaterialId((x + 0 + z) as u16);
                 assert_eq!(
-                    slice[x * cs + z].material, expected,
+                    slice[x * cs + z].material,
+                    expected,
                     "+Y slice at (x={x}, z={z})"
                 );
             }
@@ -663,7 +673,8 @@ mod tests {
             for z in 0..cs {
                 let expected = MaterialId((x + (cs - 1) + z) as u16);
                 assert_eq!(
-                    slice[x * cs + z].material, expected,
+                    slice[x * cs + z].material,
+                    expected,
                     "-Y slice at (x={x}, z={z})"
                 );
             }
@@ -675,7 +686,8 @@ mod tests {
             for y in 0..cs {
                 let expected = MaterialId((x + y + 0) as u16);
                 assert_eq!(
-                    slice[x * cs + y].material, expected,
+                    slice[x * cs + y].material,
+                    expected,
                     "+Z slice at (x={x}, y={y})"
                 );
             }
@@ -687,7 +699,8 @@ mod tests {
             for y in 0..cs {
                 let expected = MaterialId((x + y + (cs - 1)) as u16);
                 assert_eq!(
-                    slice[x * cs + y].material, expected,
+                    slice[x * cs + y].material,
+                    expected,
                     "-Z slice at (x={x}, y={y})"
                 );
             }

@@ -49,7 +49,7 @@ const MAX_HORIZONTAL_CHUNKS: i32 = 48;
 const MAX_VERTICAL_LAYERS: i32 = 64;
 
 /// Maximum LOD level (L7 = 2^7 = 128× base chunk size ≈ 4096m per chunk).
-const MAX_LOD: u8 = 7;
+const _MAX_LOD: u8 = 7;
 
 /// LOD ring configuration: (lod_level, radius_in_chunks_at_that_lod).
 /// Each ring extends outward from the previous ring's boundary.
@@ -312,12 +312,7 @@ fn desired_chunks_v2(
 }
 
 /// Convert world position to CubeSphereCoord at a specific LOD level.
-fn world_pos_to_coord_lod(
-    pos: DVec3,
-    mean_radius: f64,
-    fce_lod: f64,
-    lod: u8,
-) -> CubeSphereCoord {
+fn world_pos_to_coord_lod(pos: DVec3, mean_radius: f64, fce_lod: f64, lod: u8) -> CubeSphereCoord {
     let mut coord = world_pos_to_coord(pos, mean_radius, fce_lod);
     coord.lod = lod;
     coord
@@ -333,7 +328,6 @@ fn wrap_cross_face(
     max_uv: i32,
     lod: u8,
 ) -> Option<CubeSphereCoord> {
-
     // Only handle single-axis overflow (edge); skip corners where both are OOB.
     let u_oob = u < 0 || u >= max_uv;
     let v_oob = v < 0 || v >= max_uv;
@@ -346,7 +340,11 @@ fn wrap_cross_face(
     if u_oob {
         let clamped_u = if u < 0 { 0 } else { max_uv - 1 };
         let base = CubeSphereCoord::new_with_lod(face, clamped_u, v, layer, lod);
-        let delta = if u < 0 { -(clamped_u - u) } else { u - clamped_u };
+        let delta = if u < 0 {
+            -(clamped_u - u)
+        } else {
+            u - clamped_u
+        };
         // Walk across the face boundary
         let neighbor = if u < 0 {
             base.neighbors(max_uv)[1] // -U neighbor
@@ -357,7 +355,11 @@ fn wrap_cross_face(
         // the immediate cross-face layer (1 chunk deep across boundary).
         if delta.abs() <= 1 {
             return Some(CubeSphereCoord::new_with_lod(
-                neighbor.face, neighbor.u, neighbor.v, layer, lod,
+                neighbor.face,
+                neighbor.u,
+                neighbor.v,
+                layer,
+                lod,
             ));
         }
         return None;
@@ -366,7 +368,11 @@ fn wrap_cross_face(
     if v_oob {
         let clamped_v = if v < 0 { 0 } else { max_uv - 1 };
         let base = CubeSphereCoord::new_with_lod(face, u, clamped_v, layer, lod);
-        let delta = if v < 0 { -(clamped_v - v) } else { v - clamped_v };
+        let delta = if v < 0 {
+            -(clamped_v - v)
+        } else {
+            v - clamped_v
+        };
         let neighbor = if v < 0 {
             base.neighbors(max_uv)[3] // -V neighbor
         } else {
@@ -374,7 +380,11 @@ fn wrap_cross_face(
         };
         if delta.abs() <= 1 {
             return Some(CubeSphereCoord::new_with_lod(
-                neighbor.face, neighbor.u, neighbor.v, layer, lod,
+                neighbor.face,
+                neighbor.u,
+                neighbor.v,
+                layer,
+                lod,
             ));
         }
         return None;
@@ -504,7 +514,10 @@ pub fn v2_update_chunks(
                             cave_threshold,
                             i as u32,
                         );
-                        GpuChunkRequest { coord: *coord, desc }
+                        GpuChunkRequest {
+                            coord: *coord,
+                            desc,
+                        }
                     })
                     .collect();
                 let result = compute.generate_batch(&requests, rot_axis);
@@ -519,9 +532,8 @@ pub fn v2_update_chunks(
             let tgen = terrain_gen.0.clone();
             let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
 
-            let task = pool.spawn(async move {
-                generate_v2_voxels(coord, mean_radius, coord_fce, &tgen)
-            });
+            let task =
+                pool.spawn(async move { generate_v2_voxels(coord, mean_radius, coord_fce, &tgen) });
 
             commands.spawn(V2TerrainTask(task));
             pending_terrain.pending.insert(coord);
@@ -541,12 +553,12 @@ fn same_face_neighbor_for_dir(
     max_uv: i32,
 ) -> Option<CubeSphereCoord> {
     let (du, dv, dl) = match dir {
-        0 => (1, 0, 0),   // +X → +U
-        1 => (-1, 0, 0),  // -X → -U
-        2 => (0, 0, 1),   // +Y → +layer
-        3 => (0, 0, -1),  // -Y → -layer
-        4 => (0, -1, 0),  // +Z → -V
-        5 => (0, 1, 0),   // -Z → +V
+        0 => (1, 0, 0),  // +X → +U
+        1 => (-1, 0, 0), // -X → -U
+        2 => (0, 0, 1),  // +Y → +layer
+        3 => (0, 0, -1), // -Y → -layer
+        4 => (0, -1, 0), // +Z → -V
+        5 => (0, 1, 0),  // -Z → +V
         _ => return None,
     };
 
@@ -559,7 +571,9 @@ fn same_face_neighbor_for_dir(
         return None;
     }
 
-    Some(CubeSphereCoord::new_with_lod(coord.face, new_u, new_v, new_layer, coord.lod))
+    Some(CubeSphereCoord::new_with_lod(
+        coord.face, new_u, new_v, new_layer, coord.lod,
+    ))
 }
 
 /// Build neighbor slices from the voxel cache, falling back to terrain resampling.
@@ -588,7 +602,11 @@ fn build_neighbor_slices(
         }
         // Fallback: resample terrain for this boundary
         slices[dir] = Some(generate_single_boundary_slice(
-            coord, dir, mean_radius, fce, tgen,
+            coord,
+            dir,
+            mean_radius,
+            fce,
+            tgen,
         ));
     }
 
@@ -642,9 +660,7 @@ pub fn v2_collect_terrain(
     let candidates: Vec<CubeSphereCoord> = cache
         .entries
         .keys()
-        .filter(|c| {
-            !chunk_map.loaded.contains(c) && !pending_meshes.pending.contains(c)
-        })
+        .filter(|c| !chunk_map.loaded.contains(c) && !pending_meshes.pending.contains(c))
         .copied()
         .collect();
 
@@ -742,8 +758,9 @@ pub fn v2_collect_meshes(
         pending_meshes.pending.remove(&result.coord);
 
         let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, result.coord.lod);
-        let (center_f64, rotation, tangent_scale) =
-            result.coord.world_transform_scaled_f64(mean_radius, coord_fce);
+        let (center_f64, rotation, tangent_scale) = result
+            .coord
+            .world_transform_scaled_f64(mean_radius, coord_fce);
         let cs_half_scaled = Vec3::new(
             cs_half_f * tangent_scale.x,
             cs_half_f * tangent_scale.y,
@@ -1031,7 +1048,10 @@ mod tests {
         ));
 
         // Register update systems (bypassing GameState gating for the test).
-        app.add_systems(Update, (v2_update_chunks, v2_collect_terrain, v2_collect_meshes).chain());
+        app.add_systems(
+            Update,
+            (v2_update_chunks, v2_collect_terrain, v2_collect_meshes).chain(),
+        );
 
         // Frame 1: dispatch tasks.
         app.update();

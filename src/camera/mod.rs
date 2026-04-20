@@ -24,7 +24,12 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, cursor_grab.run_if(in_state(GameState::Playing)))
             .add_systems(
                 Update,
-                (camera_look, camera_move, camera_gravity, sync_camera_transform)
+                (
+                    camera_look,
+                    camera_move,
+                    camera_gravity,
+                    sync_camera_transform,
+                )
                     .chain()
                     .after(cursor_grab)
                     .run_if(in_state(GameState::Playing)),
@@ -236,12 +241,8 @@ fn spawn_camera(
             };
             let surface_r = tg.0.sample_surface_radius_at(lat, lon);
             // Construct the spawn direction from lat/lon in f64 (Y-up planet).
-            let dir_f64 = DVec3::new(
-                lat.cos() * lon.cos(),
-                lat.sin(),
-                lat.cos() * lon.sin(),
-            )
-            .normalize();
+            let dir_f64 =
+                DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin()).normalize();
             let spawn_r = surface_r.max(planet.sea_level_radius) + EYE_HEIGHT as f64;
             let spawn = dir_f64 * spawn_r;
             // Look tangent to the surface (slightly ahead along the equator direction).
@@ -392,8 +393,8 @@ fn snap_to_surface(
         let ground_r = terrain_r.max(planet.sea_level_radius as f32 + 1.0);
         let up = local_up_from_world_pos(world_pos.0);
         // Set WorldPosition in f64
-        world_pos.0 = DVec3::new(up.x as f64, up.y as f64, up.z as f64)
-            * (ground_r + EYE_HEIGHT) as f64;
+        world_pos.0 =
+            DVec3::new(up.x as f64, up.y as f64, up.z as f64) * (ground_r + EYE_HEIGHT) as f64;
         transform.translation = world_pos.render_offset(&origin);
         cam.vertical_velocity = 0.0;
         cam.grounded = true;
@@ -602,7 +603,11 @@ fn camera_gravity(
         cam.vertical_velocity -= constants::GRAVITY * dt;
         cam.vertical_velocity = cam.vertical_velocity.max(-200.0);
         let vert_delta = local_up * cam.vertical_velocity * dt;
-        world_pos.0 += DVec3::new(vert_delta.x as f64, vert_delta.y as f64, vert_delta.z as f64);
+        world_pos.0 += DVec3::new(
+            vert_delta.x as f64,
+            vert_delta.y as f64,
+            vert_delta.z as f64,
+        );
 
         // Ground collision: use world-space position for terrain sampling
         let ground_r = v2_gen
@@ -764,7 +769,11 @@ mod tests {
         // At 45° latitude, the base rotation should align the camera's Y axis
         // with the local surface normal, not with global Y.
         let lat = std::f32::consts::FRAC_PI_4;
-        let pos = DVec3::new(6_371_000.0 * (lat.cos() as f64), 6_371_000.0 * (lat.sin() as f64), 0.0);
+        let pos = DVec3::new(
+            6_371_000.0 * (lat.cos() as f64),
+            6_371_000.0 * (lat.sin() as f64),
+            0.0,
+        );
         let local_up = local_up_from_world_pos(pos);
         let base = Quat::from_rotation_arc(Vec3::Y, local_up);
         let yaw_pitch = Quat::from_axis_angle(Vec3::Y, 0.0) * Quat::from_axis_angle(Vec3::X, 0.0);

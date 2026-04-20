@@ -224,8 +224,11 @@ impl CubeSphereCoord {
         // Local Z = right × up (right-handed cross product).
         let local_up = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
         let (face_right_d, _) = self.face.tangent_axes();
-        let face_right =
-            Vec3::new(face_right_d.x as f32, face_right_d.y as f32, face_right_d.z as f32);
+        let face_right = Vec3::new(
+            face_right_d.x as f32,
+            face_right_d.y as f32,
+            face_right_d.z as f32,
+        );
 
         let right = (face_right - local_up * face_right.dot(local_up)).normalize();
         let forward = right.cross(local_up);
@@ -332,13 +335,7 @@ impl CubeSphereCoord {
 
     /// The parent chunk at the next coarser LOD level.
     pub fn parent(&self) -> CubeSphereCoord {
-        CubeSphereCoord::new_with_lod(
-            self.face,
-            self.u / 2,
-            self.v / 2,
-            self.layer,
-            self.lod + 1,
-        )
+        CubeSphereCoord::new_with_lod(self.face, self.u / 2, self.v / 2, self.layer, self.lod + 1)
     }
 }
 
@@ -649,10 +646,8 @@ mod tests {
         let center = CubeSphereCoord::new(CubeFace::PosZ, half, half, 0);
         let edge = CubeSphereCoord::new(CubeFace::PosZ, TEST_FACE_CHUNKS_I - 1, half, 0);
 
-        let (_, _, scale_center) =
-            center.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
-        let (_, _, scale_edge) =
-            edge.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (_, _, scale_center) = center.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (_, _, scale_edge) = edge.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
 
         assert!(
             scale_center.x > scale_edge.x,
@@ -689,10 +684,8 @@ mod tests {
         let a = CubeSphereCoord::new(CubeFace::PosZ, half, half, 0);
         let b = CubeSphereCoord::new(CubeFace::PosZ, half + 1, half, 0);
 
-        let (center_a, rot_a, scale_a) =
-            a.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
-        let (center_b, rot_b, scale_b) =
-            b.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (center_a, rot_a, scale_a) = a.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
+        let (center_b, rot_b, scale_b) = b.world_transform_scaled(TEST_RADIUS, TEST_FACE_CHUNKS);
 
         // Right edge of chunk A: center_a + rot_a * (cs/2 * scale_a.x, 0, 0)
         let edge_a = center_a + rot_a * Vec3::new(cs / 2.0 * scale_a.x, 0.0, 0.0);
