@@ -408,6 +408,7 @@ pub fn v2_update_chunks(
     gpu_dispatcher: Res<GpuTerrainDispatcher>,
     camera_q: Query<&WorldPosition, With<FpsCamera>>,
     v2_chunks_q: Query<(Entity, &V2ChunkCoord), With<V2ChunkMarker>>,
+    gpu_tasks_q: Query<Entity, With<V2GpuTerrainTask>>,
 ) {
     let Ok(cam_world_pos) = camera_q.single() else {
         return;
@@ -482,9 +483,10 @@ pub fn v2_update_chunks(
         .collect();
 
     if let Some(ref compute) = gpu_dispatcher.compute {
-        // GPU path: batch all chunks into a single task to avoid concurrent
-        // buffer access (staging buffers are pre-allocated and not thread-safe).
-        if !dispatched.is_empty() {
+        // Only dispatch a GPU batch if no previous batch is still in flight —
+        // the pre-allocated staging buffers are not thread-safe.
+        let gpu_in_flight = !gpu_tasks_q.is_empty();
+        if !dispatched.is_empty() && !gpu_in_flight {
             let compute = compute.clone();
             let mean_r = mean_radius;
             let sea_level = planet.sea_level_radius;
@@ -525,6 +527,16 @@ pub fn v2_update_chunks(
             });
 
             commands.spawn(V2GpuTerrainTask(task));
+        } else if !dispatched.is_empty() {
+            // GPU batch still in flight — fall back to CPU for this frame.
+            for coord in dispatched {
+                let tgen = terrain_gen.0.clone();
+                let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+                let task = pool
+                    .spawn(async move { generate_v2_voxels(coord, mean_radius, coord_fce, &tgen) });
+                commands.spawn(V2TerrainTask(task));
+                pending_terrain.pending.insert(coord);
+            }
         }
     } else {
         // CPU fallback path: one task per chunk via AsyncComputeTaskPool.
