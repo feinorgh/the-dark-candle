@@ -1625,6 +1625,14 @@
         "src/gpu/mod.rs",
         "src/world/v2/chunk_manager.rs"
       ]
+    },
+    {
+      "name": "flight_altitude_hud",
+      "description": "F3 debug overlay shows altitude above terrain surface when in flight mode (G key). Computes height as camera radius minus terrain surface radius at current lat/lon. Displays in meters (<1km) or kilometers (≥1km).",
+      "status": "complete",
+      "files": [
+        "src/diagnostics/frame_budget.rs"
+      ]
     }
   ],
   "tech_debt": [
@@ -1667,7 +1675,7 @@
       "rustup default stable (Rust 1.85+)",
       "Install lld linker for fast compile times on Linux"
     ],
-    "test_command": "cargo test --lib (fast, 1372+ tests) OR cargo test (all including integration) OR cargo test --test simulations (simulation scenarios only)",
+    "test_command": "cargo test --lib (fast, 1633+ tests) OR cargo test (all including integration) OR cargo test --test simulations (simulation scenarios only)",
     "build_command": "cargo run --features bevy/dynamic_linking (dev) OR cargo run --release (perf) OR cargo build --target x86_64-pc-windows-gnu --release (Windows cross-compile)"
   },
   "conventions": {
@@ -1687,7 +1695,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "7891f45",
+    "generated_from_commit": "53a0410",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1699,7 +1707,7 @@
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled \u2014 basic latitude/altitude/proximity model only"
     ],
-    "last_updated": "After V1 terrain pipeline removal; V2 cubed-sphere is now the only rendering path",
+    "last_updated": "After GPU voxel pipeline, floating-origin, multi-LOD, spatial sun, altitude HUD, and clippy cleanup",
     "notes": [
       "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
@@ -1718,10 +1726,15 @@
       "LOD mesh vertex scaling fix: generate_mesh_generic now takes a scale parameter so LOD meshes span full CHUNK_SIZE instead of effective_size.",
       "Chunk performance overhaul: shell hysteresis (snap to chunk center), shell cap at load radius, pending cap (64), collection rate balanced (32/frame), GPU noise enabled for spherical planet, cave depth capped at 200m.",
       "V1 terrain pipeline (flat heightmap, ChunkManagerPlugin, MeshingPlugin, RefinementPlugin, PipelineVersion enum, --pipeline CLI flag) fully removed. V2 cubed-sphere is the sole pipeline. SharedTerrainGen/TerrainGeneratorRes kept as shared resources. ChunkMap stays empty in V2 (V2 uses V2ChunkMap). MeshTask struct kept as marker for diagnostics query. generate_chunk_mesh/lod_step/ChunkMeshResult kept for meshing tests (annotated #[allow(dead_code)]).",
-      "Tectonic performance: ScratchBuffers struct pre-allocates all per-step temporaries (advection snapshots, BFS arrays, erosion/strain/deformation swap buffers) outside the step loop. Eliminates ~10 full-grid Vec clones per step (~30% allocation reduction at L7)."
+      "Tectonic performance: ScratchBuffers struct pre-allocates all per-step temporaries (advection snapshots, BFS arrays, erosion/strain/deformation swap buffers) outside the step loop. Eliminates ~10 full-grid Vec clones per step (~30% allocation reduction at L7).",
+      "Floating-origin system: WorldPosition(DVec3) + RenderOrigin(DVec3) for f64 precision at Earth-scale distances. Rebase at 512m threshold. Two-stage async pipeline: V2TerrainTask → V2VoxelCache → V2MeshTask.",
+      "Multi-LOD system: 5 LOD levels with configurable ring distances (~10km total view). LOD-aware cubed-sphere coords with world_transform_scaled().",
+      "Spatial sun lighting: compute_sun_direction_world() derives per-position sun direction from orbital state + planet config. SunWorldDirection resource.",
+      "GPU voxel generation: 3-pass WGSL compute shader (surface_pass → classify_pass → voxel_pass). Single batch per frame with in-flight guard to prevent concurrent buffer access. CPU fallback when GPU batch is still running.",
+      "Flight mode altitude HUD: F3 overlay shows height above terrain surface in meters/km when gravity is off (G key)."
     ],
     "known_issues_file": "issues.json",
-    "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other)"
+    "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other), 39 V2 chunk tests, 21 GPU tests"
   },
   "phases": [
     {
