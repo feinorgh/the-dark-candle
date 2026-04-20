@@ -96,6 +96,8 @@ pub fn update_overlay_text(
     tod: Option<Res<TimeOfDay>>,
     timings: Option<Res<SystemTimings>>,
     chunk_stats: Option<Res<ChunkStats>>,
+    planet: Res<crate::world::planet::PlanetConfig>,
+    terrain_gen: Option<Res<crate::world::chunk_manager::SharedTerrainGen>>,
     mut query: Query<&mut Text, With<FrameBudgetOverlay>>,
 ) {
     for mut text in &mut query {
@@ -135,6 +137,23 @@ pub fn update_overlay_text(
                 "\nGrounded: {}  Gravity: {}  Speed: {:.0} m/s",
                 ground, grav, cam.speed,
             ));
+
+            // Show altitude above surface when in flight mode (gravity off).
+            if !cam.gravity_enabled {
+                let cam_r = pos.length();
+                let surface_r = if let Some(ref tgen) = terrain_gen {
+                    let (lat, lon) = planet.lat_lon(pos);
+                    tgen.0.sample_surface_radius_at(lat, lon) as f32
+                } else {
+                    planet.mean_radius as f32
+                };
+                let altitude = cam_r as f32 - surface_r;
+                if altitude >= 1000.0 {
+                    lines.push_str(&format!("  Alt: {:.2} km", altitude / 1000.0));
+                } else {
+                    lines.push_str(&format!("  Alt: {:.1} m", altitude));
+                }
+            }
         }
 
         // Line 5: Chunk pipeline stats
