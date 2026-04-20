@@ -128,15 +128,9 @@ impl V2PendingMeshes {
 ///
 /// Holds the `GpuVoxelCompute` pipeline (if GPU is available) and pending
 /// GPU batch tasks that run on worker threads to avoid blocking the main ECS thread.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct GpuTerrainDispatcher {
     compute: Option<Arc<GpuVoxelCompute>>,
-}
-
-impl Default for GpuTerrainDispatcher {
-    fn default() -> Self {
-        Self { compute: None }
-    }
 }
 
 /// Cached voxel data for chunks that have completed terrain generation.
@@ -464,7 +458,7 @@ pub fn v2_update_chunks(
         let lod_penalty = (c.lod as i32) * 2_000_000;
         let surface_bonus = if c.layer == 0 { 0 } else { 1_000_000 };
         // Scale chunk distance to L0 grid for comparison
-        let scale = (1i32 << c.lod) as i32;
+        let scale = 1i32 << c.lod;
         let dist = if c.face == cam_coord_l0.face {
             let du = c.u * scale - cam_coord_l0.u;
             let dv = c.v * scale - cam_coord_l0.v;
@@ -603,17 +597,17 @@ fn build_neighbor_slices(
     let max_uv = fce as i32;
     let mut slices: [Option<Vec<crate::world::voxel::Voxel>>; 6] = [const { None }; 6];
 
-    for dir in 0..6usize {
-        if let Some(neighbor_coord) = same_face_neighbor_for_dir(coord, dir, max_uv) {
-            if let Some(cached) = cache.get(&neighbor_coord) {
-                // Extract the opposite edge from the neighbor
-                let opposite_dir = dir ^ 1; // 0↔1, 2↔3, 4↔5
-                slices[dir] = Some(extract_edge_slice(cached, opposite_dir));
-                continue;
-            }
+    for (dir, slot) in slices.iter_mut().enumerate() {
+        if let Some(neighbor_coord) = same_face_neighbor_for_dir(coord, dir, max_uv)
+            && let Some(cached) = cache.get(&neighbor_coord)
+        {
+            // Extract the opposite edge from the neighbor
+            let opposite_dir = dir ^ 1; // 0↔1, 2↔3, 4↔5
+            *slot = Some(extract_edge_slice(cached, opposite_dir));
+            continue;
         }
         // Fallback: resample terrain for this boundary
-        slices[dir] = Some(generate_single_boundary_slice(
+        *slot = Some(generate_single_boundary_slice(
             coord,
             dir,
             mean_radius,
@@ -676,8 +670,7 @@ pub fn v2_collect_terrain(
         .copied()
         .collect();
 
-    let mut dispatched = 0usize;
-    for coord in candidates {
+    for (dispatched, coord) in candidates.into_iter().enumerate() {
         if dispatched >= mesh_budget {
             break;
         }
@@ -698,7 +691,6 @@ pub fn v2_collect_terrain(
 
         commands.spawn(V2MeshTask(task));
         pending_meshes.pending.insert(coord);
-        dispatched += 1;
     }
 }
 

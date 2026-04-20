@@ -262,9 +262,11 @@ pub fn extract_edge_slice(cached: &CachedVoxels, dir: usize) -> Vec<Voxel> {
     match cached {
         CachedVoxels::AllAir => vec![Voxel::default(); slice_size],
         CachedVoxels::AllSolid(mat) => {
-            let mut v = Voxel::default();
-            v.material = *mat;
-            v.density = 1.0;
+            let v = Voxel {
+                material: *mat,
+                density: 1.0,
+                ..Default::default()
+            };
             vec![v; slice_size]
         }
         CachedVoxels::Mixed(data) => {
@@ -339,8 +341,8 @@ fn generate_boundary_slices(
     tgen: &UnifiedTerrainGenerator,
 ) -> NeighborSlices {
     let mut slices: [Option<Vec<Voxel>>; 6] = [const { None }; 6];
-    for dir in 0..6usize {
-        slices[dir] = Some(generate_single_boundary_slice(
+    for (dir, slot) in slices.iter_mut().enumerate() {
+        *slot = Some(generate_single_boundary_slice(
             coord,
             dir,
             mean_radius,
@@ -614,6 +616,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::identity_op)]
     fn extract_edge_slice_mixed_correct_layer() {
         // Create a voxel array with a known pattern: material = (x + y + z) as MaterialId
         let mut voxels = vec![Voxel::default(); CHUNK_VOLUME];

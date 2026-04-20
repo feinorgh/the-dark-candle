@@ -122,6 +122,7 @@ fn rebase_origin(
 /// This system runs for entities that have both WorldPosition and Transform,
 /// keeping the Transform in sync with the floating origin. Camera entities
 /// handle their own sync in the camera systems.
+#[allow(clippy::type_complexity)]
 pub fn sync_world_position_to_transform(
     origin: Res<RenderOrigin>,
     mut query: Query<(&WorldPosition, &mut Transform), (Changed<WorldPosition>, Without<Camera>)>,

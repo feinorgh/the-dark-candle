@@ -187,6 +187,7 @@ fn sun_color(elevation: f32) -> Color {
 /// producing physically correct day/night hemispheres. Local elevation
 /// (for illuminance scaling and color temperature) is derived from the
 /// dot product of the sun direction with the observer's radial "up" vector.
+#[allow(clippy::too_many_arguments)]
 fn update_sun(
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
