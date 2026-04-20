@@ -16,6 +16,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 
 use crate::camera::FpsCamera;
 use crate::floating_origin::{RenderOrigin, RenderOriginShift, WorldPosition};
+use crate::gpu::voxel_compute::{
+    GpuChunkRequest, GpuVoxelCompute, chunk_desc_from_coord,
+};
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::chunk_manager::SharedTerrainGen;
 use crate::world::lod::MaterialColorMap;
@@ -121,6 +124,21 @@ impl V2PendingMeshes {
     }
 }
 
+/// GPU terrain dispatcher resource.
+///
+/// Holds the `GpuVoxelCompute` pipeline (if GPU is available) and pending
+/// GPU batch tasks that run on worker threads to avoid blocking the main ECS thread.
+#[derive(Resource)]
+pub struct GpuTerrainDispatcher {
+    compute: Option<Arc<GpuVoxelCompute>>,
+}
+
+impl Default for GpuTerrainDispatcher {
+    fn default() -> Self {
+        Self { compute: None }
+    }
+}
+
 /// Cached voxel data for chunks that have completed terrain generation.
 ///
 /// Entries are stored as `Arc`-wrapped data for zero-copy sharing with mesh tasks.
@@ -175,6 +193,10 @@ pub struct V2ChunkCoord(pub CubeSphereCoord);
 /// Async terrain generation task (stage 1).
 #[derive(Component)]
 pub struct V2TerrainTask(pub Task<V2TerrainData>);
+
+/// Async GPU batch terrain task — runs a batch of chunks on the GPU worker thread.
+#[derive(Component)]
+pub struct V2GpuTerrainTask(pub Task<Vec<V2TerrainData>>);
 
 /// Async mesh generation task (stage 2).
 #[derive(Component)]
@@ -373,6 +395,7 @@ pub fn v2_update_chunks(
     load_radius: Res<V2LoadRadius>,
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
+    gpu_dispatcher: Res<GpuTerrainDispatcher>,
     camera_q: Query<&WorldPosition, With<FpsCamera>>,
     v2_chunks_q: Query<(Entity, &V2ChunkCoord), With<V2ChunkMarker>>,
 ) {
@@ -443,15 +466,42 @@ pub fn v2_update_chunks(
     });
 
     for coord in to_dispatch.into_iter().take(budget) {
-        let tgen = terrain_gen.0.clone();
-        let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+        // Try GPU path first: batch up to MAX_CHUNKS_PER_BATCH coords and
+        // dispatch a single GPU batch task on a worker thread.
+        if let Some(ref compute) = gpu_dispatcher.compute {
+            // Collect a batch of coords for GPU dispatch.
+            let compute = compute.clone();
+            let mean_r = mean_radius;
+            let sea_level = planet.sea_level_radius;
+            let soil_depth = planet.soil_depth;
+            let cave_threshold = planet.cave_threshold;
+            let rot_axis = planet.rotation_axis;
+            let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
 
-        let task = pool.spawn(async move {
-            generate_v2_voxels(coord, mean_radius, coord_fce, &tgen)
-        });
+            let task = pool.spawn(async move {
+                let fce = coord_fce;
+                let desc = chunk_desc_from_coord(
+                    coord, mean_r, fce, sea_level, soil_depth, cave_threshold, 0,
+                );
+                let req = GpuChunkRequest { coord, desc };
+                let result = compute.generate_batch(&[req], rot_axis);
+                result.terrain_data
+            });
 
-        commands.spawn(V2TerrainTask(task));
-        pending_terrain.pending.insert(coord);
+            commands.spawn(V2GpuTerrainTask(task));
+            pending_terrain.pending.insert(coord);
+        } else {
+            // CPU fallback path.
+            let tgen = terrain_gen.0.clone();
+            let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+
+            let task = pool.spawn(async move {
+                generate_v2_voxels(coord, mean_radius, coord_fce, &tgen)
+            });
+
+            commands.spawn(V2TerrainTask(task));
+            pending_terrain.pending.insert(coord);
+        }
     }
 }
 
@@ -600,6 +650,35 @@ pub fn v2_collect_terrain(
     }
 }
 
+/// Collect completed GPU batch terrain tasks and insert results into the voxel cache.
+///
+/// Runs between `v2_update_chunks` and `v2_collect_terrain` — GPU results enter
+/// the same cache, so the existing mesh dispatch in `v2_collect_terrain` picks them up.
+pub fn v2_collect_gpu_terrain(
+    mut commands: Commands,
+    mut pending_terrain: ResMut<V2PendingTerrain>,
+    mut cache: ResMut<V2VoxelCache>,
+    mut task_q: Query<(Entity, &mut V2GpuTerrainTask)>,
+) {
+    let mut collected = 0usize;
+    for (task_entity, mut task) in &mut task_q {
+        if collected >= MAX_TERRAIN_COLLECTS_PER_FRAME {
+            break;
+        }
+        let Some(results) = block_on(poll_once(&mut task.0)) else {
+            continue;
+        };
+        collected += 1;
+
+        commands.entity(task_entity).despawn();
+
+        for result in results {
+            pending_terrain.pending.remove(&result.coord);
+            cache.insert(result.coord, result.voxels);
+        }
+    }
+}
+
 /// Collect completed mesh tasks and spawn renderable entities.
 #[allow(clippy::too_many_arguments)]
 pub fn v2_collect_meshes(
@@ -706,10 +785,17 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<V2PendingTerrain>()
             .init_resource::<V2PendingMeshes>()
             .init_resource::<V2VoxelCache>()
+            .init_resource::<GpuTerrainDispatcher>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
-                (v2_update_chunks, v2_collect_terrain, v2_collect_meshes, v2_diagnostics)
+                (
+                    v2_update_chunks,
+                    v2_collect_gpu_terrain,
+                    v2_collect_terrain,
+                    v2_collect_meshes,
+                    v2_diagnostics,
+                )
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
@@ -760,6 +846,7 @@ fn v2_init_terrain_gen(
     mut commands: Commands,
     shared: Option<Res<SharedTerrainGen>>,
     planet: Res<PlanetConfig>,
+    mut gpu_dispatcher: ResMut<GpuTerrainDispatcher>,
 ) {
     if let Some(shared) = shared {
         if matches!(
@@ -774,16 +861,36 @@ fn v2_init_terrain_gen(
         }
         commands.insert_resource(V2TerrainGen(shared.0.clone()));
         info!("V2 pipeline: initialized terrain generator from SharedTerrainGen");
-        return;
+    } else {
+        // Fallback when SharedTerrainGen isn't ready yet: create from PlanetConfig.
+        use crate::world::terrain::SphericalTerrainGenerator;
+        let tgen = SphericalTerrainGenerator::new(planet.clone());
+        let unified = Arc::new(crate::world::terrain::UnifiedTerrainGenerator::Spherical(
+            Box::new(tgen),
+        ));
+        commands.insert_resource(V2TerrainGen(unified));
+        info!("V2 pipeline: initialized terrain generator from PlanetConfig (fallback)");
     }
-    // Fallback when SharedTerrainGen isn't ready yet: create from PlanetConfig.
-    use crate::world::terrain::SphericalTerrainGenerator;
-    let tgen = SphericalTerrainGenerator::new(planet.clone());
-    let unified = Arc::new(crate::world::terrain::UnifiedTerrainGenerator::Spherical(
-        Box::new(tgen),
-    ));
-    commands.insert_resource(V2TerrainGen(unified));
-    info!("V2 pipeline: initialized terrain generator from PlanetConfig (fallback)");
+
+    // Initialize GPU voxel compute pipeline if noise config is available.
+    if let Some(ref noise_config) = planet.noise {
+        match GpuVoxelCompute::try_new(
+            noise_config,
+            planet.seed,
+            planet.mean_radius,
+            planet.height_scale,
+        ) {
+            Some(compute) => {
+                gpu_dispatcher.compute = Some(Arc::new(compute));
+                info!("V2 pipeline: GPU voxel generation enabled");
+            }
+            None => {
+                info!("V2 pipeline: no GPU available, using CPU terrain generation");
+            }
+        }
+    } else {
+        info!("V2 pipeline: no noise config, GPU terrain generation disabled");
+    }
 }
 
 #[cfg(test)]
@@ -885,6 +992,7 @@ mod tests {
         app.init_resource::<V2PendingTerrain>();
         app.init_resource::<V2PendingMeshes>();
         app.init_resource::<V2VoxelCache>();
+        app.init_resource::<GpuTerrainDispatcher>();
         app.insert_resource(MaterialColorMap::from_defaults());
 
         // RenderOrigin at the camera position so chunk Transforms are near zero.

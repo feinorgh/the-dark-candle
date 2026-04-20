@@ -57,7 +57,7 @@
       {
         "name": "gpu",
         "path": "src/gpu/",
-        "responsibility": "Headless wgpu compute: atmosphere renderer (1000\u00d7 speedup over CPU), particle physics compute (100k particles), terrain noise eval (93\u00d7 speedup), GPU context initialization with try_new() fallback. WGSL shaders in src/gpu/shaders/"
+        "responsibility": "Headless wgpu compute: atmosphere renderer (1000\u00d7 speedup over CPU), particle physics compute (100k particles), terrain noise eval (93\u00d7 speedup), GPU voxel generation (3-pass compute: surface/classify/voxel, 32 chunks/batch), GPU context initialization with try_new() fallback. WGSL shaders in src/gpu/shaders/"
       },
       {
         "name": "data",
@@ -1613,6 +1613,17 @@
         "src/lighting/orbital.rs",
         "src/lighting/mod.rs",
         "src/lighting/sky.rs"
+      ]
+    },
+    {
+      "name": "gpu_voxel_generation",
+      "description": "GPU-accelerated terrain voxel generation via WGSL compute shaders. Three-pass pipeline (surface_pass → classify_pass → voxel_pass) generates up to 32 chunks per batch. Ports full material_at_radius logic (caves, ores, strata) to GPU. Falls back to CPU AsyncComputeTaskPool when no GPU available. Gated behind noise_stack.is_some().",
+      "status": "complete",
+      "files": [
+        "src/gpu/voxel_compute.rs",
+        "src/gpu/shaders/voxel_gen.wgsl",
+        "src/gpu/mod.rs",
+        "src/world/v2/chunk_manager.rs"
       ]
     }
   ],
