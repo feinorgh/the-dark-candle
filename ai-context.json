@@ -1634,6 +1634,17 @@
       "files": [
         "src/diagnostics/frame_budget.rs"
       ]
+    },
+    {
+      "name": "debug_render_toggles",
+      "description": "Runtime debug toggles to aid diagnosis of terrain/atmosphere rendering. F7 toggles atmosphere rendering (removes DistanceFog/Atmosphere from player camera, disables update_fog and update_spherical_sky, sets a neutral dark-gray ClearColor). F8 toggles global wireframe rendering via bevy::pbr::wireframe::WireframeConfig.global (requires WireframePlugin and POLYGON_MODE_LINE GPU feature; desktop-only).",
+      "status": "complete",
+      "files": [
+        "src/diagnostics/debug_render.rs",
+        "src/diagnostics/mod.rs",
+        "src/lighting/mod.rs",
+        "src/main.rs"
+      ]
     }
   ],
   "tech_debt": [

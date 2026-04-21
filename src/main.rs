@@ -200,6 +200,7 @@ fn main() {
         the_dark_candle::interaction::InteractionPlugin,
         LightingPlugin,
         DiagnosticsPlugin,
+        bevy::pbr::wireframe::WireframePlugin::default(),
         EntityPlugin,
         WorldPlugin,
         PhysicsPlugin,

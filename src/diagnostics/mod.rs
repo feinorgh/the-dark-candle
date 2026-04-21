@@ -12,6 +12,7 @@
 // 3. **Screenshot capture** — captures the rendered frame as a PNG file on
 //    demand (F12 key) and saves to `screenshots/` directory.
 
+pub mod debug_render;
 pub mod font;
 pub mod frame_budget;
 pub mod state_dump;
@@ -44,6 +45,7 @@ impl Plugin for DiagnosticsPlugin {
         app.init_resource::<frame_budget::FrameBudget>()
             .init_resource::<SystemTimings>()
             .init_resource::<ChunkStats>()
+            .init_resource::<debug_render::DebugRenderState>()
             .add_systems(
                 Update,
                 (
@@ -52,6 +54,8 @@ impl Plugin for DiagnosticsPlugin {
                     frame_budget::update_frame_budget,
                     frame_budget::toggle_overlay,
                     frame_budget::update_overlay_text,
+                    debug_render::toggle_atmosphere_system,
+                    debug_render::toggle_wireframe_system,
                 ),
             )
             // Bracket systems around WorldSet for per-category timing.

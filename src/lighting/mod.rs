@@ -516,8 +516,9 @@ impl Plugin for LightingPlugin {
                     orbital::time_acceleration_input,
                     update_sun,
                     update_ambient,
-                    update_fog,
-                    update_spherical_sky,
+                    update_fog.run_if(crate::diagnostics::debug_render::atmosphere_enabled),
+                    update_spherical_sky
+                        .run_if(crate::diagnostics::debug_render::atmosphere_enabled),
                     update_chunk_light_maps,
                     refraction::update_chunk_refraction_maps,
                     update_terrain_shadows,
