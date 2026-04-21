@@ -818,8 +818,12 @@ pub fn chunk_desc_from_coord(
         coord.world_transform_scaled(mean_radius, face_chunks_per_edge);
 
     let lod_scale = (1u64 << coord.lod) as f64;
-    let base_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
-    let top_r = base_r + cs as f64 * lod_scale;
+    // Chunk is centered at `mean_r + layer*cs*lod_scale`; `base_r`/`top_r`
+    // are the actual chunk radial bounds (bottom/top).
+    let center_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
+    let half_cs_scaled = cs as f64 * lod_scale / 2.0;
+    let base_r = center_r - half_cs_scaled;
+    let top_r = center_r + half_cs_scaled;
 
     let half_diag = ((tangent_scale.x as f64).powi(2)
         + (tangent_scale.y as f64).powi(2)

@@ -94,8 +94,14 @@ fn generate_voxels_core(
     }
 
     let lod_scale = (1u64 << coord.lod) as f64;
-    let base_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
-    let top_r = base_r + cs as f64 * lod_scale;
+    // Each chunk is CENTERED at `mean_r + layer*cs*lod_scale` (see
+    // `world_transform_scaled`), so its radial extent is `center ± cs/2*lod`.
+    // `base_r`/`top_r` are the actual chunk bottom/top, used by the
+    // trivial AllAir / AllSolid classifications below.
+    let center_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
+    let half_cs_scaled = cs as f64 * lod_scale / 2.0;
+    let base_r = center_r - half_cs_scaled;
+    let top_r = center_r + half_cs_scaled;
     let half_diag_tangent = ((tangent_scale.x as f64).powi(2)
         + (tangent_scale.y as f64).powi(2)
         + (tangent_scale.z as f64).powi(2))

@@ -369,7 +369,13 @@ pub fn world_pos_to_coord(
     let v = (nv * half + half).floor() as i32;
 
     // Radial layer from the surface.
-    let layer = ((r - mean_radius) / cs).floor() as i32;
+    //
+    // Convention: each chunk at layer L is CENTERED at
+    // `mean_radius + L*CHUNK_SIZE` (see `world_transform_scaled`), so layer L
+    // spans the radial range `[mean_r + (L-0.5)*cs, mean_r + (L+0.5)*cs)`.
+    // Layer 0 therefore straddles `mean_radius`, which is the intended
+    // "surface layer" used by coarser LOD rings.
+    let layer = ((r - mean_radius) / cs + 0.5).floor() as i32;
 
     CubeSphereCoord::new(face, u, v, layer)
 }
@@ -553,10 +559,44 @@ mod tests {
             (recovered.v - original.v).abs() <= 1,
             "v mismatch: {recovered:?} vs {original:?}"
         );
-        assert!(
-            (recovered.layer - original.layer).abs() <= 1,
+        assert_eq!(
+            recovered.layer, original.layer,
             "layer mismatch: {recovered:?} vs {original:?}"
         );
+    }
+
+    #[test]
+    fn layer_0_contains_mean_radius() {
+        // A point exactly on the mean-radius sphere must land in layer 0,
+        // because `world_transform_scaled` centers layer L at
+        // `mean_r + L*cs`, so layer 0 spans `[mean_r - cs/2, mean_r + cs/2)`.
+        for face in [
+            CubeFace::PosX,
+            CubeFace::NegX,
+            CubeFace::PosY,
+            CubeFace::NegY,
+            CubeFace::PosZ,
+            CubeFace::NegZ,
+        ] {
+            let dir = face.normal().normalize();
+            let pos = dir * TEST_RADIUS;
+            let coord = world_pos_to_coord(pos, TEST_RADIUS, TEST_FACE_CHUNKS);
+            assert_eq!(
+                coord.layer, 0,
+                "point at r=mean_radius on face {face:?} should map to layer 0, got {coord:?}"
+            );
+        }
+
+        // Points near the top edge of layer 0 should still be layer 0.
+        let dir = CubeFace::PosX.normal().normalize();
+        let r_just_below_top = TEST_RADIUS + CHUNK_SIZE as f64 / 2.0 - 0.01;
+        let coord = world_pos_to_coord(dir * r_just_below_top, TEST_RADIUS, TEST_FACE_CHUNKS);
+        assert_eq!(coord.layer, 0, "r just below layer-0 top: {coord:?}");
+
+        // Just above the top edge should be layer 1.
+        let r_just_above_top = TEST_RADIUS + CHUNK_SIZE as f64 / 2.0 + 0.01;
+        let coord = world_pos_to_coord(dir * r_just_above_top, TEST_RADIUS, TEST_FACE_CHUNKS);
+        assert_eq!(coord.layer, 1, "r just above layer-0 top: {coord:?}");
     }
 
     #[test]
