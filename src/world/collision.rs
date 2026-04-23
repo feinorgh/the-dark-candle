@@ -29,7 +29,7 @@ pub fn ground_height_from_terrain_gen(
     world_pos: DVec3,
     terrain_gen: &super::terrain::UnifiedTerrainGenerator,
 ) -> f32 {
-    let (lat, lon) = terrain_gen.planet_config().lat_lon(world_pos);
+    let (lat, lon) = crate::planet::detail::pos_to_lat_lon(world_pos);
     let surface_r = terrain_gen.sample_surface_radius_at(lat, lon);
     surface_r as f32 + 1.0 // +1 to stand on top of the voxel
 }

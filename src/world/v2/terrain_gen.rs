@@ -88,7 +88,13 @@ fn generate_voxels_core(
             );
             let world = center + rotation * local;
             let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
-            let (lat, lon) = tgen.planet_config().lat_lon(wpos);
+            // Must use the `lat_lon_to_pos` inverse here, NOT `planet.lat_lon`:
+            // `sample_surface_radius_at` below reconstructs the probe direction
+            // with `lat_lon_to_pos`, and the two conventions disagree (X/Z
+            // swap), which would shift every column's sampled surface by up
+            // to 90° and leave whole chunks classified as air or solid in the
+            // wrong places.
+            let (lat, lon) = crate::planet::detail::pos_to_lat_lon(wpos);
             surface_cache[lz][lx] = tgen.sample_surface_radius_at(lat, lon);
         }
     }
@@ -445,7 +451,7 @@ pub fn generate_single_boundary_slice(
             let world = center + rotation * local;
             let wpos = DVec3::new(world.x as f64, world.y as f64, world.z as f64);
             let r = wpos.length();
-            let (lat, lon) = tgen.planet_config().lat_lon(wpos);
+            let (lat, lon) = crate::planet::detail::pos_to_lat_lon(wpos);
             let surface_r = tgen.sample_surface_radius_at(lat, lon);
 
             let material = tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);

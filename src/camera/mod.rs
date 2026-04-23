@@ -240,9 +240,10 @@ fn spawn_camera(
                 }
             };
             let surface_r = tg.0.sample_surface_radius_at(lat, lon);
-            // Construct the spawn direction from lat/lon in f64 (Y-up planet).
-            let dir_f64 =
-                DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin()).normalize();
+            // Construct the spawn direction using the same convention the
+            // voxel terrain uses (`lat_lon_to_pos`), otherwise the spawn
+            // point ends up ~90° away from the land cell that was sampled.
+            let dir_f64 = crate::planet::detail::lat_lon_to_pos(lat, lon).normalize();
             let spawn_r = surface_r.max(planet.sea_level_radius) + EYE_HEIGHT as f64;
             let spawn = dir_f64 * spawn_r;
             // Look tangent to the surface (slightly ahead along the equator direction).

@@ -142,7 +142,7 @@ pub fn update_overlay_text(
             if !cam.gravity_enabled {
                 let cam_r = pos.length();
                 let surface_r = if let Some(ref tgen) = terrain_gen {
-                    let (lat, lon) = planet.lat_lon(pos);
+                    let (lat, lon) = crate::planet::detail::pos_to_lat_lon(pos);
                     tgen.0.sample_surface_radius_at(lat, lon) as f32
                 } else {
                     planet.mean_radius as f32
