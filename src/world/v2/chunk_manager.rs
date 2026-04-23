@@ -284,39 +284,44 @@ fn desired_chunks_v2(
                     continue;
                 }
 
-                // Vertical range for this LOD:
-                //   LOD 0  → camera-centered band (camera is near ground).
-                //   LOD ≥1 → the single layer that contains the terrain
-                //            surface at this (u, v) direction, plus the
-                //            immediate neighbour layer in each radial
-                //            direction so meshes line up across layer
-                //            boundaries. The surface radius is sampled
-                //            from the terrain generator; if none is
-                //            provided (unit tests), we fall back to
-                //            layer 0.
-                let (lo, hi) = if lod == 0 {
-                    (layer_lo, layer_hi)
-                } else {
-                    let u = cam_coord_lod.u + du;
-                    let vi = cam_coord_lod.v + dv;
-                    let face = cam_coord_lod.face;
+                // Per-(u,v) surface tracking for ALL LODs: sample the
+                // terrain surface radius at this column and load a small
+                // band around the surface layer.  At LOD 0 we additionally
+                // union with the camera-centered band so chunks directly
+                // around the player (e.g. while flying or in caves) stay
+                // loaded regardless of the ground below.
+                //
+                // Using `planet.lat_lon` here would be wrong: the voxel
+                // terrain (`sample_surface_radius_at`) uses the
+                // `lat_lon_to_pos` convention, which is NOT the inverse
+                // of `planet.lat_lon`.  We convert the probe direction to
+                // (lat, lon) with the matching inverse, `pos_to_lat_lon`.
+                let u = cam_coord_lod.u + du;
+                let vi = cam_coord_lod.v + dv;
+                let face = cam_coord_lod.face;
+
+                let (lo, hi) = if let Some(tg) = terrain_gen {
                     let probe = CubeSphereCoord::new_with_lod(face, u, vi, 0, lod);
                     let dir = probe.unit_sphere_dir(fce_lod);
-                    let center_layer = if let Some(tg) = terrain_gen {
-                        let (lat, lon) = planet.lat_lon(dir);
-                        let surface_r = tg.sample_surface_radius_at(lat, lon);
-                        ((surface_r - planet.mean_radius) / chunk_world_size).round() as i32
+                    let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
+                    let surface_r = tg.sample_surface_radius_at(lat, lon);
+                    let center_layer =
+                        ((surface_r - planet.mean_radius) / chunk_world_size).round() as i32;
+                    let surf_lo = center_layer - 1;
+                    let surf_hi = center_layer + 1;
+                    if lod == 0 {
+                        // Union the surface band with the camera band.
+                        (surf_lo.min(layer_lo), surf_hi.max(layer_hi))
                     } else {
-                        0
-                    };
-                    (center_layer - 1, center_layer + 1)
+                        (surf_lo, surf_hi)
+                    }
+                } else if lod == 0 {
+                    (layer_lo, layer_hi)
+                } else {
+                    (-1, 1)
                 };
 
                 for layer in lo..=hi {
-                    let u = cam_coord_lod.u + du;
-                    let vi = cam_coord_lod.v + dv;
-                    let face = cam_coord_lod.face;
-
                     if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
                         if let Some(wrapped) = wrap_cross_face(face, u, vi, layer, max_uv, lod) {
                             set.insert(wrapped);

@@ -228,6 +228,16 @@ pub fn lat_lon_to_pos(lat: f64, lon: f64) -> DVec3 {
     DVec3::new(cos_lat * lon.sin(), lat.sin(), cos_lat * lon.cos())
 }
 
+/// Inverse of [`lat_lon_to_pos`]: convert a unit-length direction (Y-up)
+/// back to (lat, lon) in radians.  This is the convention used by the
+/// map projection and the voxel terrain (`sample_surface_radius_at`).
+pub fn pos_to_lat_lon(dir: DVec3) -> (f64, f64) {
+    let d = dir.normalize_or_zero();
+    let lat = d.y.clamp(-1.0, 1.0).asin();
+    let lon = d.x.atan2(d.z);
+    (lat, lon)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
