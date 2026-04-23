@@ -235,10 +235,17 @@ fn desired_chunks_v2(
     let altitude_m = cam_world_pos.length() - planet.mean_radius;
     let cam_layer = cam_coord.layer;
 
-    // Vertical range at LOD 0 (camera-centered; LOD 0 chunks are small
-    // compared to terrain relief, so we follow the camera's own layer band).
-    let layer_lo = (0.min(cam_layer) - radius.vertical).max(-MAX_VERTICAL_LAYERS);
-    let layer_hi = (0.max(cam_layer) + radius.vertical).min(MAX_VERTICAL_LAYERS);
+    // Vertical range at LOD 0 centered on the *camera's* layer.
+    //
+    // The earlier formula `(0.min(cam_layer), 0.max(cam_layer))` baked in
+    // the assumption that layer 0 (around mean_radius) is the surface, which
+    // is only true for toy planets with tiny height_scale.  On an Earth-scale
+    // preset the player can stand on a 5 km mountain (cam_layer ≈ 156) and
+    // that formula tries to load ~160 layers per column — effectively
+    // starving the real surface chunks behind an avalanche of AllAir/AllSolid
+    // chunks and producing visible gaps in the near terrain.
+    let layer_lo = (cam_layer - radius.vertical).max(-MAX_VERTICAL_LAYERS);
+    let layer_hi = (cam_layer + radius.vertical).min(MAX_VERTICAL_LAYERS);
 
     let mut set = HashSet::new();
 

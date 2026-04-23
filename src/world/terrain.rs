@@ -1011,8 +1011,10 @@ impl UnifiedTerrainGenerator {
         match self {
             Self::Spherical(g) => g.sample_surface_radius(lat, lon),
             Self::Planetary(g) => {
-                let dir =
-                    bevy::math::DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin());
+                // Use the SAME lat/lon → direction convention as the planet
+                // map rendering (`planet::detail::lat_lon_to_pos`) so the
+                // voxel terrain and the global map refer to the same globe.
+                let dir = crate::planet::detail::lat_lon_to_pos(lat, lon);
                 let (surface_r, _) = g.surface_radius_at(dir);
                 surface_r
             }

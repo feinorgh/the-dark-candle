@@ -2,7 +2,6 @@
 
 use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
-use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -353,6 +352,7 @@ use crate::camera::{EYE_HEIGHT, FpsCamera};
 use crate::floating_origin::{RenderOrigin, WorldPosition};
 use crate::game_state::GameState;
 use crate::hud::Player;
+use crate::planet::detail::lat_lon_to_pos;
 use crate::world::chunk_manager::TerrainGeneratorRes;
 use crate::world::planet::PlanetConfig;
 
@@ -400,12 +400,15 @@ pub fn map_teleport(
     };
 
     // Sample terrain height at target.
-    let surface_r = tgen.0.sample_surface_radius_at(lat, lon) as f32;
-    let sea_r = planet.sea_level_radius as f32;
+    let surface_r = tgen.0.sample_surface_radius_at(lat, lon);
+    let sea_r = planet.sea_level_radius;
 
-    // Build world position.
-    let dir = DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin()).normalize();
-    let teleport_pos = dir * ((surface_r.max(sea_r) + EYE_HEIGHT) as f64);
+    // Build world position.  Use the SAME `lat_lon_to_pos` helper the map
+    // rendering uses, otherwise the teleport target is ~90° off because
+    // the map image is rendered with a different (sin_lon / cos_lon)
+    // axis convention than the old local formula.
+    let dir = lat_lon_to_pos(lat, lon);
+    let teleport_pos = dir * (surface_r.max(sea_r) + EYE_HEIGHT as f64);
 
     // Move the camera.
     if let Ok((mut wp, mut transform, mut fps)) = camera_q.single_mut() {
