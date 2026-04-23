@@ -227,6 +227,7 @@ fn desired_chunks_v2(
     cam_world_pos: DVec3,
     planet: &PlanetConfig,
     radius: &V2LoadRadius,
+    terrain_gen: Option<&UnifiedTerrainGenerator>,
 ) -> HashSet<CubeSphereCoord> {
     let base_fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
     let cam_coord = world_pos_to_coord(cam_world_pos, planet.mean_radius, base_fce);
@@ -234,7 +235,8 @@ fn desired_chunks_v2(
     let altitude_m = cam_world_pos.length() - planet.mean_radius;
     let cam_layer = cam_coord.layer;
 
-    // Vertical range at LOD 0 (used for all LOD levels for surface coverage)
+    // Vertical range at LOD 0 (camera-centered; LOD 0 chunks are small
+    // compared to terrain relief, so we follow the camera's own layer band).
     let layer_lo = (0.min(cam_layer) - radius.vertical).max(-MAX_VERTICAL_LAYERS);
     let layer_hi = (0.max(cam_layer) + radius.vertical).min(MAX_VERTICAL_LAYERS);
 
@@ -275,11 +277,32 @@ fn desired_chunks_v2(
                     continue;
                 }
 
-                // Only surface-layer chunks at coarser LODs
+                // Vertical range for this LOD:
+                //   LOD 0  → camera-centered band (camera is near ground).
+                //   LOD ≥1 → the single layer that contains the terrain
+                //            surface at this (u, v) direction, plus the
+                //            immediate neighbour layer in each radial
+                //            direction so meshes line up across layer
+                //            boundaries. The surface radius is sampled
+                //            from the terrain generator; if none is
+                //            provided (unit tests), we fall back to
+                //            layer 0.
                 let (lo, hi) = if lod == 0 {
                     (layer_lo, layer_hi)
                 } else {
-                    (0, 0)
+                    let u = cam_coord_lod.u + du;
+                    let vi = cam_coord_lod.v + dv;
+                    let face = cam_coord_lod.face;
+                    let probe = CubeSphereCoord::new_with_lod(face, u, vi, 0, lod);
+                    let dir = probe.unit_sphere_dir(fce_lod);
+                    let center_layer = if let Some(tg) = terrain_gen {
+                        let (lat, lon) = planet.lat_lon(dir);
+                        let surface_r = tg.sample_surface_radius_at(lat, lon);
+                        ((surface_r - planet.mean_radius) / chunk_world_size).round() as i32
+                    } else {
+                        0
+                    };
+                    (center_layer - 1, center_layer + 1)
                 };
 
                 for layer in lo..=hi {
@@ -408,7 +431,7 @@ pub fn v2_update_chunks(
         return;
     };
 
-    let desired = desired_chunks_v2(cam_world_pos.0, &planet, &load_radius);
+    let desired = desired_chunks_v2(cam_world_pos.0, &planet, &load_radius, Some(&terrain_gen.0));
 
     // Despawn chunk entities no longer desired and evict cache
     for (entity, coord) in &v2_chunks_q {
@@ -918,7 +941,13 @@ fn v2_init_terrain_gen(
     }
 
     // Initialize GPU voxel compute pipeline if noise config is available.
-    if let Some(ref noise_config) = planet.noise {
+    // Set TDC_DISABLE_GPU_VOXELS=1 to force CPU-only generation (diagnostic).
+    let gpu_disabled = std::env::var("TDC_DISABLE_GPU_VOXELS")
+        .ok()
+        .is_some_and(|v| v != "0" && !v.is_empty());
+    if gpu_disabled {
+        info!("V2 pipeline: GPU voxel generation disabled via TDC_DISABLE_GPU_VOXELS");
+    } else if let Some(ref noise_config) = planet.noise {
         match GpuVoxelCompute::try_new(
             noise_config,
             planet.seed,
@@ -953,7 +982,7 @@ mod tests {
         let radius = V2LoadRadius::default();
         let fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
         let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
-        let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
+        let desired = desired_chunks_v2(cam_pos, &cfg, &radius, None);
 
         assert!(!desired.is_empty(), "Desired set should not be empty");
 
@@ -977,7 +1006,7 @@ mod tests {
         };
 
         let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
-        let desired = desired_chunks_v2(cam_pos, &cfg, &radius);
+        let desired = desired_chunks_v2(cam_pos, &cfg, &radius, None);
 
         // With multi-LOD rings, the desired set includes L0 chunks plus coarser LOD rings.
         // L0 ring: (2*2+1)² × (2*1+1) = 5² × 3 = 75 chunks

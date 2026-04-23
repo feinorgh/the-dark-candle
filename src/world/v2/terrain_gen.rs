@@ -225,7 +225,32 @@ pub fn generate_v2_voxels(
     let cached = match generate_voxels_core(coord, mean_radius, face_chunks_per_edge, tgen) {
         VoxelGenResult::AllAir => CachedVoxels::AllAir,
         VoxelGenResult::AllSolid(mat) => CachedVoxels::AllSolid(mat),
-        VoxelGenResult::Mixed(voxels) => CachedVoxels::Mixed(Arc::new(voxels)),
+        VoxelGenResult::Mixed(voxels) => {
+            // Diagnostic: count air vs solid voxels so we can detect the
+            // "flat terrain" symptom (Mixed chunks that are almost all one
+            // material).  Only logs for surface-crossing layers.
+            if std::env::var("TDC_V2_DIAG").is_ok() && coord.layer.abs() <= 2 {
+                let air = voxels
+                    .iter()
+                    .filter(|v| v.material == crate::world::voxel::MaterialId::AIR)
+                    .count();
+                let total = voxels.len();
+                let solid = total - air;
+                bevy::log::info!(
+                    "[v2 diag] chunk {:?}/{}/({},{})/L={} lod={}: Mixed air={} solid={} ({:.1}% solid)",
+                    coord.face,
+                    coord.layer,
+                    coord.u,
+                    coord.v,
+                    coord.layer,
+                    coord.lod,
+                    air,
+                    solid,
+                    solid as f64 / total as f64 * 100.0,
+                );
+            }
+            CachedVoxels::Mixed(Arc::new(voxels))
+        }
     };
     V2TerrainData {
         coord,
