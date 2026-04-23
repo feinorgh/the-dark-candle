@@ -698,9 +698,33 @@ pub fn v2_collect_terrain(
             break;
         }
 
+        let voxel_data = cache.get(&coord).unwrap().clone();
+
+        // Fast-path: AllSolid / AllAir chunks never contain a visible surface
+        // (they are entirely buried or entirely empty).  Emitting a greedy
+        // mesh for them would produce a 6-face hull that shows up as a
+        // phantom cube when neighbours are unloaded — the source of the
+        // "floating square faces" seen at coarse LODs where adjacent
+        // surface-tracking columns sit at very different altitudes.
+        if matches!(voxel_data, CachedVoxels::AllSolid(_) | CachedVoxels::AllAir) {
+            let task = pool.spawn(async move {
+                V2MeshResult {
+                    coord,
+                    mesh: ChunkMesh {
+                        positions: Vec::new(),
+                        normals: Vec::new(),
+                        colors: Vec::new(),
+                        indices: Vec::new(),
+                    },
+                }
+            });
+            commands.spawn(V2MeshTask(task));
+            pending_meshes.pending.insert(coord);
+            continue;
+        }
+
         let tgen = terrain_gen.0.clone();
         let cmap = color_map.clone();
-        let voxel_data = cache.get(&coord).unwrap().clone();
 
         let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
         // Build neighbor slices (from cache where possible, resample otherwise)
