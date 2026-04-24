@@ -257,20 +257,31 @@ impl NoiseParamsGpu {
 }
 
 /// Per-chunk descriptor — matches WGSL `ChunkDesc`.
+///
+/// Radial values are stored as OFFSETS from `mean_radius` (not absolute
+/// radii) so that the shader can do the surface/voxel comparison in f32
+/// without catastrophic cancellation. At Earth scale (`r ≈ 6.37e6`), f32
+/// only has ~0.5 m precision on the absolute radius; subtracting two such
+/// values to recover a ±meter depth was randomizing the surface material
+/// classification and producing severely fragmented terrain.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ChunkDesc {
     pub center: [f32; 4],
     pub rotation: [f32; 4],
     pub tangent_scale: [f32; 4],
-    pub base_r: f32,
-    pub top_r: f32,
-    pub sea_level: f32,
+    pub base_r_offset: f32,
+    pub top_r_offset: f32,
+    pub sea_level_offset: f32,
     pub lod_scale: f32,
     pub soil_depth: f32,
     pub cave_threshold: f32,
     pub half_diag: f32,
     pub chunk_index: u32,
+    pub chunk_r_offset: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 /// Global dispatch parameters — matches WGSL `DispatchParams`.
@@ -607,13 +618,18 @@ impl GpuVoxelCompute {
             .queue
             .write_buffer(&self.chunks_buffer, 0, bytemuck::cast_slice(&descs));
 
-        // Initialize chunk_info with sentinel values for atomic min/max.
-        // min_surface → f32::MAX bits, max_surface → 0 (f32 positive zero)
+        // Initialize chunk_info with sentinel values for the sortable-u32
+        // atomic min/max reduction over signed surface offsets. See
+        // `sortable_encode` / `sortable_decode` in voxel_gen.wgsl.
+        //   min_surface_offset → sortable_encode(f32::MAX)  = 0xFF7FFFFF
+        //   max_surface_offset → sortable_encode(-f32::MAX) = 0x00800000
+        let min_init = sortable_encode_u32(f32::MAX);
+        let max_init = sortable_encode_u32(-f32::MAX);
         let mut info_init = vec![0u32; requests.len() * 4];
         for i in 0..requests.len() {
             info_init[i * 4] = CLASS_MIXED; // classification (default)
-            info_init[i * 4 + 1] = f32::to_bits(f32::MAX); // min_surface
-            info_init[i * 4 + 2] = 0; // max_surface (f32 +0.0)
+            info_init[i * 4 + 1] = min_init;
+            info_init[i * 4 + 2] = max_init;
             info_init[i * 4 + 3] = 0; // solid material
         }
         self.ctx
@@ -803,6 +819,21 @@ impl GpuVoxelCompute {
 
 // ─── Helper: build ChunkDesc from CubeSphereCoord + planet config ──────────
 
+/// Order-preserving encoding of a signed f32 into a u32 so that the GPU's
+/// atomic min/max works correctly across negative surface offsets.
+///
+/// Mirrors `sortable_encode` in `voxel_gen.wgsl`. Used on the host to seed
+/// the atomic reduction buffers; must match the WGSL version bit-for-bit.
+#[inline]
+fn sortable_encode_u32(f: f32) -> u32 {
+    let bits = f.to_bits();
+    if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits | 0x8000_0000
+    }
+}
+
 /// Build a `ChunkDesc` from a `CubeSphereCoord` and planet parameters.
 pub fn chunk_desc_from_coord(
     coord: CubeSphereCoord,
@@ -818,12 +849,12 @@ pub fn chunk_desc_from_coord(
         coord.world_transform_scaled(mean_radius, face_chunks_per_edge);
 
     let lod_scale = (1u64 << coord.lod) as f64;
-    // Chunk is centered at `mean_r + layer*cs*lod_scale`; `base_r`/`top_r`
-    // are the actual chunk radial bounds (bottom/top).
-    let center_r = mean_radius + coord.layer as f64 * cs as f64 * lod_scale;
+    // Chunk center's radial offset from `mean_radius`. Exact in f64 and
+    // bounded by `|layer| * CS * lod_scale`, comfortably within f32 range.
+    let chunk_r_offset = coord.layer as f64 * cs as f64 * lod_scale;
     let half_cs_scaled = cs as f64 * lod_scale / 2.0;
-    let base_r = center_r - half_cs_scaled;
-    let top_r = center_r + half_cs_scaled;
+    let base_r_offset = chunk_r_offset - half_cs_scaled;
+    let top_r_offset = chunk_r_offset + half_cs_scaled;
 
     let half_diag = ((tangent_scale.x as f64).powi(2)
         + (tangent_scale.y as f64).powi(2)
@@ -836,14 +867,18 @@ pub fn chunk_desc_from_coord(
         center: [center.x, center.y, center.z, 0.0],
         rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
         tangent_scale: [tangent_scale.x, tangent_scale.y, tangent_scale.z, 0.0],
-        base_r: base_r as f32,
-        top_r: top_r as f32,
-        sea_level: sea_level as f32,
+        base_r_offset: base_r_offset as f32,
+        top_r_offset: top_r_offset as f32,
+        sea_level_offset: (sea_level - mean_radius) as f32,
         lod_scale: lod_scale as f32,
         soil_depth: soil_depth as f32,
         cave_threshold: cave_threshold as f32,
         half_diag: half_diag as f32,
         chunk_index,
+        chunk_r_offset: chunk_r_offset as f32,
+        _pad0: 0.0,
+        _pad1: 0.0,
+        _pad2: 0.0,
     }
 }
 
@@ -1120,8 +1155,8 @@ mod tests {
             0,
         );
         eprintln!(
-            "ChunkDesc: base_r={}, top_r={}, sea_level={}, half_diag={}",
-            desc.base_r, desc.top_r, desc.sea_level, desc.half_diag
+            "ChunkDesc: base_r_offset={}, top_r_offset={}, sea_level_offset={}, half_diag={}",
+            desc.base_r_offset, desc.top_r_offset, desc.sea_level_offset, desc.half_diag
         );
 
         let request = GpuChunkRequest { coord, desc };
@@ -1379,5 +1414,139 @@ mod tests {
         let x1 = lerp(lerp(g100, g101, cw), lerp(g110, g111, cw), cv);
         let result = lerp(x0, x1, cu) * scale;
         result.clamp(-1.0, 1.0)
+    }
+
+    /// Earth-scale GPU/CPU parity test — regression guard for the f32
+    /// catastrophic cancellation bug in `voxel_pass`.
+    ///
+    /// At `mean_radius ≈ 6.37e6`, absolute f32 radii only resolve to ~0.5 m,
+    /// so the old code's `depth = surface_r - r` randomized the surface
+    /// material classification and produced "severely fragmented" voxel
+    /// terrain while the small-planet (`mean_radius = 32_000`) parity test
+    /// happily passed. This test exercises the production preset parameters
+    /// to ensure offsets-from-mean-radius arithmetic is used throughout.
+    ///
+    /// We sweep several radial layers around the surface so that at least
+    /// one chunk straddles the boundary and actually exercises the
+    /// `depth = surface_r - r` comparison.
+    #[test]
+    fn gpu_vs_cpu_parity_earth_scale_surface_chunk() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        use crate::world::scene_presets::ScenePreset;
+        use crate::world::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
+        use crate::world::v2::terrain_gen::generate_v2_voxels;
+
+        let planet = ScenePreset::SphericalPlanet.planet_config();
+        let config = planet
+            .noise
+            .as_ref()
+            .expect("spherical_planet preset must carry noise config")
+            .clone();
+        let mean_radius = planet.mean_radius;
+        let height_scale = planet.height_scale;
+        let sea_level = planet.sea_level_radius;
+
+        let Some(compute) =
+            GpuVoxelCompute::try_new(&config, planet.seed, mean_radius, height_scale)
+        else {
+            eprintln!("skipping earth-scale parity test: no GPU adapter");
+            return;
+        };
+
+        let tgen = SphericalTerrainGenerator::new(planet.clone());
+        let unified = std::sync::Arc::new(UnifiedTerrainGenerator::Spherical(Box::new(tgen)));
+
+        let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+        let half_fce = (fce / 2.0) as i32;
+
+        // PosX face-center direction is (1, 0, 0) → lat=0, lon=π/2.
+        // Probe the actual surface at the chunk's lat/lon so the surface
+        // layer is correct.
+        let (chunk_lat, chunk_lon) = (0.0_f64, std::f64::consts::FRAC_PI_2);
+        let surface_r = unified.sample_surface_radius_at(chunk_lat, chunk_lon);
+        let surface_layer = ((surface_r - mean_radius) / CHUNK_SIZE as f64).round() as i32;
+        eprintln!(
+            "earth-scale: surface_r={surface_r:.1}, mean_radius={mean_radius}, \
+             surface_layer={surface_layer}"
+        );
+
+        // Sweep layers around the surface. The chunk straddling the surface
+        // must classify Mixed and must have matching voxel counts.
+        let layer_range = -3..=3;
+        let mut saw_mixed = false;
+        for dl in layer_range {
+            let layer = surface_layer + dl;
+            let coord = CubeSphereCoord::new_with_lod(
+                crate::world::v2::cubed_sphere::CubeFace::PosX,
+                half_fce,
+                half_fce,
+                layer,
+                0,
+            );
+
+            let desc = chunk_desc_from_coord(
+                coord,
+                mean_radius,
+                fce,
+                sea_level,
+                planet.soil_depth,
+                planet.cave_threshold,
+                0,
+            );
+            let request = GpuChunkRequest { coord, desc };
+            let gpu_result = compute.generate_batch(&[request], planet.rotation_axis);
+            let gpu_td = &gpu_result.terrain_data[0];
+            let cpu_td = generate_v2_voxels(coord, mean_radius, fce, &unified);
+
+            let classification = |v: &CachedVoxels| -> &'static str {
+                match v {
+                    CachedVoxels::AllAir => "AllAir",
+                    CachedVoxels::AllSolid(_) => "AllSolid",
+                    CachedVoxels::Mixed(_) => "Mixed",
+                }
+            };
+            let gc = classification(&gpu_td.voxels);
+            let cc = classification(&cpu_td.voxels);
+
+            let gpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&gpu_td.voxels);
+            let cpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&cpu_td.voxels);
+            let gpu_solid = gpu_voxels
+                .iter()
+                .filter(|v| v.material != MaterialId::AIR)
+                .count();
+            let cpu_solid = cpu_voxels
+                .iter()
+                .filter(|v| v.material != MaterialId::AIR)
+                .count();
+            let denom = CHUNK_VOLUME as f64;
+            let gf = gpu_solid as f64 / denom;
+            let cf = cpu_solid as f64 / denom;
+
+            eprintln!(
+                "layer={layer} (dl={dl:+}): GPU={gc} ({gpu_solid}), \
+                 CPU={cc} ({cpu_solid}), diff={:.4}",
+                (gf - cf).abs()
+            );
+
+            assert_eq!(
+                gc, cc,
+                "classification mismatch at layer {layer} (dl={dl:+})"
+            );
+            if gc == "Mixed" {
+                saw_mixed = true;
+                // At Earth scale the regression bug produced ~50% random
+                // solid fraction in Mixed chunks instead of matching CPU.
+                assert!(
+                    (gf - cf).abs() < 0.05,
+                    "solid fraction diverges at layer {layer}: \
+                     GPU={gf:.4}, CPU={cf:.4} (likely f32 cancellation bug)"
+                );
+            }
+        }
+
+        assert!(
+            saw_mixed,
+            "expected at least one Mixed chunk while sweeping layers around the surface"
+        );
     }
 }

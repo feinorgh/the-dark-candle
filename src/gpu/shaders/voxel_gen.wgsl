@@ -95,14 +95,28 @@ struct ChunkDesc {
     center: vec4<f32>,
     rotation: vec4<f32>,
     tangent_scale: vec4<f32>,
-    base_r: f32,
-    top_r: f32,
-    sea_level: f32,
+    // Radial bounds and sea level are stored as OFFSETS from `mean_radius`
+    // rather than absolute radii. At Earth scale (r ≈ 6.37e6 m), f32 only
+    // has ~0.5 m precision on absolute values, so any comparison like
+    // `depth = surface_r - r` lost essentially all meaningful resolution
+    // and randomized air/solid classification at the surface. Offsets are
+    // bounded by `height_scale` (≈ 8.8 km for Earth) and so fit cleanly
+    // into f32 with sub-mm precision.
+    base_r_offset: f32,
+    top_r_offset: f32,
+    sea_level_offset: f32,
     lod_scale: f32,
     soil_depth: f32,
     cave_threshold: f32,
     half_diag: f32,
     chunk_index: u32,
+    // `chunk_r_offset = layer * CHUNK_SIZE * lod_scale` — the chunk center's
+    // radial distance from `mean_radius`. Exact when computed on the host
+    // in f64 and cast to f32 (small value, no precision loss).
+    chunk_r_offset: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 struct DispatchParams {
@@ -378,6 +392,29 @@ fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(lat, lon);
 }
 
+// Order-preserving float → u32 mapping for signed floats so that
+// `atomicMin` / `atomicMax` on the encoded value match float ordering.
+// Needed because surface offsets can be negative (e.g. ocean floor below
+// `mean_radius`), unlike the previous absolute-radius encoding.
+fn sortable_encode(f: f32) -> u32 {
+    let bits = bitcast<u32>(f);
+    if (bits & 0x80000000u) != 0u {
+        // Negative: flip all bits.
+        return ~bits;
+    }
+    // Non-negative: flip the sign bit so +0 maps above all negatives.
+    return bits | 0x80000000u;
+}
+
+fn sortable_decode(u: u32) -> f32 {
+    if (u & 0x80000000u) != 0u {
+        // Was non-negative: clear the sign bit.
+        return bitcast<f32>(u & 0x7FFFFFFFu);
+    }
+    // Was negative: undo the full flip.
+    return bitcast<f32>(~u);
+}
+
 // ─── Material assignment (mirrors material_at_radius) ────────────────────────
 
 fn strata_material_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> u32 {
@@ -450,24 +487,24 @@ fn is_crystal_deposit_gpu(depth: f32, wx: f32, wy: f32, wz: f32) -> bool {
 }
 
 fn material_at_radius_gpu(
-    r: f32,
-    surface_r: f32,
-    sea_level: f32,
+    r_offset: f32,
+    surface_r_offset: f32,
+    sea_level_offset: f32,
     soil_depth: f32,
     cave_threshold: f32,
     wx: f32, wy: f32, wz: f32,
 ) -> u32 {
-    if r > surface_r {
-        if r < sea_level {
+    if r_offset > surface_r_offset {
+        if r_offset < sea_level_offset {
             return MAT_WATER;
         }
         return MAT_AIR;
     }
 
-    let depth = surface_r - r;
+    let depth = surface_r_offset - r_offset;
 
     if depth < 1.0 {
-        return select(MAT_DIRT, MAT_GRASS, surface_r >= sea_level);
+        return select(MAT_DIRT, MAT_GRASS, surface_r_offset >= sea_level_offset);
     }
 
     if depth < soil_depth {
@@ -486,7 +523,7 @@ fn material_at_radius_gpu(
     let cave_max_depth = 200.0;
     if depth > 2.0 && depth < cave_max_depth {
         if is_cave_gpu(cave_threshold, wx, wy, wz) {
-            let sea_level_depth = max(sea_level - r, 0.0);
+            let sea_level_depth = max(sea_level_offset - r_offset, 0.0);
             return cave_fill_material_gpu(depth, sea_level_depth);
         }
         if is_crystal_deposit_gpu(depth, wx, wy, wz) {
@@ -529,15 +566,19 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // sample_terrain excludes micro-detail, matching CPU sample_surface_radius()
     let combined = sample_terrain(ll.y, ll.x);
-    let sr = noise_params.mean_radius + combined * noise_params.height_scale;
+    // Store surface offset from mean_radius, not absolute radius. Fits in f32
+    // with sub-mm precision (|offset| ≤ height_scale ≈ 8.8 km for Earth) and
+    // avoids catastrophic cancellation when compared against voxel r_offset
+    // in `voxel_pass`.
+    let sr_offset = combined * noise_params.height_scale;
 
     let out_idx = chunk.chunk_index * CHUNK_AREA + col_idx;
-    surface_radii[out_idx] = sr;
+    surface_radii[out_idx] = sr_offset;
 
-    let sr_bits = bitcast<u32>(sr);
+    let enc = sortable_encode(sr_offset);
     let info_base = chunk.chunk_index * 4u;
-    atomicMin(&chunk_info[info_base + 1u], sr_bits);
-    atomicMax(&chunk_info[info_base + 2u], sr_bits);
+    atomicMin(&chunk_info[info_base + 1u], enc);
+    atomicMax(&chunk_info[info_base + 2u], enc);
 }
 
 // ─── Pass 2: Voxel fill ─────────────────────────────────────────────────────
@@ -570,16 +611,29 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
         (f32(ly) + 0.5 - half) * chunk.tangent_scale.y,
         (f32(lz) + 0.5 - half) * chunk.tangent_scale.z,
     );
+    // World position is only needed for the 3-D noise coordinates used by
+    // strata / ore / cave / crystal sampling. We intentionally do NOT derive
+    // the voxel's radius from `length(world)` — at Earth scale that loses
+    // ~0.5 m of precision which is catastrophic for the surface test.
     let world = chunk.center.xyz + quat_rotate(chunk.rotation, local);
-    let r = length(world);
+
+    // Radial offset of the voxel relative to `mean_radius`, computed in the
+    // chunk's local tangent frame. Since `rotation` is orthonormal and maps
+    // local +Y onto the radial `up` direction, the dot product of
+    // `quat_rotate(rotation, local)` with that radial direction is just
+    // `local.y`. A small quadratic correction comes from the curvature of
+    // the sphere over the chunk's tangent footprint.
+    let center_r = noise_params.mean_radius + chunk.chunk_r_offset;
+    let tangent_sq = local.x * local.x + local.z * local.z;
+    let r_offset = chunk.chunk_r_offset + local.y + tangent_sq / (2.0 * center_r);
 
     let col_idx = lz * CHUNK_SIZE + lx;
     let sr_idx = chunk.chunk_index * CHUNK_AREA + col_idx;
-    let surface_r = surface_radii[sr_idx];
+    let surface_r_offset = surface_radii[sr_idx];
 
     let material = material_at_radius_gpu(
-        r, surface_r,
-        chunk.sea_level,
+        r_offset, surface_r_offset,
+        chunk.sea_level_offset,
         chunk.soil_depth,
         chunk.cave_threshold,
         world.x, world.y, world.z,
@@ -587,9 +641,9 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var density: f32;
     if material == MAT_WATER {
-        density = terrain_density_gpu(chunk.sea_level - r);
+        density = terrain_density_gpu(chunk.sea_level_offset - r_offset);
     } else {
-        density = terrain_density_gpu(surface_r - r);
+        density = terrain_density_gpu(surface_r_offset - r_offset);
     }
 
     let out_idx = chunk.chunk_index * CHUNK_VOLUME + voxel_idx;
@@ -609,23 +663,23 @@ fn classify_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     let chunk = chunks[chunk_idx];
     let info_base = chunk.chunk_index * 4u;
 
-    let min_bits = atomicLoad(&chunk_info[info_base + 1u]);
-    let max_bits = atomicLoad(&chunk_info[info_base + 2u]);
-    let min_surface = bitcast<f32>(min_bits);
-    let max_surface = bitcast<f32>(max_bits);
+    let min_enc = atomicLoad(&chunk_info[info_base + 1u]);
+    let max_enc = atomicLoad(&chunk_info[info_base + 2u]);
+    let min_surface_offset = sortable_decode(min_enc);
+    let max_surface_offset = sortable_decode(max_enc);
 
-    let sea = chunk.sea_level;
+    let sea_offset = chunk.sea_level_offset;
     let half_diag = chunk.half_diag;
-    let base_r = chunk.base_r;
-    let top_r = chunk.top_r;
+    let base_offset = chunk.base_r_offset;
+    let top_offset = chunk.top_r_offset;
 
-    if base_r - half_diag > max_surface && base_r - half_diag > sea {
+    if base_offset - half_diag > max_surface_offset && base_offset - half_diag > sea_offset {
         atomicStore(&chunk_info[info_base], CLASS_ALL_AIR);
         return;
     }
 
-    let cave_floor = min_surface - 200.0;
-    if top_r + half_diag < min_surface && top_r + half_diag < cave_floor {
+    let cave_floor_offset = min_surface_offset - 200.0;
+    if top_offset + half_diag < min_surface_offset && top_offset + half_diag < cave_floor_offset {
         atomicStore(&chunk_info[info_base], CLASS_ALL_SOLID);
         atomicStore(&chunk_info[info_base + 3u], MAT_STONE);
         return;
