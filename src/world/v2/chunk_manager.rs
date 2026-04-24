@@ -45,7 +45,11 @@ const MAX_MESH_COLLECTS_PER_FRAME: usize = 16;
 
 /// Maximum horizontal load radius in chunks (prevents runaway at extreme altitudes).
 const MAX_HORIZONTAL_CHUNKS: i32 = 48;
-/// Maximum vertical load extent in layers.
+/// Maximum vertical load extent in layers (currently unused — kept as a
+/// reference for future clamping of runaway layer counts).  Do NOT use to
+/// clamp the camera band: at high altitudes the camera can sit at layer
+/// 200+, far outside any symmetric absolute cap.
+#[allow(dead_code)]
 const MAX_VERTICAL_LAYERS: i32 = 64;
 
 /// Maximum LOD level (L7 = 2^7 = 128× base chunk size ≈ 4096m per chunk).
@@ -218,6 +222,27 @@ fn horizon_load_radius(altitude_m: f64, mean_radius: f64, base_horizontal: i32) 
     radius_chunks.clamp(base_horizontal, MAX_HORIZONTAL_CHUNKS)
 }
 
+/// Insert a `(face, u, v, layer)` coord into `set`, handling cross-face
+/// wrap when `(u, v)` lies outside the face.
+#[inline]
+fn insert_or_wrap(
+    set: &mut HashSet<CubeSphereCoord>,
+    face: CubeFace,
+    u: i32,
+    vi: i32,
+    layer: i32,
+    max_uv: i32,
+    lod: u8,
+) {
+    if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
+        if let Some(wrapped) = wrap_cross_face(face, u, vi, layer, max_uv, lod) {
+            set.insert(wrapped);
+        }
+        return;
+    }
+    set.insert(CubeSphereCoord::new_with_lod(face, u, vi, layer, lod));
+}
+
 /// Compute the set of desired chunks around the camera on the cubed sphere.
 ///
 /// Horizontal radius scales with altitude via the horizon distance formula.
@@ -244,8 +269,17 @@ fn desired_chunks_v2(
     // that formula tries to load ~160 layers per column — effectively
     // starving the real surface chunks behind an avalanche of AllAir/AllSolid
     // chunks and producing visible gaps in the near terrain.
-    let layer_lo = (cam_layer - radius.vertical).max(-MAX_VERTICAL_LAYERS);
-    let layer_hi = (cam_layer + radius.vertical).min(MAX_VERTICAL_LAYERS);
+    //
+    // IMPORTANT: these are camera-RELATIVE bounds.  Do NOT clamp them with
+    // `MAX_VERTICAL_LAYERS` (which is an absolute layer index around
+    // mean_radius): at high altitude `cam_layer` can be 200+ and
+    // `min(cam_layer + 2, 64)` would invert the interval and produce an
+    // empty camera band, leaving a chunk-sized void around the player.
+    // The explosion this cap was meant to prevent is handled by loading the
+    // surface band and camera band as two *separate* intervals below,
+    // instead of one contiguous range stretching from surface to camera.
+    let layer_lo = cam_layer - radius.vertical;
+    let layer_hi = cam_layer + radius.vertical;
 
     let mut set = HashSet::new();
 
@@ -310,8 +344,29 @@ fn desired_chunks_v2(
                     let surf_lo = center_layer - 1;
                     let surf_hi = center_layer + 1;
                     if lod == 0 {
-                        // Union the surface band with the camera band.
-                        (surf_lo.min(layer_lo), surf_hi.max(layer_hi))
+                        // Load the surface band AND the camera band as two
+                        // *separate* intervals.  Do NOT union them into one
+                        // range (`min(surf_lo, layer_lo), max(surf_hi, layer_hi)`)
+                        // — at high altitude that fills hundreds of layers
+                        // per column with AllAir chunks between surface and
+                        // camera, starving the generation budget and causing
+                        // visible chunk-sized voids around the player.
+                        for layer in surf_lo..=surf_hi {
+                            insert_or_wrap(
+                                &mut set, face, u, vi, layer, max_uv, lod,
+                            );
+                        }
+                        // Camera band (skip overlap with surface band).
+                        for layer in layer_lo..=layer_hi {
+                            if layer >= surf_lo && layer <= surf_hi {
+                                continue;
+                            }
+                            insert_or_wrap(
+                                &mut set, face, u, vi, layer, max_uv, lod,
+                            );
+                        }
+                        // Skip the generic loop below — already inserted.
+                        continue;
                     } else {
                         (surf_lo, surf_hi)
                     }
@@ -322,14 +377,7 @@ fn desired_chunks_v2(
                 };
 
                 for layer in lo..=hi {
-                    if u < 0 || u >= max_uv || vi < 0 || vi >= max_uv {
-                        if let Some(wrapped) = wrap_cross_face(face, u, vi, layer, max_uv, lod) {
-                            set.insert(wrapped);
-                        }
-                        continue;
-                    }
-
-                    set.insert(CubeSphereCoord::new_with_lod(face, u, vi, layer, lod));
+                    insert_or_wrap(&mut set, face, u, vi, layer, max_uv, lod);
                 }
             }
         }
@@ -1271,6 +1319,74 @@ mod tests {
             at_least_one_distinguishes,
             "no direction had distinguishable near/far edges — test is \
              vacuous and cannot catch the dir-inversion regression",
+        );
+    }
+
+    /// Regression test for the "square void around player at high altitude"
+    /// bug (checkpoint 028).
+    ///
+    /// At Earth-scale (mean_radius = 6_371_000 m), a player floating 6.6 km
+    /// above the surface has `cam_layer ≈ 218`.  Before the fix,
+    /// `desired_chunks_v2` clamped the camera band with `MAX_VERTICAL_LAYERS
+    /// = 64`, producing an inverted range `(216, 64)` that contributed no
+    /// chunks, and unioned the surface band (≈ layer 10) with the clamped
+    /// camera upper bound (64) — so no chunk within the player's own layer
+    /// was ever loaded, leaving a rectangular void exactly where the player
+    /// was standing.
+    #[test]
+    fn desired_chunks_includes_camera_at_high_altitude_earth_scale() {
+        let cfg = PlanetConfig {
+            mean_radius: 6_371_000.0,
+            sea_level_radius: 6_371_000.0,
+            height_scale: 0.0, // flat planet → deterministic surface_r == mean_radius
+            noise: None,
+            ..Default::default()
+        };
+        let radius = V2LoadRadius {
+            horizontal: 4,
+            vertical: 2,
+        };
+
+        // Place the camera ~6.6 km above the surface on the +X face.
+        // This reproduces the altitude the user reported in the void bug.
+        let altitude = 6600.0_f64;
+        let cam_pos = DVec3::new(cfg.mean_radius + altitude, 0.0, 0.0);
+
+        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(
+            SphericalTerrainGenerator::new(cfg.clone()),
+        ));
+        let desired = desired_chunks_v2(cam_pos, &cfg, &radius, Some(&tgen));
+
+        // The camera's own L0 chunk MUST be in the desired set.
+        let base_fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
+        let cam_coord = world_pos_to_coord(cam_pos, cfg.mean_radius, base_fce);
+        assert!(
+            cam_coord.layer > 64,
+            "precondition: altitude {altitude} m should put cam_layer \
+             ({}) above the old MAX_VERTICAL_LAYERS cap of 64 — otherwise \
+             the test cannot catch the regression",
+            cam_coord.layer
+        );
+        assert!(
+            desired.contains(&cam_coord),
+            "camera's own chunk (face={:?}, u={}, v={}, layer={}) must be \
+             in the desired set — otherwise the player sits in a void",
+            cam_coord.face,
+            cam_coord.u,
+            cam_coord.v,
+            cam_coord.layer,
+        );
+
+        // And at least one chunk at the SURFACE layer of the camera's
+        // column must also be present (so the ground below the player
+        // still loads as well).
+        let has_surface_chunk_under_camera = desired.iter().any(|c| {
+            c.lod == 0 && c.face == cam_coord.face && c.u == cam_coord.u
+                && c.v == cam_coord.v && c.layer.abs() <= 2
+        });
+        assert!(
+            has_surface_chunk_under_camera,
+            "surface chunk in the camera's own column must also be loaded",
         );
     }
 }
