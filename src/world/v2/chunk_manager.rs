@@ -636,9 +636,16 @@ fn build_neighbor_slices(
         if let Some(neighbor_coord) = same_face_neighbor_for_dir(coord, dir, max_uv)
             && let Some(cached) = cache.get(&neighbor_coord)
         {
-            // Extract the opposite edge from the neighbor
-            let opposite_dir = dir ^ 1; // 0↔1, 2↔3, 4↔5
-            *slot = Some(extract_edge_slice(cached, opposite_dir));
+            // `slices[dir]` must contain the layer of the neighbor that is
+            // directly adjacent to the current chunk's `dir` face. For +X
+            // (dir=0) that is the +X-neighbor's x=0 column; for -X (dir=1)
+            // it is the -X-neighbor's x=CS-1 column; etc.
+            //
+            // `extract_edge_slice` is already written in this convention
+            // (dir=0 → x=0, dir=1 → x=CS-1, dir=2 → y=0, dir=3 → y=CS-1,
+            // dir=4 → z=0, dir=5 → z=CS-1), so we pass `dir` directly
+            // rather than inverting it.
+            *slot = Some(extract_edge_slice(cached, dir));
             continue;
         }
         // Fallback: resample terrain for this boundary
@@ -1181,5 +1188,89 @@ mod tests {
                 coord.0,
             );
         }
+    }
+
+    /// Regression: the cached fast-path in `build_neighbor_slices` must
+    /// return the layer of the neighbor chunk that is **adjacent** to the
+    /// current chunk's `dir` face — i.e. the neighbor's x=0 column for
+    /// dir=0 (+X neighbor), y=0 for dir=2 (+Y neighbor), etc.
+    ///
+    /// A previous bug XOR-inverted the direction (`opposite_dir = dir ^ 1`),
+    /// causing the cache path to return the **far** edge of the neighbor
+    /// (x=CS-1 for the +X neighbor) instead.  At chunk boundaries that meant
+    /// greedy meshing saw the wrong material beyond the boundary, producing
+    /// missing / spurious faces (visible in-game as transparent squares
+    /// with terrain far below).
+    #[test]
+    fn build_neighbor_slices_uses_adjacent_neighbor_edge() {
+        use crate::world::v2::cubed_sphere::CubeFace;
+        use crate::world::v2::terrain_gen::CachedVoxels;
+
+        // Earth-scale radius so chunks are Mixed and neighbors are on the
+        // same face.
+        let cfg = PlanetConfig {
+            mean_radius: 6_371_000.0,
+            sea_level_radius: 6_371_000.0,
+            height_scale: 50.0,
+            ..Default::default()
+        };
+        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
+            cfg.clone(),
+        )));
+        let fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
+        let max_uv = fce as i32;
+
+        let center_uv = max_uv / 2;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosX, center_uv, center_uv, 0, 0);
+
+        // Populate cache with all 6 same-face neighbors (generated from the
+        // real terrain so they contain a realistic mix of air/solid).
+        let mut cache = V2VoxelCache::default();
+        for dir in 0..6usize {
+            let nc = same_face_neighbor_for_dir(coord, dir, max_uv)
+                .expect("face-interior coord must have all 6 same-face neighbors");
+            let data = generate_v2_voxels(nc, cfg.mean_radius, fce, &tgen);
+            cache.insert(nc, data.voxels);
+        }
+
+        let slices = build_neighbor_slices(coord, &cache, cfg.mean_radius, fce, &tgen);
+
+        // Track whether at least one direction has near ≠ far, so the test
+        // is not vacuously passing.
+        let mut at_least_one_distinguishes = false;
+
+        for dir in 0..6usize {
+            let nc = same_face_neighbor_for_dir(coord, dir, max_uv).unwrap();
+            let cached = cache.get(&nc).unwrap();
+            let expected = extract_edge_slice(cached, dir);
+            let actual = slices.slices[dir]
+                .as_ref()
+                .expect("same-face neighbor must produce a cached slice");
+
+            if let CachedVoxels::Mixed(_) = cached {
+                let opposite = extract_edge_slice(cached, dir ^ 1);
+                let differs = actual
+                    .iter()
+                    .zip(opposite.iter())
+                    .any(|(a, b)| a.material != b.material);
+                if differs {
+                    at_least_one_distinguishes = true;
+                }
+            }
+
+            for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+                assert_eq!(
+                    a.material, e.material,
+                    "dir={dir} voxel {i}: build_neighbor_slices returned a \
+                     voxel that doesn't match the neighbor's adjacent edge",
+                );
+            }
+        }
+
+        assert!(
+            at_least_one_distinguishes,
+            "no direction had distinguishable near/far edges — test is \
+             vacuous and cannot catch the dir-inversion regression",
+        );
     }
 }
