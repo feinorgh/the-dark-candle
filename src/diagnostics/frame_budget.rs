@@ -141,17 +141,24 @@ pub fn update_overlay_text(
             // Show altitude above surface when in flight mode (gravity off).
             if !cam.gravity_enabled {
                 let cam_r = pos.length();
-                let surface_r = if let Some(ref tgen) = terrain_gen {
+                let (surface_r, over_water) = if let Some(ref tgen) = terrain_gen {
                     let (lat, lon) = crate::planet::detail::pos_to_lat_lon(pos);
-                    tgen.0.sample_surface_radius_at(lat, lon) as f32
+                    let terrain_r = tgen.0.sample_surface_radius_at(lat, lon) as f32;
+                    let sea_r = planet.sea_level_radius as f32;
+                    if terrain_r < sea_r {
+                        (sea_r, true)
+                    } else {
+                        (terrain_r, false)
+                    }
                 } else {
-                    planet.mean_radius as f32
+                    (planet.mean_radius as f32, false)
                 };
                 let altitude = cam_r as f32 - surface_r;
+                let label = if over_water { "AltSea" } else { "Alt" };
                 if altitude >= 1000.0 {
-                    lines.push_str(&format!("  Alt: {:.2} km", altitude / 1000.0));
+                    lines.push_str(&format!("  {label}: {:.2} km", altitude / 1000.0));
                 } else {
-                    lines.push_str(&format!("  Alt: {:.1} m", altitude));
+                    lines.push_str(&format!("  {label}: {:.1} m", altitude));
                 }
             }
         }
