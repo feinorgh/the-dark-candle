@@ -363,27 +363,18 @@ fn quat_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 }
 
 fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
+    // Must match CPU `planet::detail::pos_to_lat_lon`: for a unit direction,
+    // lat = asin(y), lon = atan2(x, z) (Y-up). Earlier code used a different
+    // east/north basis that did NOT invert `lat_lon_to_pos`, and so the GPU
+    // classified chunks (AllAir/AllSolid/Mixed) at the wrong surface column,
+    // leaving holes in the terrain.
     let len = length(pos);
     if len < 1e-6 {
         return vec2<f32>(0.0, 0.0);
     }
     let dir = pos / len;
-
-    let sin_lat = clamp(dot(dir, axis), -1.0, 1.0);
-    let lat = asin(sin_lat);
-
-    let equatorial = dir - axis * sin_lat;
-    let eq_len = length(equatorial);
-    if eq_len < 1e-6 {
-        return vec2<f32>(lat, 0.0);
-    }
-    let eq_norm = equatorial / eq_len;
-
-    let ref_x = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(axis.x) < 0.9);
-    let east = normalize(cross(axis, ref_x));
-    let north_eq = normalize(cross(east, axis));
-
-    let lon = atan2(dot(eq_norm, north_eq), dot(eq_norm, east));
+    let lat = asin(clamp(dir.y, -1.0, 1.0));
+    let lon = atan2(dir.x, dir.z);
     return vec2<f32>(lat, lon);
 }
 
