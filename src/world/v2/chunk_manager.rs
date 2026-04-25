@@ -141,7 +141,14 @@ pub struct V2PipelineStats {
     pub pending_terrain: usize,
     pub pending_meshes: usize,
     pub cache_entries: usize,
+    pub cache_all_air: usize,
+    pub cache_all_solid: usize,
+    pub cache_mixed: usize,
     pub loaded: usize,
+    pub loaded_lod0: usize,
+    pub loaded_lod_max: usize,
+    pub meshed_lod0: usize,
+    pub meshed_lod_max: usize,
     pub dispatched_this_frame: usize,
     pub gpu_in_flight: bool,
 }
@@ -189,6 +196,21 @@ impl V2VoxelCache {
 
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Returns (all_air, all_solid, mixed) counts for diagnostics.
+    pub fn classification_counts(&self) -> (usize, usize, usize) {
+        let mut air = 0;
+        let mut solid = 0;
+        let mut mixed = 0;
+        for v in self.entries.values() {
+            match v {
+                CachedVoxels::AllAir => air += 1,
+                CachedVoxels::AllSolid(_) => solid += 1,
+                CachedVoxels::Mixed(_) => mixed += 1,
+            }
+        }
+        (air, solid, mixed)
     }
 
     pub fn byte_size(&self) -> usize {
@@ -658,6 +680,33 @@ pub fn v2_update_chunks(
 
     // Update HUD stats — must happen *after* dispatch so pending counts
     // reflect this frame's newly-spawned tasks.
+    let (cache_all_air, cache_all_solid, cache_mixed) = cache.classification_counts();
+    let mut loaded_lod0 = 0;
+    let mut loaded_lod_max = 0;
+    let mut meshed_lod0 = 0;
+    let mut meshed_lod_max = 0;
+    for c in &chunk_map.loaded {
+        if c.lod == 0 {
+            loaded_lod0 += 1;
+        } else if c.lod == max_lod {
+            loaded_lod_max += 1;
+        }
+    }
+    for c in chunk_map.loaded.iter() {
+        let is_meshed = !matches!(
+            cache.get(c),
+            Some(CachedVoxels::AllAir) | Some(CachedVoxels::AllSolid(_))
+        );
+        if !is_meshed {
+            continue;
+        }
+        if c.lod == 0 {
+            meshed_lod0 += 1;
+        } else if c.lod == max_lod {
+            meshed_lod_max += 1;
+        }
+    }
+
     *stats = V2PipelineStats {
         desired: desired.len(),
         desired_lod0,
@@ -665,7 +714,14 @@ pub fn v2_update_chunks(
         pending_terrain: pending_terrain.pending.len(),
         pending_meshes: pending_meshes.pending.len(),
         cache_entries: cache.entry_count(),
+        cache_all_air,
+        cache_all_solid,
+        cache_mixed,
         loaded: chunk_map.loaded.len(),
+        loaded_lod0,
+        loaded_lod_max,
+        meshed_lod0,
+        meshed_lod_max,
         dispatched_this_frame,
         gpu_in_flight: gpu_in_flight_now,
     };
@@ -1037,14 +1093,21 @@ fn v2_diagnostics(
     );
     // Mirror the F3 HUD line to stdout so it can be copy/pasted easily.
     info!(
-        "V2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{} cache:{} loaded:{} disp/f:{}{}",
+        "V2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{} cache:{} (air:{} solid:{} mix:{}) loaded:{} (L0:{} Lmax:{}) meshed:(L0:{} Lmax:{}) disp/f:{}{}",
         stats.desired,
         stats.desired_lod0,
         stats.desired_lod_max,
         stats.pending_terrain,
         stats.pending_meshes,
         stats.cache_entries,
+        stats.cache_all_air,
+        stats.cache_all_solid,
+        stats.cache_mixed,
         stats.loaded,
+        stats.loaded_lod0,
+        stats.loaded_lod_max,
+        stats.meshed_lod0,
+        stats.meshed_lod_max,
         stats.dispatched_this_frame,
         if stats.gpu_in_flight { " gpu*" } else { "" },
     );

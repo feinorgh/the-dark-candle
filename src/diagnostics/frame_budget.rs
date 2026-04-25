@@ -189,14 +189,21 @@ pub fn update_overlay_text(
         // never being requested (or the cache→loaded path is stuck).
         if let Some(s) = v2_stats.as_ref() {
             lines.push_str(&format!(
-                "\nV2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{} cache:{} loaded:{} disp/f:{}{}",
+                "\nV2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{}\n  cache:{} air:{} solid:{} mix:{}  loaded:{} (L0:{} Lmax:{})\n  meshed (L0:{} Lmax:{})  disp/f:{}{}",
                 s.desired,
                 s.desired_lod0,
                 s.desired_lod_max,
                 s.pending_terrain,
                 s.pending_meshes,
                 s.cache_entries,
+                s.cache_all_air,
+                s.cache_all_solid,
+                s.cache_mixed,
                 s.loaded,
+                s.loaded_lod0,
+                s.loaded_lod_max,
+                s.meshed_lod0,
+                s.meshed_lod_max,
                 s.dispatched_this_frame,
                 if s.gpu_in_flight { " gpu*" } else { "" },
             ));
