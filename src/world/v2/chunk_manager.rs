@@ -26,26 +26,12 @@ use crate::world::meshing::{ChunkMesh, ChunkMeshMarker, chunk_mesh_to_bevy_mesh}
 use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
 use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord, world_pos_to_coord};
-use crate::world::v2::greedy_mesh;
 use crate::world::v2::greedy_mesh::NeighborSlices;
 use crate::world::v2::surface_nets;
 use crate::world::v2::terrain_gen::{
     CachedVoxels, V2TerrainData, cached_voxels_to_vec, extract_edge_slice,
     generate_single_boundary_slice, generate_v2_voxels,
 };
-use crate::world::voxel::MaterialId;
-
-#[inline]
-fn render_kind_for_match(mat: MaterialId) -> u8 {
-    if greedy_mesh::is_transparent(mat) {
-        0
-    } else if mat == MaterialId::WATER {
-        1
-    } else {
-        2
-    }
-}
-
 // ── Limits ────────────────────────────────────────────────────────────────
 
 const MAX_TERRAIN_DISPATCHES_PER_FRAME: usize = 32;
@@ -105,10 +91,11 @@ impl Default for V2LoadRadius {
     }
 }
 
-/// Tracks which CubeSphereCoords are currently loaded (entity spawned).
+/// Tracks which CubeSphereCoords currently have a spawned entity, mapped to
+/// the entity itself so we can despawn for remesh-invalidation.
 #[derive(Resource, Default)]
 pub struct V2ChunkMap {
-    loaded: HashSet<CubeSphereCoord>,
+    loaded: HashMap<CubeSphereCoord, Entity>,
 }
 
 impl V2ChunkMap {
@@ -584,7 +571,7 @@ pub fn v2_update_chunks(
     let mut to_dispatch: Vec<CubeSphereCoord> = desired
         .iter()
         .filter(|c| {
-            !chunk_map.loaded.contains(c)
+            !chunk_map.loaded.contains_key(c)
                 && !pending_terrain.pending.contains(c)
                 && !pending_meshes.pending.contains(c)
                 && !cache.contains(c)
@@ -698,14 +685,14 @@ pub fn v2_update_chunks(
     let mut loaded_lod_max = 0;
     let mut meshed_lod0 = 0;
     let mut meshed_lod_max = 0;
-    for c in &chunk_map.loaded {
+    for c in chunk_map.loaded.keys() {
         if c.lod == 0 {
             loaded_lod0 += 1;
         } else if c.lod == max_lod {
             loaded_lod_max += 1;
         }
     }
-    for c in chunk_map.loaded.iter() {
+    for c in chunk_map.loaded.keys() {
         let is_meshed = !matches!(
             cache.get(c),
             Some(CachedVoxels::AllAir) | Some(CachedVoxels::AllSolid(_))
@@ -855,6 +842,27 @@ pub fn v2_collect_terrain(
         newly_cached.push(result.coord);
     }
 
+    // Stage 1b: remesh-invalidate same-face neighbours of newly cached chunks.
+    //
+    // A neighbour that already meshed against a *resampled* boundary slice
+    // will have inaccurate geometry on the seam facing this newly-arrived
+    // chunk. Despawning its entity and removing it from `loaded` makes it
+    // a candidate for re-dispatch in Stage 2 below, where it will mesh
+    // against the now-cached real boundary data.
+    if !newly_cached.is_empty() {
+        for &coord in &newly_cached {
+            let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+            let max_uv = coord_fce as i32;
+            for dir in 0..6 {
+                if let Some(nc) = same_face_neighbor_for_dir(coord, dir, max_uv)
+                    && let Some(ent) = chunk_map.loaded.remove(&nc)
+                {
+                    commands.entity(ent).despawn();
+                }
+            }
+        }
+    }
+
     // Stage 2: dispatch mesh tasks for newly cached chunks
     // (also try chunks that were waiting for a neighbor to complete)
     let pool = AsyncComputeTaskPool::get();
@@ -866,7 +874,7 @@ pub fn v2_collect_terrain(
     let candidates: Vec<CubeSphereCoord> = cache
         .entries
         .keys()
-        .filter(|c| !chunk_map.loaded.contains(c) && !pending_meshes.pending.contains(c))
+        .filter(|c| !chunk_map.loaded.contains_key(c) && !pending_meshes.pending.contains(c))
         .copied()
         .collect();
 
@@ -877,22 +885,17 @@ pub fn v2_collect_terrain(
 
         let voxel_data = cache.get(&coord).unwrap().clone();
 
-        // Fast-path: AllAir chunks can never emit any face — air-like
-        // voxels have render_kind 0 and the rule `my_kind > neighbor_kind`
-        // is unsatisfiable from kind 0. So an empty mesh is correct.
+        // Fast-path: AllAir chunks can never emit any face. Skip the
+        // mesher entirely and produce an empty mesh.
         //
-        // For AllSolid chunks, we only run the mesher if at least one
-        // same-face neighbour is *cached* and provably has a lower-kind
-        // material at the shared boundary. This catches the seabed
-        // (AllSolid stone under Mixed water+stone) and on-grid-boundary
-        // land surfaces (AllSolid stone under AllAir) without producing
-        // phantom 6-face hulls when neighbour data hasn't loaded yet —
-        // the resampler's view of "what's next door" can disagree with
-        // reality at coarse LOD/cube-face seams, and we should never
-        // commit a hull to the renderer based on a guess.
-        //
-        // When the necessary neighbour loads later, this chunk becomes a
-        // candidate again and we'll re-evaluate.
+        // AllSolid chunks no longer have a special gate. Surface Nets
+        // with the unified density SDF naturally emits zero quads when
+        // the chunk is surrounded by uniform same-density material
+        // (no sign change anywhere), and emits the appropriate face
+        // when a neighbour exposes a different material. The previous
+        // "visible-boundary" gate caused two classes of bugs (provisional
+        // boundary data + permanent empty-mesh lock-in) without saving
+        // meaningful work.
         if matches!(voxel_data, CachedVoxels::AllAir) {
             let task = pool.spawn(async move {
                 V2MeshResult {
@@ -908,69 +911,6 @@ pub fn v2_collect_terrain(
             commands.spawn(V2MeshTask(task));
             pending_meshes.pending.insert(coord);
             continue;
-        }
-
-        if let CachedVoxels::AllSolid(my_mat) = &voxel_data {
-            let my_kind = render_kind_for_match(*my_mat);
-            let coord_fce_check =
-                CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
-            let mut has_visible_boundary = false;
-            let mut missing_neighbour = false;
-            for dir in 0..6 {
-                let Some(nc) = same_face_neighbor_for_dir(coord, dir, coord_fce_check as i32)
-                else {
-                    // Out-of-face: cross-face seam. We never get a same-face
-                    // signal here, so don't count it as missing.
-                    continue;
-                };
-                let Some(nbr) = cache.get(&nc) else {
-                    // In-face neighbour not yet cached — its eventual content
-                    // could expose a face. Track this so we DEFER instead of
-                    // permanently finalizing the chunk as empty.
-                    missing_neighbour = true;
-                    continue;
-                };
-                let nbr_kind_at_boundary = match nbr {
-                    CachedVoxels::AllAir => 0u8,
-                    CachedVoxels::AllSolid(m) => render_kind_for_match(*m),
-                    CachedVoxels::Mixed(_) => {
-                        // Inspect the actual boundary slice from the cached neighbour.
-                        let slice = extract_edge_slice(nbr, dir);
-                        let mut min_kind = u8::MAX;
-                        for v in &slice {
-                            let k = render_kind_for_match(v.material);
-                            if k < min_kind {
-                                min_kind = k;
-                            }
-                            if min_kind == 0 {
-                                break;
-                            }
-                        }
-                        min_kind
-                    }
-                };
-                if nbr_kind_at_boundary < my_kind {
-                    has_visible_boundary = true;
-                    break;
-                }
-            }
-            if !has_visible_boundary {
-                if missing_neighbour {
-                    // Defer: neighbours haven't loaded yet. Do NOT insert
-                    // into `chunk_map.loaded` — the candidate filter at the
-                    // top of this loop excludes loaded chunks, and we need
-                    // to re-evaluate this chunk next frame once neighbours
-                    // arrive. Just skip dispatch this frame.
-                    continue;
-                }
-                // All in-face neighbours are cached and none expose a lower
-                // kind at the boundary — this chunk is genuinely buried and
-                // will never need a mesh. Finalize as empty so we stop
-                // re-considering it every frame.
-                chunk_map.loaded.insert(coord);
-                pending_meshes.pending.remove(&coord);
-                continue;
-            }
         }
 
         let tgen = terrain_gen.0.clone();
@@ -1074,32 +1014,36 @@ pub fn v2_collect_meshes(
         let adjusted = center_render - rotation * cs_half_scaled;
 
         if result.mesh.is_empty() {
-            chunk_map.loaded.insert(result.coord);
-            commands.spawn((
-                V2ChunkMarker,
-                V2ChunkCoord(result.coord),
-                Transform::from_translation(adjusted)
-                    .with_rotation(rotation)
-                    .with_scale(tangent_scale),
-            ));
+            let ent = commands
+                .spawn((
+                    V2ChunkMarker,
+                    V2ChunkCoord(result.coord),
+                    Transform::from_translation(adjusted)
+                        .with_rotation(rotation)
+                        .with_scale(tangent_scale),
+                ))
+                .id();
+            chunk_map.loaded.insert(result.coord, ent);
             continue;
         }
 
         let bevy_mesh = chunk_mesh_to_bevy_mesh(result.mesh);
         let mesh_handle = meshes.add(bevy_mesh);
 
-        commands.spawn((
-            V2ChunkMarker,
-            V2ChunkCoord(result.coord),
-            ChunkMeshMarker,
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(chunk_material.clone()),
-            Transform::from_translation(adjusted)
-                .with_rotation(rotation)
-                .with_scale(tangent_scale),
-        ));
+        let ent = commands
+            .spawn((
+                V2ChunkMarker,
+                V2ChunkCoord(result.coord),
+                ChunkMeshMarker,
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(chunk_material.clone()),
+                Transform::from_translation(adjusted)
+                    .with_rotation(rotation)
+                    .with_scale(tangent_scale),
+            ))
+            .id();
 
-        chunk_map.loaded.insert(result.coord);
+        chunk_map.loaded.insert(result.coord, ent);
     }
 }
 

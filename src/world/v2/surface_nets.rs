@@ -61,19 +61,25 @@ fn slice_index(a: usize, b: usize) -> usize {
 /// Sample the voxel at corner (i, j, k) of the (CS+1)^3 corner grid.
 ///
 /// For interior corners (all of i, j, k < CS) this is a direct voxel lookup.
-/// On the +X / +Y / +Z faces (one of the indices == CS) we read the
-/// corresponding 1-layer neighbour slice. At corner-grid edges and the
-/// far corner where two or three indices equal CS, the data isn't
-/// available — we return AIR there, accepting a small crack at chunk
-/// edges.
-#[inline]
+/// On the +X / +Y / +Z faces (exactly one index == CS) we read the
+/// corresponding 1-layer neighbour slice.
+///
+/// At chunk-edge corners (exactly two indices == CS) we don't have the
+/// diagonal-neighbour data, so we approximate by sampling the two
+/// adjacent face slices and the chunk's own clamped voxel and picking
+/// the highest-density value. Using max-density (rather than AIR
+/// fallback) prevents fabricated sign changes along uniform-material
+/// chunk edges, which would otherwise produce phantom geometry strips.
+///
+/// At the +X+Y+Z corner (all three == CS) we sample all three +face
+/// slices' nearest cells plus the own corner voxel, again taking max
+/// density.
 fn corner_voxel(voxels: &[Voxel], neighbors: &NeighborSlices, i: usize, j: usize, k: usize) -> Voxel {
     let hi = (i == CS) as u8 + (j == CS) as u8 + (k == CS) as u8;
     if hi == 0 {
         return voxels[voxel_index(i, j, k)];
     }
     if hi == 1 {
-        // exactly one of i/j/k is CS — use the matching +face slice.
         if i == CS {
             if let Some(ref s) = neighbors.slices[0] {
                 return s[slice_index(j, k)];
@@ -87,9 +93,49 @@ fn corner_voxel(voxels: &[Voxel], neighbors: &NeighborSlices, i: usize, j: usize
                 return s[slice_index(i, j)];
             }
         }
+        // Slice missing: best-effort fallback to the clamped own voxel.
+        let ci = i.min(CS - 1);
+        let cj = j.min(CS - 1);
+        let ck = k.min(CS - 1);
+        return voxels[voxel_index(ci, cj, ck)];
     }
-    // hi >= 2 (corner grid edge / far corner) or missing neighbour slice.
-    Voxel::default()
+
+    // hi >= 2: combine all available face slices that "touch" this corner
+    // plus the chunk's own clamped voxel. Pick the one with the highest
+    // density so that uniform-material chunk edges don't fabricate sign
+    // changes.
+    let mut best = voxels[voxel_index(i.min(CS - 1), j.min(CS - 1), k.min(CS - 1))];
+    let mut best_density = best.density;
+
+    let consider = |v: Voxel, best: &mut Voxel, best_density: &mut f32| {
+        if v.density > *best_density {
+            *best_density = v.density;
+            *best = v;
+        }
+    };
+
+    if i == CS {
+        if let Some(ref s) = neighbors.slices[0] {
+            let jj = j.min(CS - 1);
+            let kk = k.min(CS - 1);
+            consider(s[slice_index(jj, kk)], &mut best, &mut best_density);
+        }
+    }
+    if j == CS {
+        if let Some(ref s) = neighbors.slices[2] {
+            let ii = i.min(CS - 1);
+            let kk = k.min(CS - 1);
+            consider(s[slice_index(ii, kk)], &mut best, &mut best_density);
+        }
+    }
+    if k == CS {
+        if let Some(ref s) = neighbors.slices[4] {
+            let ii = i.min(CS - 1);
+            let jj = j.min(CS - 1);
+            consider(s[slice_index(ii, jj)], &mut best, &mut best_density);
+        }
+    }
+    best
 }
 
 /// Unified SDF: `density - 0.5`. See module docs for why this works for
