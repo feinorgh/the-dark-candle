@@ -864,13 +864,25 @@ pub fn v2_collect_terrain(
 
         let voxel_data = cache.get(&coord).unwrap().clone();
 
-        // Fast-path: AllSolid / AllAir chunks never contain a visible surface
-        // (they are entirely buried or entirely empty).  Emitting a greedy
-        // mesh for them would produce a 6-face hull that shows up as a
-        // phantom cube when neighbours are unloaded — the source of the
-        // "floating square faces" seen at coarse LODs where adjacent
-        // surface-tracking columns sit at very different altitudes.
-        if matches!(voxel_data, CachedVoxels::AllSolid(_) | CachedVoxels::AllAir) {
+        // Fast-path: AllAir chunks can never emit any face — air-like
+        // voxels have render_kind 0 and the rule `my_kind > neighbor_kind`
+        // is unsatisfiable from kind 0. So an empty mesh is correct.
+        //
+        // AllSolid chunks are NOT skipped: they still need to mesh their
+        // boundary faces because neighbours of lower render_kind (water,
+        // air) lie on the other side. In particular:
+        //   • At the seabed, an AllSolid(stone) chunk can sit immediately
+        //     under a Mixed water+stone chunk whose bottom voxels are
+        //     water; the stone↔water face must be emitted from the stone
+        //     side (kind 2 > 1).
+        //   • On land, when the surface elevation lies exactly at a chunk
+        //     boundary, the chunk above is AllAir and the chunk below is
+        //     AllSolid(stone) — the stone↔air face must be emitted from
+        //     the stone chunk.
+        // Interior AllSolid chunks naturally emit nothing because their
+        // neighbour slices contain the same material (kind == kind, no
+        // face emitted), so the cost is bounded.
+        if matches!(voxel_data, CachedVoxels::AllAir) {
             let task = pool.spawn(async move {
                 V2MeshResult {
                     coord,
