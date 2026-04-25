@@ -128,6 +128,19 @@ impl V2PendingMeshes {
     }
 }
 
+/// Newly-cached chunk coordinates queued for neighbour-mesh invalidation.
+///
+/// Populated by both `v2_collect_terrain` (CPU path) and `v2_collect_gpu_terrain`
+/// (GPU path) when fresh terrain data arrives. Drained by `v2_collect_terrain`
+/// before its mesh-dispatch stage: each newly-cached coord causes its 6
+/// same-face neighbours to be despawned and removed from `chunk_map.loaded`,
+/// so they re-mesh against the now-cached real boundary data instead of
+/// keeping stale resampled-fallback geometry forever.
+#[derive(Resource, Default)]
+pub struct V2InvalidationQueue {
+    pub coords: Vec<CubeSphereCoord>,
+}
+
 /// Per-frame stats for the v2 chunk pipeline (HUD diagnostics).
 ///
 /// Updated by `v2_update_chunks` once per frame so the F3 overlay can show
@@ -814,6 +827,7 @@ pub fn v2_collect_terrain(
     mut pending_meshes: ResMut<V2PendingMeshes>,
     mut cache: ResMut<V2VoxelCache>,
     mut chunk_map: ResMut<V2ChunkMap>,
+    mut invalidation_queue: ResMut<V2InvalidationQueue>,
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
     color_map: Res<MaterialColorMap>,
@@ -822,7 +836,6 @@ pub fn v2_collect_terrain(
     let mean_radius = planet.mean_radius;
 
     // Stage 1: collect completed terrain tasks
-    let mut newly_cached = Vec::new();
     let mut collected = 0usize;
 
     for (task_entity, mut task) in &mut task_q {
@@ -837,20 +850,24 @@ pub fn v2_collect_terrain(
         commands.entity(task_entity).despawn();
         pending_terrain.pending.remove(&result.coord);
 
-        // Store in cache
+        // Store in cache and queue for neighbour invalidation.
         cache.insert(result.coord, result.voxels);
-        newly_cached.push(result.coord);
+        invalidation_queue.coords.push(result.coord);
     }
 
-    // Stage 1b: remesh-invalidate same-face neighbours of newly cached chunks.
+    // Stage 1b: remesh-invalidate same-face neighbours of every chunk that
+    // was newly cached this frame (from either CPU or GPU path).
     //
     // A neighbour that already meshed against a *resampled* boundary slice
-    // will have inaccurate geometry on the seam facing this newly-arrived
-    // chunk. Despawning its entity and removing it from `loaded` makes it
-    // a candidate for re-dispatch in Stage 2 below, where it will mesh
-    // against the now-cached real boundary data.
-    if !newly_cached.is_empty() {
-        for &coord in &newly_cached {
+    // (because this chunk wasn't cached yet) will have inaccurate geometry
+    // on the seam facing this newly-arrived chunk. Despawning its entity
+    // and removing it from `loaded` makes it a candidate for re-dispatch
+    // in Stage 2 below, where it will mesh against the now-cached real
+    // boundary data.
+    if !invalidation_queue.coords.is_empty() {
+        // Take ownership of the queue so we can iterate it and clear it.
+        let drained: Vec<CubeSphereCoord> = invalidation_queue.coords.drain(..).collect();
+        for coord in drained {
             let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
             let max_uv = coord_fce as i32;
             for dir in 0..6 {
@@ -939,6 +956,7 @@ pub fn v2_collect_gpu_terrain(
     mut commands: Commands,
     mut pending_terrain: ResMut<V2PendingTerrain>,
     mut cache: ResMut<V2VoxelCache>,
+    mut invalidation_queue: ResMut<V2InvalidationQueue>,
     mut task_q: Query<(Entity, &mut V2GpuTerrainTask)>,
 ) {
     let mut collected = 0usize;
@@ -956,6 +974,10 @@ pub fn v2_collect_gpu_terrain(
         for result in results {
             pending_terrain.pending.remove(&result.coord);
             cache.insert(result.coord, result.voxels);
+            // Queue neighbour invalidation; v2_collect_terrain will drain
+            // this queue and despawn stale-meshed neighbours before its
+            // own dispatch stage.
+            invalidation_queue.coords.push(result.coord);
         }
     }
 }
@@ -1070,6 +1092,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<V2ChunkMap>()
             .init_resource::<V2PendingTerrain>()
             .init_resource::<V2PendingMeshes>()
+            .init_resource::<V2InvalidationQueue>()
             .init_resource::<V2VoxelCache>()
             .init_resource::<GpuTerrainDispatcher>()
             .init_resource::<V2PipelineStats>()
@@ -1305,6 +1328,7 @@ mod tests {
         app.init_resource::<V2ChunkMap>();
         app.init_resource::<V2PendingTerrain>();
         app.init_resource::<V2PendingMeshes>();
+        app.init_resource::<V2InvalidationQueue>();
         app.init_resource::<V2VoxelCache>();
         app.init_resource::<GpuTerrainDispatcher>();
         app.init_resource::<V2PipelineStats>();
