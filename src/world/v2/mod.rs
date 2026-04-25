@@ -8,4 +8,5 @@
 pub mod chunk_manager;
 pub mod cubed_sphere;
 pub mod greedy_mesh;
+pub mod surface_nets;
 pub mod terrain_gen;

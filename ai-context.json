@@ -1295,11 +1295,12 @@
     {
       "name": "V2 cubed-sphere rendering pipeline",
       "status": "complete",
-      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, multi-LOD ring system (L0–L4, ~10km view distance), greedy meshing, voxel cache for boundary reuse. CubeSphereCoord includes lod:u8 field. 39 tests.",
+      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, multi-LOD ring system (L0–L4, ~10km view distance), Surface Nets meshing using per-voxel density (greedy_mesh kept as fallback / for tests), voxel cache for boundary reuse. CubeSphereCoord includes lod:u8 field. 45 tests.",
       "paths": [
         "src/world/v2/mod.rs",
         "src/world/v2/cubed_sphere.rs",
         "src/world/v2/greedy_mesh.rs",
+        "src/world/v2/surface_nets.rs",
         "src/world/v2/terrain_gen.rs",
         "src/world/v2/chunk_manager.rs"
       ]
@@ -1310,7 +1311,7 @@
       "files": [
         "src/world/v2/"
       ],
-      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache. Multi-LOD rings (5 levels). Greedy mesh + terrain-gen ground collision."
+      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache. Multi-LOD rings (5 levels). Surface Nets mesh (density SDF, sub-voxel) + terrain-gen ground collision."
     },
     {
       "name": "Configurable player spawn location",
@@ -2882,11 +2883,12 @@
     {
       "name": "V2 cubed-sphere rendering pipeline",
       "status": "complete",
-      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, greedy meshing, voxel cache for boundary reuse. 39 tests.",
+      "description": "Two-stage async pipeline (terrain→mesh) with cubed-sphere coords, Surface Nets meshing (density-aware sub-voxel iso-surface), voxel cache for boundary reuse. 45 tests.",
       "paths": [
         "src/world/v2/mod.rs",
         "src/world/v2/cubed_sphere.rs",
         "src/world/v2/greedy_mesh.rs",
+        "src/world/v2/surface_nets.rs",
         "src/world/v2/terrain_gen.rs",
         "src/world/v2/chunk_manager.rs"
       ]
@@ -2897,7 +2899,7 @@
       "files": [
         "src/world/v2/"
       ],
-      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache for boundary slice reuse. Greedy mesh + terrain-gen ground collision."
+      "notes": "Default pipeline. Two-stage terrain→mesh split with V2VoxelCache for boundary slice reuse. Surface Nets mesh (density SDF, sub-voxel) + terrain-gen ground collision."
     },
     {
       "name": "Configurable player spawn location",

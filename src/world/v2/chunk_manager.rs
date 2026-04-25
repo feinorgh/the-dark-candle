@@ -28,6 +28,7 @@ use crate::world::terrain::UnifiedTerrainGenerator;
 use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord, world_pos_to_coord};
 use crate::world::v2::greedy_mesh;
 use crate::world::v2::greedy_mesh::NeighborSlices;
+use crate::world::v2::surface_nets;
 use crate::world::v2::terrain_gen::{
     CachedVoxels, V2TerrainData, cached_voxels_to_vec, extract_edge_slice,
     generate_single_boundary_slice, generate_v2_voxels,
@@ -967,7 +968,7 @@ pub fn v2_collect_terrain(
 
         let task = pool.spawn(async move {
             let voxels = cached_voxels_to_vec(&voxel_data);
-            let mesh = greedy_mesh::greedy_mesh(&voxels, &neighbor_slices, &cmap);
+            let mesh = surface_nets::surface_nets_mesh(&voxels, &neighbor_slices, &cmap);
             V2MeshResult { coord, mesh }
         });
 
