@@ -128,6 +128,24 @@ impl V2PendingMeshes {
     }
 }
 
+/// Per-frame stats for the v2 chunk pipeline (HUD diagnostics).
+///
+/// Updated by `v2_update_chunks` once per frame so the F3 overlay can show
+/// what the v2 pipeline is doing right now without having to recompute the
+/// (expensive) desired set itself.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct V2PipelineStats {
+    pub desired: usize,
+    pub desired_lod0: usize,
+    pub desired_lod_max: usize,
+    pub pending_terrain: usize,
+    pub pending_meshes: usize,
+    pub cache_entries: usize,
+    pub loaded: usize,
+    pub dispatched_this_frame: usize,
+    pub gpu_in_flight: bool,
+}
+
 /// GPU terrain dispatcher resource.
 ///
 /// Holds the `GpuVoxelCompute` pipeline (if GPU is available) and pending
@@ -483,6 +501,7 @@ pub fn v2_update_chunks(
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
     gpu_dispatcher: Res<GpuTerrainDispatcher>,
+    mut stats: ResMut<V2PipelineStats>,
     camera_q: Query<&WorldPosition, With<FpsCamera>>,
     v2_chunks_q: Query<(Entity, &V2ChunkCoord), With<V2ChunkMarker>>,
     gpu_tasks_q: Query<Entity, With<V2GpuTerrainTask>>,
@@ -492,6 +511,11 @@ pub fn v2_update_chunks(
     };
 
     let desired = desired_chunks_v2(cam_world_pos.0, &planet, &load_radius, Some(&terrain_gen.0));
+
+    // Per-LOD desired breakdown for HUD diagnostics.
+    let max_lod = LOD_RINGS.iter().map(|(l, _)| *l).max().unwrap_or(0);
+    let desired_lod0 = desired.iter().filter(|c| c.lod == 0).count();
+    let desired_lod_max = desired.iter().filter(|c| c.lod == max_lod).count();
 
     // Despawn chunk entities no longer desired and evict cache
     for (entity, coord) in &v2_chunks_q {
@@ -559,10 +583,13 @@ pub fn v2_update_chunks(
         .take(budget.min(MAX_CHUNKS_PER_BATCH))
         .collect();
 
+    let dispatched_this_frame = dispatched.len();
+    let gpu_in_flight_now = !gpu_tasks_q.is_empty();
+
     if let Some(ref compute) = gpu_dispatcher.compute {
         // Only dispatch a GPU batch if no previous batch is still in flight —
         // the pre-allocated staging buffers are not thread-safe.
-        let gpu_in_flight = !gpu_tasks_q.is_empty();
+        let gpu_in_flight = gpu_in_flight_now;
         if !dispatched.is_empty() && !gpu_in_flight {
             let compute = compute.clone();
             let mean_r = mean_radius;
@@ -628,6 +655,20 @@ pub fn v2_update_chunks(
             pending_terrain.pending.insert(coord);
         }
     }
+
+    // Update HUD stats — must happen *after* dispatch so pending counts
+    // reflect this frame's newly-spawned tasks.
+    *stats = V2PipelineStats {
+        desired: desired.len(),
+        desired_lod0,
+        desired_lod_max,
+        pending_terrain: pending_terrain.pending.len(),
+        pending_meshes: pending_meshes.pending.len(),
+        cache_entries: cache.entry_count(),
+        loaded: chunk_map.loaded.len(),
+        dispatched_this_frame,
+        gpu_in_flight: gpu_in_flight_now,
+    };
 }
 
 /// Helper: compute the same-face neighbor coord for a given mesh direction.
@@ -945,6 +986,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<V2PendingMeshes>()
             .init_resource::<V2VoxelCache>()
             .init_resource::<GpuTerrainDispatcher>()
+            .init_resource::<V2PipelineStats>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
@@ -1158,6 +1200,7 @@ mod tests {
         app.init_resource::<V2PendingMeshes>();
         app.init_resource::<V2VoxelCache>();
         app.init_resource::<GpuTerrainDispatcher>();
+        app.init_resource::<V2PipelineStats>();
         app.insert_resource(MaterialColorMap::from_defaults());
 
         // RenderOrigin at the camera position so chunk Transforms are near zero.

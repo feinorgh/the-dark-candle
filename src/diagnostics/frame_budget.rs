@@ -98,6 +98,7 @@ pub fn update_overlay_text(
     chunk_stats: Option<Res<ChunkStats>>,
     planet: Res<crate::world::planet::PlanetConfig>,
     terrain_gen: Option<Res<crate::world::chunk_manager::SharedTerrainGen>>,
+    v2_stats: Option<Res<crate::world::v2::chunk_manager::V2PipelineStats>>,
     mut query: Query<&mut Text, With<FrameBudgetOverlay>>,
 ) {
     for mut text in &mut query {
@@ -179,6 +180,27 @@ pub fn update_overlay_text(
             "\nChunks: {} (gen {} mesh {})  View: {}  Time: {:.0}x ({:02}:{:02})",
             chunks, generating, meshing, view, time_scale, hour_int, minute,
         ));
+
+        // Line 6: V2 pipeline state — diagnostic for fragmentation issues.
+        // `desired` is the total chunks the camera position requests right
+        // now; `loaded` is how many actually have a renderable entity.  A
+        // large `desired - loaded` gap with non-zero `pending` means budget
+        // starvation; a gap with zero pending means chunks are silently
+        // never being requested (or the cache→loaded path is stuck).
+        if let Some(s) = v2_stats.as_ref() {
+            lines.push_str(&format!(
+                "\nV2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{} cache:{} loaded:{} disp/f:{}{}",
+                s.desired,
+                s.desired_lod0,
+                s.desired_lod_max,
+                s.pending_terrain,
+                s.pending_meshes,
+                s.cache_entries,
+                s.loaded,
+                s.dispatched_this_frame,
+                if s.gpu_in_flight { " gpu*" } else { "" },
+            ));
+        }
 
         **text = lines;
     }
