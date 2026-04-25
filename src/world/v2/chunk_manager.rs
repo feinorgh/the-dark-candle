@@ -915,12 +915,19 @@ pub fn v2_collect_terrain(
             let coord_fce_check =
                 CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
             let mut has_visible_boundary = false;
+            let mut missing_neighbour = false;
             for dir in 0..6 {
                 let Some(nc) = same_face_neighbor_for_dir(coord, dir, coord_fce_check as i32)
                 else {
+                    // Out-of-face: cross-face seam. We never get a same-face
+                    // signal here, so don't count it as missing.
                     continue;
                 };
                 let Some(nbr) = cache.get(&nc) else {
+                    // In-face neighbour not yet cached — its eventual content
+                    // could expose a face. Track this so we DEFER instead of
+                    // permanently finalizing the chunk as empty.
+                    missing_neighbour = true;
                     continue;
                 };
                 let nbr_kind_at_boundary = match nbr {
@@ -948,13 +955,20 @@ pub fn v2_collect_terrain(
                 }
             }
             if !has_visible_boundary {
-                // Defer: either fully buried/interior, or neighbours not yet
-                // loaded. We'll re-check next frame when more neighbours arrive.
-                // Mark as "loaded" with empty mesh so the chunk_map is stable
-                // and the planet feels populated, but don't spawn a Mesh3d.
+                if missing_neighbour {
+                    // Defer: neighbours haven't loaded yet. Do NOT insert
+                    // into `chunk_map.loaded` — the candidate filter at the
+                    // top of this loop excludes loaded chunks, and we need
+                    // to re-evaluate this chunk next frame once neighbours
+                    // arrive. Just skip dispatch this frame.
+                    continue;
+                }
+                // All in-face neighbours are cached and none expose a lower
+                // kind at the boundary — this chunk is genuinely buried and
+                // will never need a mesh. Finalize as empty so we stop
+                // re-considering it every frame.
                 chunk_map.loaded.insert(coord);
                 pending_meshes.pending.remove(&coord);
-                // We didn't actually dispatch — don't count toward budget.
                 continue;
             }
         }
