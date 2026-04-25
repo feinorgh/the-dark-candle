@@ -32,6 +32,18 @@ use crate::world::v2::terrain_gen::{
     CachedVoxels, V2TerrainData, cached_voxels_to_vec, extract_edge_slice,
     generate_single_boundary_slice, generate_v2_voxels,
 };
+use crate::world::voxel::MaterialId;
+
+#[inline]
+fn render_kind_for_match(mat: MaterialId) -> u8 {
+    if greedy_mesh::is_transparent(mat) {
+        0
+    } else if mat == MaterialId::WATER {
+        1
+    } else {
+        2
+    }
+}
 
 // ── Limits ────────────────────────────────────────────────────────────────
 
@@ -813,7 +825,7 @@ pub fn v2_collect_terrain(
     mut pending_terrain: ResMut<V2PendingTerrain>,
     mut pending_meshes: ResMut<V2PendingMeshes>,
     mut cache: ResMut<V2VoxelCache>,
-    chunk_map: Res<V2ChunkMap>,
+    mut chunk_map: ResMut<V2ChunkMap>,
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
     color_map: Res<MaterialColorMap>,
@@ -868,20 +880,18 @@ pub fn v2_collect_terrain(
         // voxels have render_kind 0 and the rule `my_kind > neighbor_kind`
         // is unsatisfiable from kind 0. So an empty mesh is correct.
         //
-        // AllSolid chunks are NOT skipped: they still need to mesh their
-        // boundary faces because neighbours of lower render_kind (water,
-        // air) lie on the other side. In particular:
-        //   • At the seabed, an AllSolid(stone) chunk can sit immediately
-        //     under a Mixed water+stone chunk whose bottom voxels are
-        //     water; the stone↔water face must be emitted from the stone
-        //     side (kind 2 > 1).
-        //   • On land, when the surface elevation lies exactly at a chunk
-        //     boundary, the chunk above is AllAir and the chunk below is
-        //     AllSolid(stone) — the stone↔air face must be emitted from
-        //     the stone chunk.
-        // Interior AllSolid chunks naturally emit nothing because their
-        // neighbour slices contain the same material (kind == kind, no
-        // face emitted), so the cost is bounded.
+        // For AllSolid chunks, we only run the mesher if at least one
+        // same-face neighbour is *cached* and provably has a lower-kind
+        // material at the shared boundary. This catches the seabed
+        // (AllSolid stone under Mixed water+stone) and on-grid-boundary
+        // land surfaces (AllSolid stone under AllAir) without producing
+        // phantom 6-face hulls when neighbour data hasn't loaded yet —
+        // the resampler's view of "what's next door" can disagree with
+        // reality at coarse LOD/cube-face seams, and we should never
+        // commit a hull to the renderer based on a guess.
+        //
+        // When the necessary neighbour loads later, this chunk becomes a
+        // candidate again and we'll re-evaluate.
         if matches!(voxel_data, CachedVoxels::AllAir) {
             let task = pool.spawn(async move {
                 V2MeshResult {
@@ -897,6 +907,55 @@ pub fn v2_collect_terrain(
             commands.spawn(V2MeshTask(task));
             pending_meshes.pending.insert(coord);
             continue;
+        }
+
+        if let CachedVoxels::AllSolid(my_mat) = &voxel_data {
+            let my_kind = render_kind_for_match(*my_mat);
+            let coord_fce_check =
+                CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
+            let mut has_visible_boundary = false;
+            for dir in 0..6 {
+                let Some(nc) = same_face_neighbor_for_dir(coord, dir, coord_fce_check as i32)
+                else {
+                    continue;
+                };
+                let Some(nbr) = cache.get(&nc) else {
+                    continue;
+                };
+                let nbr_kind_at_boundary = match nbr {
+                    CachedVoxels::AllAir => 0u8,
+                    CachedVoxels::AllSolid(m) => render_kind_for_match(*m),
+                    CachedVoxels::Mixed(_) => {
+                        // Inspect the actual boundary slice from the cached neighbour.
+                        let slice = extract_edge_slice(nbr, dir);
+                        let mut min_kind = u8::MAX;
+                        for v in &slice {
+                            let k = render_kind_for_match(v.material);
+                            if k < min_kind {
+                                min_kind = k;
+                            }
+                            if min_kind == 0 {
+                                break;
+                            }
+                        }
+                        min_kind
+                    }
+                };
+                if nbr_kind_at_boundary < my_kind {
+                    has_visible_boundary = true;
+                    break;
+                }
+            }
+            if !has_visible_boundary {
+                // Defer: either fully buried/interior, or neighbours not yet
+                // loaded. We'll re-check next frame when more neighbours arrive.
+                // Mark as "loaded" with empty mesh so the chunk_map is stable
+                // and the planet feels populated, but don't spawn a Mesh3d.
+                chunk_map.loaded.insert(coord);
+                pending_meshes.pending.remove(&coord);
+                // We didn't actually dispatch — don't count toward budget.
+                continue;
+            }
         }
 
         let tgen = terrain_gen.0.clone();
