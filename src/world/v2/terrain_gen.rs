@@ -198,12 +198,15 @@ pub(crate) fn downgrade_uniform_voxels(voxels: Vec<Voxel>) -> VoxelGenResult {
     if first == MaterialId::AIR {
         return VoxelGenResult::AllAir;
     }
-    // Only downgrade to AllSolid for opaque materials. The greedy mesher
-    // treats transparent materials specially (no internal faces), and
-    // AllSolid is rendered as a single solid box — wrong for uniform
-    // glass/steam/gas chunks. Keep those as Mixed so the mesher can
-    // handle them correctly at chunk boundaries.
-    if crate::world::v2::greedy_mesh::is_transparent(first) {
+    // Only downgrade to AllSolid for fully-opaque solid materials. The
+    // greedy mesher treats transparent materials specially (no internal
+    // faces), and the chunk manager's fast-path skips meshing AllSolid
+    // chunks entirely on the assumption they're buried. Both assumptions
+    // break for transparent media (glass/gases) and for water — uniform
+    // water chunks need their boundaries meshed so the sea surface
+    // (water↔air) and the seabed view (water↔stone, from the stone side)
+    // remain visible. Keep these as Mixed.
+    if crate::world::v2::greedy_mesh::is_transparent(first) || first == MaterialId::WATER {
         return VoxelGenResult::Mixed(voxels);
     }
     VoxelGenResult::AllSolid(first)

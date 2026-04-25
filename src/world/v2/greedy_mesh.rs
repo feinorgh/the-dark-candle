@@ -99,6 +99,26 @@ pub fn is_transparent(mat: MaterialId) -> bool {
         || mat == MaterialId::HYDROGEN
 }
 
+/// Visual "rendering kind" for face-emission decisions.
+///
+/// Faces are emitted from voxel X facing direction D iff
+/// `render_kind(X) > render_kind(neighbor)`. This way:
+/// - Solid (2) vs air (0): solid emits a face — standard surface.
+/// - Solid (2) vs water (1): solid emits a face — seabed visible underwater.
+/// - Water (1) vs air (0): water emits a face — visible sea surface.
+/// - Same kind (e.g. stone vs dirt — both solid): no face — internal
+///   solid-solid boundary stays hidden, matching prior behavior.
+#[inline]
+fn render_kind(mat: MaterialId) -> u8 {
+    if is_transparent(mat) {
+        0
+    } else if mat == MaterialId::WATER {
+        1
+    } else {
+        2
+    }
+}
+
 /// Generate a greedy mesh from voxel data in chunk-local coordinates.
 ///
 /// Positions are in `[0, CHUNK_SIZE]` space. The chunk's Transform handles
@@ -141,7 +161,8 @@ pub fn greedy_mesh(
                         let (x, y, z) = axis_to_xyz(axis, d, u, v);
 
                         let mat = sample_material(voxels, neighbors, x, y, z);
-                        if is_transparent(mat) {
+                        let my_kind = render_kind(mat);
+                        if my_kind == 0 {
                             continue;
                         }
 
@@ -153,7 +174,7 @@ pub fn greedy_mesh(
                         };
                         let neighbor_mat = sample_material(voxels, neighbors, nx, ny, nz);
 
-                        if is_transparent(neighbor_mat) {
+                        if my_kind > render_kind(neighbor_mat) {
                             mask[u as usize][v as usize] = Some(mat);
                         }
                     }
