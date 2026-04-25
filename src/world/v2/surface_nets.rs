@@ -1,31 +1,33 @@
 // Naive Surface Nets meshing for the V2 pipeline.
 //
-// Replaces the binary greedy mesher when the per-voxel `density` field is
-// meaningful (terrain chunks). Surface Nets places one vertex per cell that
-// straddles the iso-surface, at the centroid of the iso-surface crossings on
-// the cell's 12 edges, then emits a quad per edge that has a sign change.
+// Uses the per-voxel `density` field (computed by `terrain_density` in
+// terrain_gen.rs) as the SDF, with the iso-surface at `density == 0.5`.
+// By construction in terrain_gen, density already has the correct sign
+// for every material:
 //
-// Two passes are run with different SDF interpretations so we can mesh both
-// the solid surface (land + seabed) and the water-air surface separately
-// while avoiding double-emission at solid-water boundaries:
+//   * AIR  (r >  surface_r)        → density ∈ [0, 0.5)   (negative SDF)
+//   * SOLID(r ≤  surface_r)        → density ∈ [0.5, 1.0] (positive SDF)
+//   * WATER(surface_r < r ≤ sea_r) → density ∈ [0.5, 1.0] (positive SDF)
 //
-// * Pass 1 — `SolidSdf`: SDF positive when material is solid (stone, etc.),
-//   negative otherwise. Iso-surface = boundary of all solids.
-// * Pass 2 — `WaterAirSdf`: SDF positive for ANY non-air material, negative
-//   for air. Quads are only emitted when the "inside" endpoint is WATER, so
-//   the result is the water-air surface only.
+// So a single pass with `sdf = density - 0.5` produces:
+//   * land surface at AIR↔SOLID boundary  (sub-voxel via gradient)
+//   * water surface at AIR↔WATER boundary
+//   * no faces at internal WATER↔SOLID seabed (both positive, no sign change)
 //
-// Output positions are in chunk-local voxel units `[0, CHUNK_SIZE]`, matching
-// the greedy mesher's convention. The chunk's `Transform` applies the
-// per-LOD tangent scale.
+// Cell colour comes from the corner with the highest density that's not
+// transparent gas. Solids beat water at ties, so beaches read as stone.
+//
+// Output positions are in chunk-local voxel units `[0, CHUNK_SIZE]`,
+// matching the greedy mesher's convention. The chunk's `Transform`
+// applies the per-LOD tangent scale.
 //
 // Known limitation: with single-layer neighbour slices, edges that lie
-// exactly on a chunk's +X / +Y / +Z face (parallel to the boundary) cannot
-// be evaluated because the surrounding cells need corners one layer beyond
-// the slice. This produces a roughly 1-voxel crack along chunk seams. The
-// crack is far less visually disruptive than the prior chunk-aligned
-// terraces; eliminating it requires extending `NeighborSlices` to two layers
-// on the positive faces (planned as a follow-up).
+// exactly on a chunk's +X / +Y / +Z face (parallel to the boundary)
+// cannot be evaluated because the surrounding cells need corners one
+// layer beyond the slice. This produces a roughly 1-voxel crack along
+// chunk seams, far less visually disruptive than the prior chunk-aligned
+// terraces. Eliminating it requires extending `NeighborSlices` to two
+// layers on the positive faces (planned as a follow-up).
 
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::lod::MaterialColorMap;
@@ -90,26 +92,12 @@ fn corner_voxel(voxels: &[Voxel], neighbors: &NeighborSlices, i: usize, j: usize
     Voxel::default()
 }
 
-/// SDF interpretation for the solid pass.
+/// Unified SDF: `density - 0.5`. See module docs for why this works for
+/// all materials produced by terrain_gen without needing material-aware
+/// branching.
 #[inline]
-fn sdf_solid(v: Voxel) -> f32 {
-    if is_transparent(v.material) || v.material == MaterialId::WATER {
-        -0.5
-    } else {
-        v.density - 0.5
-    }
-}
-
-/// SDF interpretation for the water-air pass. Positive iff the voxel is
-/// non-air (water or solid). Used together with a "must touch water"
-/// filter so we only emit the water-air surface.
-#[inline]
-fn sdf_water_air(v: Voxel) -> f32 {
-    if is_transparent(v.material) {
-        -0.5
-    } else {
-        v.density - 0.5
-    }
+fn sdf_value(v: Voxel) -> f32 {
+    v.density - 0.5
 }
 
 /// 12 edges of a unit cube as (corner_a, corner_b) index pairs into the 8
@@ -153,65 +141,72 @@ fn cell_vertex_offset(corner_sdf: &[f32; 8], mask: u8) -> [f32; 3] {
     [sum[0] * inv, sum[1] * inv, sum[2] * inv]
 }
 
-/// Pick the material that should colour faces emitted from this cell.
+/// Pick the colour material for a cell vertex.
 ///
-/// We prefer the corner whose SDF is the largest (deepest into solid),
-/// excluding AIR — this gives stable solid colouring near the surface.
+/// Among the corners with positive SDF (i.e. on the "filled" side of the
+/// iso-surface), prefer non-water solids over WATER, breaking ties by
+/// largest density. Falls back to any non-air corner if no positive
+/// corner is solid.
 fn cell_material(corner_voxels: &[Voxel; 8], corner_sdf: &[f32; 8]) -> MaterialId {
-    let mut best_idx = 0usize;
-    let mut best_score = f32::MIN;
+    let mut best_solid: Option<(usize, f32)> = None;
+    let mut best_water: Option<(usize, f32)> = None;
     for (i, v) in corner_voxels.iter().enumerate() {
+        if corner_sdf[i] < 0.0 {
+            continue;
+        }
         if is_transparent(v.material) {
             continue;
         }
-        let score = corner_sdf[i];
-        if score > best_score {
-            best_score = score;
-            best_idx = i;
-        }
-    }
-    let m = corner_voxels[best_idx].material;
-    if is_transparent(m) {
-        // fall back: any non-air corner
-        for v in corner_voxels.iter() {
-            if !is_transparent(v.material) {
-                return v.material;
+        if v.material == MaterialId::WATER {
+            if best_water.map_or(true, |(_, s)| corner_sdf[i] > s) {
+                best_water = Some((i, corner_sdf[i]));
+            }
+        } else {
+            if best_solid.map_or(true, |(_, s)| corner_sdf[i] > s) {
+                best_solid = Some((i, corner_sdf[i]));
             }
         }
     }
-    m
+    if let Some((i, _)) = best_solid {
+        return corner_voxels[i].material;
+    }
+    if let Some((i, _)) = best_water {
+        return corner_voxels[i].material;
+    }
+    // No positive non-air corner: cell straddles a sign change but all
+    // positive corners were classified as gas (very rare). Fall back.
+    for v in corner_voxels.iter() {
+        if !is_transparent(v.material) {
+            return v.material;
+        }
+    }
+    MaterialId::AIR
 }
 
 struct CellGrid {
     /// `Some(idx)` = vertex index in the output buffers; `None` = no vertex
     vertex: Vec<Option<u32>>,
-    materials: Vec<MaterialId>,
 }
 
 impl CellGrid {
     fn new() -> Self {
         Self {
             vertex: vec![None; CS * CS * CS],
-            materials: vec![MaterialId::AIR; CS * CS * CS],
         }
     }
 }
 
-/// Run a single Surface Nets pass with the given SDF interpretation.
-#[allow(clippy::too_many_arguments)]
-fn run_pass<F>(
+/// Generate a Surface-Nets mesh from voxel data + neighbour slices.
+pub fn surface_nets_mesh(
     voxels: &[Voxel],
     neighbors: &NeighborSlices,
-    sdf_fn: F,
     color_map: &MaterialColorMap,
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    colors: &mut Vec<[f32; 4]>,
-    indices: &mut Vec<u32>,
-    require_water: bool,
-) where
-    F: Fn(Voxel) -> f32 + Copy,
-{
+) -> ChunkMesh {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
     // Step 1: build SDF + voxel grids over the (CS+1)^3 corner grid.
     let total_corners = CSP1 * CSP1 * CSP1;
     let mut corner_sdf = vec![0.0f32; total_corners];
@@ -221,7 +216,7 @@ fn run_pass<F>(
             for i in 0..CSP1 {
                 let v = corner_voxel(voxels, neighbors, i, j, k);
                 let idx = corner_index(i, j, k);
-                corner_sdf[idx] = sdf_fn(v);
+                corner_sdf[idx] = sdf_value(v);
                 corner_vox[idx] = v;
             }
         }
@@ -260,30 +255,23 @@ fn run_pass<F>(
                 let v_idx = positions.len() as u32;
                 positions.push(pos);
                 normals.push([0.0, 0.0, 0.0]); // accumulated below
-                let rgba = color_map.get(mat);
-                colors.push(rgba);
+                colors.push(color_map.get(mat));
                 grid.vertex[cidx] = Some(v_idx);
-                grid.materials[cidx] = mat;
             }
         }
     }
 
     // Step 3: emit one quad per axis-aligned edge that has a sign change.
     //
-    // For an X-axis edge between corner (i, j, k) and (i+1, j, k): the four
-    // surrounding cells share the same x-index i and have y,z in {j-1, j} ×
-    // {k-1, k}. Quad winding is chosen so the front face points toward the
+    // For an X-axis edge between corner (i, j, k) and (i+1, j, k) the
+    // four surrounding cells share x-index i and span (j-1..j) × (k-1..k).
+    // Quad winding is chosen so the front face points toward the
     // negative-SDF side.
     let emit_quad = |positions: &mut Vec<[f32; 3]>,
                      normals: &mut Vec<[f32; 3]>,
-                     colors: &mut Vec<[f32; 4]>,
                      indices: &mut Vec<u32>,
-                     grid: &CellGrid,
                      verts: [u32; 4],
                      reversed: bool| {
-        // Build two triangles. For default winding (CCW from +normal side):
-        //   tri1: 0,1,2 ; tri2: 0,2,3
-        // If reversed, swap to: 0,2,1 ; 0,3,2.
         let p0 = positions[verts[0] as usize];
         let p1 = positions[verts[1] as usize];
         let p2 = positions[verts[2] as usize];
@@ -309,7 +297,6 @@ fn run_pass<F>(
             n[1] += nrm[1];
             n[2] += nrm[2];
         }
-        let _ = (colors, grid); // colours already set per-vertex
         if reversed {
             indices.extend_from_slice(&[verts[0], verts[2], verts[1], verts[0], verts[3], verts[2]]);
         } else {
@@ -317,26 +304,17 @@ fn run_pass<F>(
         }
     };
 
-    // X-axis edges. Edge at corner (i, j, k) → (i+1, j, k). Surrounding cells
-    // need j ≥ 1 and k ≥ 1 (and j ≤ CS-1, k ≤ CS-1) to all exist.
+    // X-axis edges: edge at corner (i, j, k) → (i+1, j, k). Surrounding
+    // cells need j ≥ 1 and k ≥ 1 (and j ≤ CS-1, k ≤ CS-1).
     for k in 1..CS {
         for j in 1..CS {
             for i in 0..CS {
                 let ca = corner_index(i, j, k);
                 let cb = corner_index(i + 1, j, k);
-                let sa = corner_sdf[ca];
-                let sb = corner_sdf[cb];
-                let pos_a = sa >= 0.0;
-                let pos_b = sb >= 0.0;
+                let pos_a = corner_sdf[ca] >= 0.0;
+                let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
-                }
-                // require_water filter: only emit if the positive endpoint is WATER
-                if require_water {
-                    let positive_vox = if pos_a { corner_vox[ca] } else { corner_vox[cb] };
-                    if positive_vox.material != MaterialId::WATER {
-                        continue;
-                    }
                 }
                 let v00 = grid.vertex[cell_index(i, j - 1, k - 1)];
                 let v10 = grid.vertex[cell_index(i, j, k - 1)];
@@ -345,31 +323,24 @@ fn run_pass<F>(
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
-                // pos_a=true → solid is at i side, normal points +X
-                // Default ordering [v00, v10, v11, v01] gives normal pointing +X if pos_a, else flip.
-                emit_quad(positions, normals, colors, indices, &grid, [v00, v10, v11, v01], !pos_a);
+                // Default ordering [v00, v10, v11, v01] gives +X normal;
+                // flip when solid sits on the +X side (pos_b).
+                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], !pos_a);
             }
         }
     }
 
-    // Y-axis edges. Edge at corner (i, j, k) → (i, j+1, k). Surrounding cells need i, k ≥ 1.
+    // Y-axis edges: edge at corner (i, j, k) → (i, j+1, k). Surrounding
+    // cells need i ≥ 1 and k ≥ 1.
     for k in 1..CS {
         for j in 0..CS {
             for i in 1..CS {
                 let ca = corner_index(i, j, k);
                 let cb = corner_index(i, j + 1, k);
-                let sa = corner_sdf[ca];
-                let sb = corner_sdf[cb];
-                let pos_a = sa >= 0.0;
-                let pos_b = sb >= 0.0;
+                let pos_a = corner_sdf[ca] >= 0.0;
+                let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
-                }
-                if require_water {
-                    let positive_vox = if pos_a { corner_vox[ca] } else { corner_vox[cb] };
-                    if positive_vox.material != MaterialId::WATER {
-                        continue;
-                    }
                 }
                 let v00 = grid.vertex[cell_index(i - 1, j, k - 1)];
                 let v10 = grid.vertex[cell_index(i, j, k - 1)];
@@ -378,31 +349,24 @@ fn run_pass<F>(
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
-                // For +Y normal we need the four cells in order producing CCW from +Y.
-                // Default ordering swept cw vs ccw: use reverse on pos_a (so +Y when !pos_a).
-                emit_quad(positions, normals, colors, indices, &grid, [v00, v10, v11, v01], pos_a);
+                // Default ordering produces -Y normal (CW in (i,k) plane
+                // viewed from +Y); flip when solid is below (pos_a).
+                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], pos_a);
             }
         }
     }
 
-    // Z-axis edges. Edge at (i, j, k) → (i, j, k+1). Surrounding cells need i, j ≥ 1.
+    // Z-axis edges: edge at corner (i, j, k) → (i, j, k+1). Surrounding
+    // cells need i ≥ 1 and j ≥ 1.
     for k in 0..CS {
         for j in 1..CS {
             for i in 1..CS {
                 let ca = corner_index(i, j, k);
                 let cb = corner_index(i, j, k + 1);
-                let sa = corner_sdf[ca];
-                let sb = corner_sdf[cb];
-                let pos_a = sa >= 0.0;
-                let pos_b = sb >= 0.0;
+                let pos_a = corner_sdf[ca] >= 0.0;
+                let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
-                }
-                if require_water {
-                    let positive_vox = if pos_a { corner_vox[ca] } else { corner_vox[cb] };
-                    if positive_vox.material != MaterialId::WATER {
-                        continue;
-                    }
                 }
                 let v00 = grid.vertex[cell_index(i - 1, j - 1, k)];
                 let v10 = grid.vertex[cell_index(i, j - 1, k)];
@@ -411,48 +375,10 @@ fn run_pass<F>(
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
-                emit_quad(positions, normals, colors, indices, &grid, [v00, v10, v11, v01], !pos_a);
+                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], !pos_a);
             }
         }
     }
-}
-
-/// Generate a Surface-Nets mesh from voxel data + neighbour slices.
-pub fn surface_nets_mesh(
-    voxels: &[Voxel],
-    neighbors: &NeighborSlices,
-    color_map: &MaterialColorMap,
-) -> ChunkMesh {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-
-    // Pass 1: solid surfaces (land + seabed).
-    run_pass(
-        voxels,
-        neighbors,
-        sdf_solid,
-        color_map,
-        &mut positions,
-        &mut normals,
-        &mut colors,
-        &mut indices,
-        false,
-    );
-
-    // Pass 2: water-air surface only.
-    run_pass(
-        voxels,
-        neighbors,
-        sdf_water_air,
-        color_map,
-        &mut positions,
-        &mut normals,
-        &mut colors,
-        &mut indices,
-        true,
-    );
 
     // Normalize accumulated vertex normals.
     for n in normals.iter_mut() {
@@ -502,13 +428,12 @@ mod tests {
     fn full_solid_with_no_neighbors_emits_no_interior_geometry() {
         // All-stone chunk, no neighbor slices. Without neighbour data, the
         // +X/+Y/+Z corner row is AIR (sign change) so we DO emit quads on
-        // those faces. Mostly a smoke-test that it doesn't panic and that
-        // counts are sensible.
+        // those faces. Smoke-test that buffers stay consistent.
         let voxels = make_voxels(|_, _, _| (MaterialId::STONE, 1.0));
         let neighbors = NeighborSlices::empty();
         let cmap = MaterialColorMap::default();
         let mesh = surface_nets_mesh(&voxels, &neighbors, &cmap);
-        assert_eq!(mesh.positions.len() * 1, mesh.normals.len());
+        assert_eq!(mesh.positions.len(), mesh.normals.len());
         assert_eq!(mesh.positions.len(), mesh.colors.len());
         assert_eq!(mesh.indices.len() % 3, 0);
     }
@@ -549,8 +474,44 @@ mod tests {
         assert!(count > 0, "no interior surface vertices found");
         let avg_y = y_sum / count as f32;
         assert!(
-            (avg_y - mid).abs() < 1.0,
+            (avg_y - mid).abs() < 0.6,
             "mean surface y ({avg_y}) should be near midplane ({mid})"
+        );
+    }
+
+    #[test]
+    fn smooth_gradient_places_vertices_at_subvoxel_height() {
+        // Stone bottom, air top, with a continuous density gradient
+        // crossing 0.5 at exactly y = 12.7 (a non-integer height that
+        // a binary mesher would round to 13).
+        let target = 12.7f32;
+        let voxels = make_voxels(|_, j, _| {
+            let depth = target - (j as f32 + 0.5);
+            let density = (0.5 + depth * 0.5).clamp(0.0, 1.0);
+            if density >= 0.5 {
+                (MaterialId::STONE, density)
+            } else {
+                (MaterialId::AIR, density)
+            }
+        });
+        let neighbors = NeighborSlices::empty();
+        let cmap = MaterialColorMap::default();
+        let mesh = surface_nets_mesh(&voxels, &neighbors, &cmap);
+        let mut y_sum = 0.0;
+        let mut count = 0;
+        for p in &mesh.positions {
+            if p[0] > 2.0 && p[0] < (CS as f32 - 2.0)
+                && p[2] > 2.0 && p[2] < (CS as f32 - 2.0)
+            {
+                y_sum += p[1];
+                count += 1;
+            }
+        }
+        assert!(count > 0);
+        let avg_y = y_sum / count as f32;
+        assert!(
+            (avg_y - target).abs() < 0.2,
+            "Surface Nets should place verts within 0.2 voxel of the iso-surface; got avg_y={avg_y} target={target}"
         );
     }
 }
