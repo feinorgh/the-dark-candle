@@ -56,7 +56,7 @@ pub struct V2TerrainData {
 }
 
 /// Internal classification of voxel generation result.
-enum VoxelGenResult {
+pub(crate) enum VoxelGenResult {
     AllAir,
     AllSolid(MaterialId),
     Mixed(Vec<Voxel>),
@@ -166,7 +166,47 @@ fn generate_voxels_core(
         }
     }
 
-    VoxelGenResult::Mixed(voxels)
+    downgrade_uniform_voxels(voxels)
+}
+
+/// Inspect the freshly-generated voxel grid and downgrade an
+/// over-conservative `Mixed` classification to `AllAir` or `AllSolid` when
+/// every voxel actually has the same material.
+///
+/// The bounds-based classifier in [`generate_voxels_core`] uses a
+/// `half_diag_tangent` safety margin that's necessary at small LODs but
+/// becomes very loose at high LODs (≈443 m at LOD 4). Without this
+/// post-pass, many high-LOD chunks far above terrain stay classified as
+/// `Mixed` even though every voxel ends up `AIR`, producing empty greedy
+/// meshes that show up as visible holes / transparent squares in the
+/// world. Same logic applies symmetrically for fully-solid uniform chunks.
+pub(crate) fn downgrade_uniform_voxels(voxels: Vec<Voxel>) -> VoxelGenResult {
+    if voxels.is_empty() {
+        return VoxelGenResult::Mixed(voxels);
+    }
+    let first = voxels[0].material;
+    let mut all_same = true;
+    for v in &voxels {
+        if v.material != first {
+            all_same = false;
+            break;
+        }
+    }
+    if !all_same {
+        return VoxelGenResult::Mixed(voxels);
+    }
+    if first == MaterialId::AIR {
+        return VoxelGenResult::AllAir;
+    }
+    // Only downgrade to AllSolid for opaque materials. The greedy mesher
+    // treats transparent materials specially (no internal faces), and
+    // AllSolid is rendered as a single solid box — wrong for uniform
+    // glass/steam/gas chunks. Keep those as Mixed so the mesher can
+    // handle them correctly at chunk boundaries.
+    if crate::world::v2::greedy_mesh::is_transparent(first) {
+        return VoxelGenResult::Mixed(voxels);
+    }
+    VoxelGenResult::AllSolid(first)
 }
 
 // ── Single-stage path (legacy, used by tests) ────────────────────────────

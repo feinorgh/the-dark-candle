@@ -803,7 +803,21 @@ impl GpuVoxelCompute {
                         voxels[j].material = MaterialId(materials[voxel_base + j] as u16);
                         voxels[j].density = densities[voxel_base + j];
                     }
-                    CachedVoxels::Mixed(Arc::new(voxels))
+                    // Downgrade Mixed → AllAir/AllSolid when every voxel
+                    // ended up identical (the GPU classifier uses the
+                    // same conservative bounds as the CPU path and so
+                    // suffers the same over-classification at high LODs).
+                    match crate::world::v2::terrain_gen::downgrade_uniform_voxels(voxels) {
+                        crate::world::v2::terrain_gen::VoxelGenResult::AllAir => {
+                            CachedVoxels::AllAir
+                        }
+                        crate::world::v2::terrain_gen::VoxelGenResult::AllSolid(m) => {
+                            CachedVoxels::AllSolid(m)
+                        }
+                        crate::world::v2::terrain_gen::VoxelGenResult::Mixed(v) => {
+                            CachedVoxels::Mixed(Arc::new(v))
+                        }
+                    }
                 }
             };
 

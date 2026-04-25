@@ -91,7 +91,7 @@ fn sample_material(
 
 /// Whether a material is transparent (air, steam, glass, gases).
 #[inline]
-fn is_transparent(mat: MaterialId) -> bool {
+pub fn is_transparent(mat: MaterialId) -> bool {
     mat.is_air()
         || mat == MaterialId::STEAM
         || mat == MaterialId::GLASS
