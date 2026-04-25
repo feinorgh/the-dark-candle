@@ -1014,6 +1014,7 @@ fn v2_diagnostics(
     pending_terrain: Res<V2PendingTerrain>,
     pending_meshes: Res<V2PendingMeshes>,
     cache: Res<V2VoxelCache>,
+    stats: Res<V2PipelineStats>,
     mesh_q: Query<Entity, (With<V2ChunkMarker>, With<Mesh3d>)>,
     mut timer: Local<f32>,
     time: Res<Time>,
@@ -1033,6 +1034,19 @@ fn v2_diagnostics(
         cache.entry_count(),
         cache.byte_size() as f64 / (1024.0 * 1024.0),
         mesh_count,
+    );
+    // Mirror the F3 HUD line to stdout so it can be copy/pasted easily.
+    info!(
+        "V2 desired:{} (L0:{} Lmax:{}) pendT:{} pendM:{} cache:{} loaded:{} disp/f:{}{}",
+        stats.desired,
+        stats.desired_lod0,
+        stats.desired_lod_max,
+        stats.pending_terrain,
+        stats.pending_meshes,
+        stats.cache_entries,
+        stats.loaded,
+        stats.dispatched_this_frame,
+        if stats.gpu_in_flight { " gpu*" } else { "" },
     );
 }
 
