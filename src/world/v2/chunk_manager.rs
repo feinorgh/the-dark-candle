@@ -581,7 +581,7 @@ pub fn v2_update_chunks(
 
     let mean_radius = planet.mean_radius;
 
-    let mut to_dispatch: Vec<CubeSphereCoord> = desired
+    let to_dispatch: Vec<CubeSphereCoord> = desired
         .iter()
         .filter(|c| {
             !chunk_map.loaded.contains_key(c)
@@ -606,32 +606,35 @@ pub fn v2_update_chunks(
     let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
     let cam_coord_l0 = world_pos_to_coord(cam_world_pos.0, mean_radius, base_fce);
     let tgen_for_sort = terrain_gen.0.clone();
-    to_dispatch.sort_unstable_by_key(|c| {
-        let lod_penalty = (c.lod as i32) * 4_000_000;
-        // Estimate the surface layer for this chunk's column at its own LOD.
-        let fce_lod = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, c.lod);
-        let chunk_world_size = CHUNK_SIZE as f64 * (1u64 << c.lod) as f64;
-        let dir = c.unit_sphere_dir(fce_lod);
-        let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
-        let surface_r = tgen_for_sort.sample_surface_radius_at(lat, lon);
-        let surface_layer = ((surface_r - mean_radius) / chunk_world_size).round() as i32;
-        let layer_dist = (c.layer - surface_layer).abs();
-        // Strong bias: surface-adjacent layers come first within each LOD.
-        // Each layer step costs as much as ~50 horizontal chunks of distance,
-        // so a chunk one layer off the surface beats a surface chunk only
-        // if it's much closer to the camera horizontally.
-        let surface_penalty = layer_dist * 50_000;
-        // Camera distance in the chunk's own LOD grid (approx).
-        let scale = 1i32 << c.lod;
-        let dist = if c.face == cam_coord_l0.face {
-            let du = c.u * scale - cam_coord_l0.u;
-            let dv = c.v * scale - cam_coord_l0.v;
-            du * du + dv * dv
-        } else {
-            i32::MAX / 8
-        };
-        lod_penalty + surface_penalty + dist
-    });
+    // Compute sort keys ONCE per candidate (sample_surface_radius_at is
+    // expensive — calling it inside `sort_unstable_by_key` re-runs it on
+    // every comparison and tanks FPS during loading).
+    let mut keyed: Vec<(i32, CubeSphereCoord)> = to_dispatch
+        .into_iter()
+        .map(|c| {
+            let lod_penalty = (c.lod as i32) * 4_000_000;
+            let fce_lod = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, c.lod);
+            let chunk_world_size = CHUNK_SIZE as f64 * (1u64 << c.lod) as f64;
+            let dir = c.unit_sphere_dir(fce_lod);
+            let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
+            let surface_r = tgen_for_sort.sample_surface_radius_at(lat, lon);
+            let surface_layer = ((surface_r - mean_radius) / chunk_world_size).round() as i32;
+            let layer_dist = (c.layer - surface_layer).abs();
+            // Strong bias: surface-adjacent layers come first within each LOD.
+            let surface_penalty = layer_dist * 50_000;
+            let scale = 1i32 << c.lod;
+            let dist = if c.face == cam_coord_l0.face {
+                let du = c.u * scale - cam_coord_l0.u;
+                let dv = c.v * scale - cam_coord_l0.v;
+                du * du + dv * dv
+            } else {
+                i32::MAX / 8
+            };
+            (lod_penalty + surface_penalty + dist, c)
+        })
+        .collect();
+    keyed.sort_unstable_by_key(|&(k, _)| k);
+    let to_dispatch: Vec<CubeSphereCoord> = keyed.into_iter().map(|(_, c)| c).collect();
 
     // Separate GPU-eligible and CPU-fallback chunks.
     let dispatched: Vec<CubeSphereCoord> = to_dispatch
@@ -911,7 +914,7 @@ pub fn v2_collect_terrain(
         .min(MAX_MESH_DISPATCHES_PER_FRAME);
 
     // Candidates: any cached chunk that doesn't have a mesh yet and isn't pending
-    let mut candidates: Vec<CubeSphereCoord> = cache
+    let candidates: Vec<CubeSphereCoord> = cache
         .entries
         .keys()
         .filter(|c| !chunk_map.loaded.contains_key(c) && !pending_meshes.pending.contains(c))
@@ -923,33 +926,38 @@ pub fn v2_collect_terrain(
     // near terrain meshes before far terrain. HashMap iteration is otherwise
     // unordered, which made the player wait on far / subsurface chunks while
     // near surface chunks sat idle in cache.
+    //
+    // Precompute keys once per candidate; doing this work inside
+    // `sort_unstable_by_key` re-runs the cache lookup on every comparison
+    // and contributes to FPS drops while ~5000 chunks are queued.
     let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-    let cam_coord_for_mesh = cam_world_pos
-        .map(|p| world_pos_to_coord(p.0, mean_radius, base_fce));
-    candidates.sort_unstable_by_key(|c| {
-        let class_penalty = match cache.get(c) {
-            Some(CachedVoxels::Mixed(_)) => 0,
-            // AllSolid chunks may still emit boundary faces (walls) when an
-            // adjacent neighbour is Mixed/AllAir. Schedule them after Mixed
-            // but before AllAir.
-            Some(CachedVoxels::AllSolid(_)) => 10_000_000,
-            Some(CachedVoxels::AllAir) => 20_000_000,
-            None => 30_000_000,
-        };
-        let lod_penalty = (c.lod as i32) * 2_000_000;
-        let dist = if let Some(cam) = cam_coord_for_mesh
-            && c.face == cam.face
-        {
-            let scale = 1i32 << c.lod;
-            let du = c.u * scale - cam.u;
-            let dv = c.v * scale - cam.v;
-            let dl = c.layer - cam.layer;
-            du * du + dv * dv + dl * dl
-        } else {
-            i32::MAX / 8
-        };
-        class_penalty + lod_penalty + dist
-    });
+    let cam_coord_for_mesh = cam_world_pos.map(|p| world_pos_to_coord(p.0, mean_radius, base_fce));
+    let mut keyed_mesh: Vec<(i32, CubeSphereCoord)> = candidates
+        .into_iter()
+        .map(|c| {
+            let class_penalty = match cache.get(&c) {
+                Some(CachedVoxels::Mixed(_)) => 0,
+                Some(CachedVoxels::AllSolid(_)) => 10_000_000,
+                Some(CachedVoxels::AllAir) => 20_000_000,
+                None => 30_000_000,
+            };
+            let lod_penalty = (c.lod as i32) * 2_000_000;
+            let dist = if let Some(cam) = cam_coord_for_mesh
+                && c.face == cam.face
+            {
+                let scale = 1i32 << c.lod;
+                let du = c.u * scale - cam.u;
+                let dv = c.v * scale - cam.v;
+                let dl = c.layer - cam.layer;
+                du * du + dv * dv + dl * dl
+            } else {
+                i32::MAX / 8
+            };
+            (class_penalty + lod_penalty + dist, c)
+        })
+        .collect();
+    keyed_mesh.sort_unstable_by_key(|&(k, _)| k);
+    let candidates: Vec<CubeSphereCoord> = keyed_mesh.into_iter().map(|(_, c)| c).collect();
 
     for (dispatched, coord) in candidates.into_iter().enumerate() {
         if dispatched >= mesh_budget {
