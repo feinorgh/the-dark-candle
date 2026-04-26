@@ -24,9 +24,6 @@ use crate::world::planet::PlanetConfig;
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Sun;
 
-/// Marker component for the ambient light entity.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct SkyAmbient;
 
 /// Current time of day in hours (0.0–24.0).
 #[derive(Resource, Debug, Clone, Copy)]
@@ -233,7 +230,14 @@ fn update_sun(
         // DirectionalLight direction is world-space — the terminator emerges
         // naturally from the dot product of light direction with surface normals.
         let sun_vec = wd;
-        *transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
+        // Use Vec3::Z as fallback up-hint to avoid a degenerate looking_at when
+        // sun_vec is exactly ±Y (axial tilt edge case).
+        let up_hint = if sun_vec.abs().dot(Vec3::Y) > 0.999 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        *transform = Transform::default().looking_at(-sun_vec, up_hint);
 
         if elevation > 0.0 {
             light.illuminance = config.noon_illuminance * elevation.sin();
@@ -249,11 +253,14 @@ fn update_sun(
 ///
 /// In spherical mode, applies a boost factor to compensate for the absence of
 /// Atmosphere-driven image-based lighting.
+///
+/// Updates `GlobalAmbientLight`, which is the ambient that applies to the
+/// player camera (the camera entity has no per-camera `AmbientLight` override).
 fn update_ambient(
     planet: Res<PlanetConfig>,
     config: Res<DayNightConfig>,
     sun_world: Res<SunWorldDirection>,
-    mut ambient_q: Query<&mut AmbientLight, With<SkyAmbient>>,
+    mut global_ambient: ResMut<GlobalAmbientLight>,
     cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
 ) {
     let observer_up = cam_q
@@ -275,17 +282,15 @@ fn update_ambient(
         brightness *= 2.5;
     }
 
-    for mut ambient in &mut ambient_q {
-        ambient.brightness = brightness;
-        ambient.color = if elevation <= 0.0 {
-            Color::srgb(0.3, 0.35, 0.5)
-        } else if elevation < 0.3 {
-            let t = elevation / 0.3;
-            Color::srgb(0.6 + 0.4 * t, 0.65 + 0.35 * t, 0.7 + 0.3 * t)
-        } else {
-            Color::WHITE
-        };
-    }
+    global_ambient.brightness = brightness;
+    global_ambient.color = if elevation <= 0.0 {
+        Color::srgb(0.3, 0.35, 0.5)
+    } else if elevation < 0.3 {
+        let t = elevation / 0.3;
+        Color::srgb(0.6 + 0.4 * t, 0.65 + 0.35 * t, 0.7 + 0.3 * t)
+    } else {
+        Color::WHITE
+    };
 }
 
 /// System: update distance fog color to match local time of day.
@@ -366,12 +371,22 @@ fn update_spherical_sky(
     );
 }
 
-/// Spawn the sun and ambient light entities using orbital state.
+/// Spawn the sun DirectionalLight and set the initial global ambient.
+///
+/// `AmbientLight` is NOT spawned on a separate entity: in Bevy 0.18,
+/// `AmbientLight` carries `#[require(Camera)]`, so spawning it on a
+/// non-camera entity auto-adds a phantom camera that conflicts with the
+/// player camera (same render order / target → black screen).
+///
+/// `GlobalAmbientLight` is a `Resource` that applies to all cameras that
+/// do not have a per-camera `AmbientLight` override — which is the player
+/// camera.  It is kept up to date each frame by `update_ambient`.
 fn spawn_lights(
     mut commands: Commands,
     config: Res<DayNightConfig>,
     orbital_state: Res<orbital::OrbitalState>,
     planet: Res<PlanetConfig>,
+    mut global_ambient: ResMut<GlobalAmbientLight>,
 ) {
     let world_dir = orbital::compute_sun_direction_world(
         &orbital_state,
@@ -391,7 +406,14 @@ fn spawn_lights(
     };
 
     let sun_vec = world_dir.as_vec3();
-    let sun_transform = Transform::default().looking_at(-sun_vec, Vec3::Y);
+    // Use Vec3::Z as fallback up-hint to avoid a degenerate looking_at when
+    // sun_vec is exactly ±Y (which would make Y an invalid up vector).
+    let up_hint = if sun_vec.abs().dot(Vec3::Y) > 0.999 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+    let sun_transform = Transform::default().looking_at(-sun_vec, up_hint);
 
     commands.spawn((
         Sun,
@@ -404,17 +426,15 @@ fn spawn_lights(
         sun_transform,
     ));
 
+    // Set the initial global ambient to match the starting time of day.
     let factor = elevation.sin().max(0.0);
-    let brightness = config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
-
-    commands.spawn((
-        SkyAmbient,
-        AmbientLight {
-            color: Color::WHITE,
-            brightness,
-            ..default()
-        },
-    ));
+    let mut brightness =
+        config.night_ambient + (config.noon_ambient - config.night_ambient) * factor;
+    if planet.is_spherical() {
+        brightness *= 2.5;
+    }
+    global_ambient.brightness = brightness;
+    global_ambient.color = Color::WHITE;
 }
 
 /// System: recompute terrain shadows when the sun moves significantly.
