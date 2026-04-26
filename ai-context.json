@@ -97,7 +97,7 @@
       {
         "name": "diagnostics",
         "path": "src/diagnostics/",
-        "responsibility": "F3 frame budget overlay (EMA FPS/frame time), F11 ECS state dump (RON), F12 screenshot, per-system timing, video capture (ffmpeg/PNG fallback), software raymarching visualization with Perspective/Slice/TopDown views and configurable SceneLight"
+        "responsibility": "F3 frame budget overlay (EMA FPS/frame time), F11 ECS state dump (RON), F12 screenshot, per-system timing, video capture (ffmpeg/PNG fallback), software raymarching visualization with Perspective/Slice/TopDown views and configurable SceneLight. AgentCapturePlugin (src/diagnostics/agent_capture.rs): AI-agent rendering analysis — activate with --agent CLI flag, settles N frames then captures screenshot/video, writes meta.json, exits."
       },
       {
         "name": "camera",
@@ -1681,13 +1681,9 @@
       "severity": "low"
     },
     {
-      "description": "rebuild_terrain_gen_if_planetary updates SharedTerrainGen/TerrainGeneratorRes but NOT V2TerrainGen (SphericalTerrainGenerator). Planetary config changes do not propagate to V2 rendering path. Related to TERRAIN-006.",
-      "location": "src/world/mod.rs (rebuild_terrain_gen_if_planetary)",
+      "description": "GPU voxel shader uses FBM noise terrain — does not yet implement Planetary IDW from PlanetData. GPU parity tests are marked #[ignore]. Tracked as GPU-PARITY-001.",
+      "location": "src/gpu/voxel_compute.rs, src/gpu/shaders/voxel_gen.wgsl",
       "severity": "medium"
-    },
-    {
-      "id": "RENDER-FIX-001",
-      "description": "Terrain rendering fix: continent_enabled set to true in planet_config.ron noise block. Previously false, which caused random land patches in ocean areas (walls + ceiling near sea spawns). Note: coastline walls at true continent/ocean boundaries are expected and remain. Previous meshing fixes (RENDER-006 Y-seam, corner_voxel same-side) remain in surface_nets.rs."
     }
   ],
   "environment": {
@@ -1718,7 +1714,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "9ce98dc",
+    "generated_from_commit": "f6bff81",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
