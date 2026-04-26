@@ -592,24 +592,45 @@ pub fn v2_update_chunks(
         .copied()
         .collect();
 
-    // Sort: prioritize L0, then surface-layer, then by distance to camera.
-    // Distance is approximate — we compare in the chunk's own LOD grid space.
+    // Sort: prioritize L0, then proximity to the actual surface layer for each
+    // chunk's column, then distance to camera. Generating surface chunks first
+    // means the player sees terrain features appear immediately rather than
+    // waiting for an avalanche of subsurface AllSolid / above-surface AllAir
+    // chunks to finish.
+    //
+    // The previous heuristic used `c.layer == 0` (mean-radius layer) as a
+    // "surface" proxy, which is wrong on Earth-scale planets: the actual
+    // surface layer can be hundreds of layers above or below 0 depending on
+    // terrain height, so the sort effectively ignored surface proximity and
+    // generation order was dominated by raw camera distance.
     let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
     let cam_coord_l0 = world_pos_to_coord(cam_world_pos.0, mean_radius, base_fce);
+    let tgen_for_sort = terrain_gen.0.clone();
     to_dispatch.sort_unstable_by_key(|c| {
-        let lod_penalty = (c.lod as i32) * 2_000_000;
-        let surface_bonus = if c.layer == 0 { 0 } else { 1_000_000 };
-        // Scale chunk distance to L0 grid for comparison
+        let lod_penalty = (c.lod as i32) * 4_000_000;
+        // Estimate the surface layer for this chunk's column at its own LOD.
+        let fce_lod = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, c.lod);
+        let chunk_world_size = CHUNK_SIZE as f64 * (1u64 << c.lod) as f64;
+        let dir = c.unit_sphere_dir(fce_lod);
+        let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
+        let surface_r = tgen_for_sort.sample_surface_radius_at(lat, lon);
+        let surface_layer = ((surface_r - mean_radius) / chunk_world_size).round() as i32;
+        let layer_dist = (c.layer - surface_layer).abs();
+        // Strong bias: surface-adjacent layers come first within each LOD.
+        // Each layer step costs as much as ~50 horizontal chunks of distance,
+        // so a chunk one layer off the surface beats a surface chunk only
+        // if it's much closer to the camera horizontally.
+        let surface_penalty = layer_dist * 50_000;
+        // Camera distance in the chunk's own LOD grid (approx).
         let scale = 1i32 << c.lod;
         let dist = if c.face == cam_coord_l0.face {
             let du = c.u * scale - cam_coord_l0.u;
             let dv = c.v * scale - cam_coord_l0.v;
-            let dl = c.layer - cam_coord_l0.layer;
-            du * du + dv * dv + dl * dl
+            du * du + dv * dv
         } else {
-            i32::MAX / 4
+            i32::MAX / 8
         };
-        lod_penalty + surface_bonus + dist
+        lod_penalty + surface_penalty + dist
     });
 
     // Separate GPU-eligible and CPU-fallback chunks.
@@ -831,9 +852,11 @@ pub fn v2_collect_terrain(
     terrain_gen: Res<V2TerrainGen>,
     planet: Res<PlanetConfig>,
     color_map: Res<MaterialColorMap>,
+    camera_q: Query<&WorldPosition, With<FpsCamera>>,
     mut task_q: Query<(Entity, &mut V2TerrainTask)>,
 ) {
     let mean_radius = planet.mean_radius;
+    let cam_world_pos = camera_q.single().ok().copied();
 
     // Stage 1: collect completed terrain tasks
     let mut collected = 0usize;
@@ -888,12 +911,45 @@ pub fn v2_collect_terrain(
         .min(MAX_MESH_DISPATCHES_PER_FRAME);
 
     // Candidates: any cached chunk that doesn't have a mesh yet and isn't pending
-    let candidates: Vec<CubeSphereCoord> = cache
+    let mut candidates: Vec<CubeSphereCoord> = cache
         .entries
         .keys()
         .filter(|c| !chunk_map.loaded.contains_key(c) && !pending_meshes.pending.contains(c))
         .copied()
         .collect();
+
+    // Priority: Mixed chunks (the visually relevant ones) before AllAir /
+    // AllSolid (which usually emit empty meshes). Then by camera distance so
+    // near terrain meshes before far terrain. HashMap iteration is otherwise
+    // unordered, which made the player wait on far / subsurface chunks while
+    // near surface chunks sat idle in cache.
+    let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+    let cam_coord_for_mesh = cam_world_pos
+        .map(|p| world_pos_to_coord(p.0, mean_radius, base_fce));
+    candidates.sort_unstable_by_key(|c| {
+        let class_penalty = match cache.get(c) {
+            Some(CachedVoxels::Mixed(_)) => 0,
+            // AllSolid chunks may still emit boundary faces (walls) when an
+            // adjacent neighbour is Mixed/AllAir. Schedule them after Mixed
+            // but before AllAir.
+            Some(CachedVoxels::AllSolid(_)) => 10_000_000,
+            Some(CachedVoxels::AllAir) => 20_000_000,
+            None => 30_000_000,
+        };
+        let lod_penalty = (c.lod as i32) * 2_000_000;
+        let dist = if let Some(cam) = cam_coord_for_mesh
+            && c.face == cam.face
+        {
+            let scale = 1i32 << c.lod;
+            let du = c.u * scale - cam.u;
+            let dv = c.v * scale - cam.v;
+            let dl = c.layer - cam.layer;
+            du * du + dv * dv + dl * dl
+        } else {
+            i32::MAX / 8
+        };
+        class_penalty + lod_penalty + dist
+    });
 
     for (dispatched, coord) in candidates.into_iter().enumerate() {
         if dispatched >= mesh_budget {
