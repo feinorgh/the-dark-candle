@@ -1678,6 +1678,10 @@
       "description": "rebuild_terrain_gen_if_planetary updates SharedTerrainGen/TerrainGeneratorRes but NOT V2TerrainGen (SphericalTerrainGenerator). Planetary config changes do not propagate to V2 rendering path. Related to TERRAIN-006.",
       "location": "src/world/mod.rs (rebuild_terrain_gen_if_planetary)",
       "severity": "medium"
+    },
+    {
+      "id": "RENDER-FIX-001",
+      "description": "Terrain rendering fix: continent_enabled set to true in planet_config.ron noise block. Previously false, which caused random land patches in ocean areas (walls + ceiling near sea spawns). Note: coastline walls at true continent/ocean boundaries are expected and remain. Previous meshing fixes (RENDER-006 Y-seam, corner_voxel same-side) remain in surface_nets.rs."
     }
   ],
   "environment": {
@@ -1708,7 +1712,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "3f8d14b",
+    "generated_from_commit": "9ce98dc",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

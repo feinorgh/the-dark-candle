@@ -5,6 +5,19 @@
 //
 // Noise frequencies are in radian-space (lat ∈ [-π/2, π/2], lon ∈ [-π, π]).
 // 1 radian at surface ≈ 32 000 m, so fbm_base_freq 1.0 → wavelength ≈ 32 km.
+//
+// Continent masking:  continent_enabled controls whether the noise stack blends
+// between land terrain and a flat ocean floor.  When disabled, raw land noise
+// is used everywhere — producing random land/ocean patches that create phantom
+// walls and ceilings near sea-level spawns.
+//
+//   continent_freq: 0.3  → continent blobs ≈ 3.3 rad period (≈ 100 km wide
+//                           on this 32 km radius planet; ≈ 2–3 continents)
+//   continent_threshold: 0.0  → ~50 % land / 50 % ocean
+//   shelf_blend_width: 0.1    → narrow coastal shelf (0.1 noise units)
+//   ocean_floor_depth: 0.1    → ocean floor at −0.1 × 4000 m = −400 m below
+//                               sea level (no above-sea spikes in ocean blobs)
+//   ocean_floor_amplitude: 0.05 → ±200 m floor variation
 (
     mode: Spherical,
     mean_radius: 32000.0,
@@ -59,6 +72,11 @@
         warp_freq: 0.8,
         micro_freq: 15.0,
         micro_amplitude: 0.02,
-        continent_enabled: false,
+        continent_enabled: true,
+        continent_freq: 0.3,
+        continent_threshold: 0.0,
+        shelf_blend_width: 0.1,
+        ocean_floor_depth: 0.1,
+        ocean_floor_amplitude: 0.05,
     )),
 )

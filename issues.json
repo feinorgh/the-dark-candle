@@ -853,9 +853,9 @@
     "category": "rendering",
     "severity": "high",
     "title": "Non-collidable terrain walls sticking up everywhere near coastlines",
-    "description": "Players spawning at the coastline (via find_coastline()) see many thin vertical walls rising from the ground in what appears to be flat ocean water. The walls have no collision because the physics system uses radial-only height-field collision. Root cause: the noise amplitude for all biomes is `roughness * 2000` metres. For ocean biomes (roughness≈0.08) the amplitude is ±160 m. Near coastlines the IDW-interpolated elevation can be as shallow as −50 to 0 m; noise then pushes individual columns above sea level, producing land spikes adjacent to water columns. Surface Nets correctly generates vertical faces between these columns, producing the visible walls.",
+    "description": "Players spawning at the coastline (via find_coastline()) see many thin vertical walls rising from the ground in what appears to be flat ocean water. The walls have no collision because the physics system uses radial-only height-field collision. Root cause: the noise amplitude for all biomes is `roughness * 2000` metres. For ocean biomes (roughness\u22480.08) the amplitude is \u00b1160 m. Near coastlines the IDW-interpolated elevation can be as shallow as \u221250 to 0 m; noise then pushes individual columns above sea level, producing land spikes adjacent to water columns. Surface Nets correctly generates vertical faces between these columns, producing the visible walls.",
     "status": "resolved",
-    "resolution": "In sample_detailed_elevation() (src/planet/detail.rs), added a clamp: when the IDW-interpolated elevation is negative (below sea level), the final elevation is clamped to at most −2 m. This prevents noise from pushing any below-sea-level point above sea level, eliminating the land spikes. A regression test (shallow_ocean_elevation_stays_below_sea_level) verifies all cell positions stay ≤ −2 m when forced to shallow ocean depth. Committed with tests in place.",
+    "resolution": "Partial fix: ocean surface clamped in Planetary mode detail.rs (commit 3f8d14b, 9ce98dc). Root cause: continent_enabled:false in Spherical mode allows noise-spike land columns throughout ocean areas. Full fix: continent_enabled:true in planet_config.ron noise block eliminates random land patches in ocean blobs. Coastline walls at true continent boundaries remain (expected).",
     "suspected_cause": "Noise amplitude (roughness * 2000 m) exceeded shallow ocean depth near coastlines, allowing ocean terrain to breach sea level and generate land column spikes with non-collidable Surface Nets walls.",
     "affected_files": [
       "src/planet/detail.rs"
@@ -866,11 +866,11 @@
     "category": "rendering",
     "severity": "high",
     "title": "Blocky Minecraft-style terrain at high LOD levels",
-    "description": "At LOD 2+ (voxel size 4–16+ metres), terrain rendered with Surface Nets produced large flat-topped rectangular blocks with perfect vertical walls — Minecraft-style geometry instead of smooth slopes. Root cause: terrain_density(depth) = clamp(0.5 + depth*0.5, 0.0, 1.0) saturates to exactly 0.0 or 1.0 for any voxel more than 1 m from the surface. At LOD 4 (16 m voxels), virtually every voxel was binary. With a binary SDF Surface Nets always placed vertices at exact voxel midpoints (t=0.5 in cell_vertex_offset), eliminating all sub-voxel gradient information and making every surface look like axis-aligned blocks.",
+    "description": "At LOD 2+ (voxel size 4\u201316+ metres), terrain rendered with Surface Nets produced large flat-topped rectangular blocks with perfect vertical walls \u2014 Minecraft-style geometry instead of smooth slopes. Root cause: terrain_density(depth) = clamp(0.5 + depth*0.5, 0.0, 1.0) saturates to exactly 0.0 or 1.0 for any voxel more than 1 m from the surface. At LOD 4 (16 m voxels), virtually every voxel was binary. With a binary SDF Surface Nets always placed vertices at exact voxel midpoints (t=0.5 in cell_vertex_offset), eliminating all sub-voxel gradient information and making every surface look like axis-aligned blocks.",
     "status": "resolved",
     "reported": "2026-04-26",
-    "resolution": "Applied LOD-scaled density gradient: changed terrain_density(depth) calls to terrain_density(depth / lod_scale) in both generate_voxels_core and generate_single_boundary_slice (src/world/v2/terrain_gen.rs) and in the GPU compute shader voxel_pass (src/gpu/shaders/voxel_gen.wgsl). lod_scale = 2^lod, so the gradient spans ±lod_scale metres = ±1 voxel at any LOD. The isosurface position is unchanged (density=0.5 when depth=0). Added regression test high_lod_surface_voxels_have_intermediate_density verifying LOD-4 chunks have non-binary densities near the surface.",
-    "suspected_cause": "terrain_density gradient width (±1 m) was independent of LOD voxel size, so high-LOD voxels (16 m) all saturated to binary SDF values.",
+    "resolution": "Applied LOD-scaled density gradient: changed terrain_density(depth) calls to terrain_density(depth / lod_scale) in both generate_voxels_core and generate_single_boundary_slice (src/world/v2/terrain_gen.rs) and in the GPU compute shader voxel_pass (src/gpu/shaders/voxel_gen.wgsl). lod_scale = 2^lod, so the gradient spans \u00b1lod_scale metres = \u00b11 voxel at any LOD. The isosurface position is unchanged (density=0.5 when depth=0). Added regression test high_lod_surface_voxels_have_intermediate_density verifying LOD-4 chunks have non-binary densities near the surface.",
+    "suspected_cause": "terrain_density gradient width (\u00b11 m) was independent of LOD voxel size, so high-LOD voxels (16 m) all saturated to binary SDF values.",
     "affected_files": [
       "src/world/v2/terrain_gen.rs",
       "src/gpu/shaders/voxel_gen.wgsl"
@@ -881,12 +881,27 @@
     "category": "rendering",
     "severity": "high",
     "title": "Gray opaque ceiling above player when spawning at sea",
-    "description": "The Surface Nets Y-axis edge loop in surface_nets_mesh ran `for j in 0..CSI` (CS=32). At j=CS-1=31, this emitted the edge (i,31,k)→(i,32,k), where corner j=32 is read from slices[2] (the +Y neighbour's j=0 face via generate_single_boundary_slice resampling). In the sea chunk, j=31 is AIR (r≈32015.5 > sea_level=32000) but the +Y neighbour's resampled j=0 row contains STONE for terrain columns where surface_r > 32016.5 nearby. This AIR→STONE sign change generated a downward-facing (-Y normal) stone face at the very top of the sea chunk, visible to the player below as a large gray opaque ceiling slab.",
+    "description": "The Surface Nets Y-axis edge loop in surface_nets_mesh ran `for j in 0..CSI` (CS=32). At j=CS-1=31, this emitted the edge (i,31,k)\u2192(i,32,k), where corner j=32 is read from slices[2] (the +Y neighbour's j=0 face via generate_single_boundary_slice resampling). In the sea chunk, j=31 is AIR (r\u224832015.5 > sea_level=32000) but the +Y neighbour's resampled j=0 row contains STONE for terrain columns where surface_r > 32016.5 nearby. This AIR\u2192STONE sign change generated a downward-facing (-Y normal) stone face at the very top of the sea chunk, visible to the player below as a large gray opaque ceiling slab.",
     "status": "resolved",
-    "resolution": "Changed Y-axis loop from `for j in 0..CSI` to `for j in -1_isize..(CSI - 1)`. This excludes the j=CS-1→j=CS cross-chunk edge (owned by the +Y neighbour) and adds the correct j=-1→j=0 seam edge (current chunk's -Y seam). The +Y chunk is AllAir at sea and emits no mesh, so the face correctly disappears. Added two regression tests: y_pos_seam_not_owned_by_current_chunk and y_neg_seam_owned_by_current_chunk.",
+    "resolution": "Y-axis edge loop shifted to j in -1..(CS-1) to prevent +Y cross-chunk seam ceiling (commit b8fd38d). Root cause further identified as continent_enabled:false producing random land patches above sea level near ocean spawns. Full fix: continent_enabled:true added to planet_config.ron noise block (see RENDER-009).",
     "suspected_cause": "Off-by-one in Y-axis loop range: emitted the +Y cross-chunk seam instead of the correct -Y seam. The +Y chunk being AllAir (emitting no mesh) exposed the spurious face.",
     "affected_files": [
       "src/world/v2/surface_nets.rs"
     ]
+  },
+  {
+    "id": "RENDER-009",
+    "title": "Phantom ceiling and walls in ocean \u2014 continent masking disabled",
+    "status": "resolved",
+    "category": "rendering",
+    "severity": "major",
+    "affected_files": [
+      "assets/data/planet_config.ron",
+      "src/world/noise.rs",
+      "src/gpu/shaders/voxel_gen.wgsl"
+    ],
+    "description": "continent_enabled: false caused NoiseStack.sample() to return raw land noise (combined in [-1,1]) for ALL positions. Even ocean spawns had adjacent columns with combined > 0 (land above sea level). With height_scale=4000, even combined=0.001 gives 4m land bumps. Random land patches near ocean spawn created vertical walls (X/Z sign changes) and ceiling-like top faces of nearby land columns visible from sea level.",
+    "root_cause": "continent_enabled: false in planet_config.ron noise block. The NoiseStack.sample() code path branches on this flag; when false it returns sample_land() for all positions regardless of ocean/land territory. Previous RENDER-006/007/008 fixes targeted meshing seams and Planetary mode code paths, not this Spherical mode terrain generation issue.",
+    "resolution": "Set continent_enabled: true with continent_freq: 0.3, continent_threshold: 0.0, shelf_blend_width: 0.1, ocean_floor_depth: 0.1, ocean_floor_amplitude: 0.05 inside the noise: Some((...)) block of assets/data/planet_config.ron. Ocean blobs now have combined \u2248 -0.1 (surface_r \u2248 31600m, 400m below sea level), eliminating land patches inside ocean territory."
   }
 ]
