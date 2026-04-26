@@ -405,18 +405,14 @@ fn desired_chunks_v2(
                         // camera, starving the generation budget and causing
                         // visible chunk-sized voids around the player.
                         for layer in surf_lo..=surf_hi {
-                            insert_or_wrap(
-                                &mut set, face, u, vi, layer, max_uv, lod,
-                            );
+                            insert_or_wrap(&mut set, face, u, vi, layer, max_uv, lod);
                         }
                         // Camera band (skip overlap with surface band).
                         for layer in layer_lo..=layer_hi {
                             if layer >= surf_lo && layer <= surf_hi {
                                 continue;
                             }
-                            insert_or_wrap(
-                                &mut set, face, u, vi, layer, max_uv, lod,
-                            );
+                            insert_or_wrap(&mut set, face, u, vi, layer, max_uv, lod);
                         }
                         // Skip the generic loop below — already inserted.
                         continue;
@@ -1182,6 +1178,7 @@ impl Plugin for V2WorldPlugin {
 }
 
 /// Periodic diagnostic logging for the V2 pipeline.
+#[allow(clippy::too_many_arguments)]
 fn v2_diagnostics(
     chunk_map: Res<V2ChunkMap>,
     pending_terrain: Res<V2PendingTerrain>,
@@ -1590,9 +1587,9 @@ mod tests {
         let altitude = 6600.0_f64;
         let cam_pos = DVec3::new(cfg.mean_radius + altitude, 0.0, 0.0);
 
-        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(
-            SphericalTerrainGenerator::new(cfg.clone()),
-        ));
+        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
+            cfg.clone(),
+        )));
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius, Some(&tgen));
 
         // The camera's own L0 chunk MUST be in the desired set.
@@ -1619,8 +1616,11 @@ mod tests {
         // column must also be present (so the ground below the player
         // still loads as well).
         let has_surface_chunk_under_camera = desired.iter().any(|c| {
-            c.lod == 0 && c.face == cam_coord.face && c.u == cam_coord.u
-                && c.v == cam_coord.v && c.layer.abs() <= 2
+            c.lod == 0
+                && c.face == cam_coord.face
+                && c.u == cam_coord.u
+                && c.v == cam_coord.v
+                && c.layer.abs() <= 2
         });
         assert!(
             has_surface_chunk_under_camera,

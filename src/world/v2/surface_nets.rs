@@ -21,13 +21,27 @@
 // matching the greedy mesher's convention. The chunk's `Transform`
 // applies the per-LOD tangent scale.
 //
-// Known limitation: with single-layer neighbour slices, edges that lie
-// exactly on a chunk's +X / +Y / +Z face (parallel to the boundary)
-// cannot be evaluated because the surrounding cells need corners one
-// layer beyond the slice. This produces a roughly 1-voxel crack along
-// chunk seams, far less visually disruptive than the prior chunk-aligned
-// terraces. Eliminating it requires extending `NeighborSlices` to two
-// layers on the positive faces (planned as a follow-up).
+// Seamless meshing strategy: each chunk meshes a *padded* volume that
+// extends one cell into each of its -X/-Y/-Z neighbours. This requires
+// the corner grid to span indices `-1..=CS` (CSP2 entries per axis) and
+// cells to span `-1..CS` (CSP1 entries). Edge emission then runs the
+// full `0..CS` for all three axes uniformly: the chunk owns -X/-Y/-Z
+// face seam quads, while +X/+Y/+Z face seams are owned by the
+// corresponding +face neighbour (whose -X/-Y/-Z extension lands on the
+// same physical cells with identical voxel data, so vertex positions
+// match across the seam).
+//
+// Only the existing 1-layer NeighborSlices are needed: a cell at e.g.
+// i=-1 reads i=-1 corners from the -X slice (= the -X neighbour's
+// x=CS-1 voxel) and i=0 corners from our own voxels; the -X neighbour's
+// matching cell at i=CS-1 reads x=CS-1 from its own voxels and x=CS from
+// our +X slice (= our x=0 voxel). Same data → same vertex placement →
+// no crack, no chunk-aligned slab.
+//
+// 1-voxel approximation cracks remain only at chunk *corners* (where
+// 4 chunks meet along an edge): cells with two extreme axes use a
+// max-density fallback at the diagonal corner, which differs from what
+// the diagonal-neighbour chunk computes from real data.
 
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::lod::MaterialColorMap;
@@ -36,16 +50,24 @@ use crate::world::v2::greedy_mesh::{NeighborSlices, is_transparent};
 use crate::world::voxel::{MaterialId, Voxel};
 
 const CS: usize = CHUNK_SIZE;
-const CSP1: usize = CS + 1; // corner grid extent per axis (one extra layer from neighbour)
+const CSI: isize = CS as isize;
+const CSP1: usize = CS + 1; // cell extent per axis: cells at -1..CS
+const CSP2: usize = CS + 2; // corner extent per axis: corners at -1..=CS
 
 #[inline]
-fn corner_index(i: usize, j: usize, k: usize) -> usize {
-    k * CSP1 * CSP1 + j * CSP1 + i
+fn corner_index_ext(i: isize, j: isize, k: isize) -> usize {
+    let ci = (i + 1) as usize;
+    let cj = (j + 1) as usize;
+    let ck = (k + 1) as usize;
+    ck * CSP2 * CSP2 + cj * CSP2 + ci
 }
 
 #[inline]
-fn cell_index(i: usize, j: usize, k: usize) -> usize {
-    k * CS * CS + j * CS + i
+fn cell_index_ext(i: isize, j: isize, k: isize) -> usize {
+    let ci = (i + 1) as usize;
+    let cj = (j + 1) as usize;
+    let ck = (k + 1) as usize;
+    ck * CSP1 * CSP1 + cj * CSP1 + ci
 }
 
 #[inline]
@@ -58,53 +80,78 @@ fn slice_index(a: usize, b: usize) -> usize {
     a * CS + b
 }
 
-/// Sample the voxel at corner (i, j, k) of the (CS+1)^3 corner grid.
+/// Sample the voxel at corner (i, j, k) of the (CS+2)^3 corner grid.
 ///
-/// For interior corners (all of i, j, k < CS) this is a direct voxel lookup.
-/// On the +X / +Y / +Z faces (exactly one index == CS) we read the
-/// corresponding 1-layer neighbour slice.
-///
-/// At chunk-edge corners (exactly two indices == CS) we don't have the
-/// diagonal-neighbour data, so we approximate by sampling the two
-/// adjacent face slices and the chunk's own clamped voxel and picking
-/// the highest-density value. Using max-density (rather than AIR
-/// fallback) prevents fabricated sign changes along uniform-material
-/// chunk edges, which would otherwise produce phantom geometry strips.
-///
-/// At the +X+Y+Z corner (all three == CS) we sample all three +face
-/// slices' nearest cells plus the own corner voxel, again taking max
-/// density.
-fn corner_voxel(voxels: &[Voxel], neighbors: &NeighborSlices, i: usize, j: usize, k: usize) -> Voxel {
-    let hi = (i == CS) as u8 + (j == CS) as u8 + (k == CS) as u8;
-    if hi == 0 {
-        return voxels[voxel_index(i, j, k)];
+/// `i`, `j`, `k` may be in `-1..=CS`. Interior corners (all of i, j, k
+/// in `0..CS`) are direct voxel lookups. On a single -X/+X/-Y/+Y/-Z/+Z
+/// face we read the matching 1-layer neighbour slice. Edge and corner
+/// cases (two or three axes at extremes) lack diagonal-neighbour data:
+/// we approximate by sampling all available adjacent face slices and
+/// the chunk's own clamped voxel and picking the highest-density value.
+/// Using max-density (rather than AIR fallback) prevents fabricated
+/// sign changes along uniform-material chunk edges, which would
+/// otherwise produce phantom geometry strips.
+fn corner_voxel(
+    voxels: &[Voxel],
+    neighbors: &NeighborSlices,
+    i: isize,
+    j: isize,
+    k: isize,
+) -> Voxel {
+    let i_lo = i == -1;
+    let i_hi = i == CSI;
+    let j_lo = j == -1;
+    let j_hi = j == CSI;
+    let k_lo = k == -1;
+    let k_hi = k == CSI;
+    let i_ext = i_lo || i_hi;
+    let j_ext = j_lo || j_hi;
+    let k_ext = k_lo || k_hi;
+    let extreme = (i_ext as u8) + (j_ext as u8) + (k_ext as u8);
+
+    if extreme == 0 {
+        return voxels[voxel_index(i as usize, j as usize, k as usize)];
     }
-    if hi == 1 {
-        if i == CS {
+
+    // Clamped own-voxel coordinates (used as fallback and for slice indexing
+    // when one or more axes are themselves at the extreme).
+    let ci = i.clamp(0, CSI - 1) as usize;
+    let cj = j.clamp(0, CSI - 1) as usize;
+    let ck = k.clamp(0, CSI - 1) as usize;
+
+    if extreme == 1 {
+        if i_hi {
             if let Some(ref s) = neighbors.slices[0] {
-                return s[slice_index(j, k)];
+                return s[slice_index(j as usize, k as usize)];
             }
-        } else if j == CS {
+        } else if i_lo {
+            if let Some(ref s) = neighbors.slices[1] {
+                return s[slice_index(j as usize, k as usize)];
+            }
+        } else if j_hi {
             if let Some(ref s) = neighbors.slices[2] {
-                return s[slice_index(i, k)];
+                return s[slice_index(i as usize, k as usize)];
             }
-        } else if k == CS {
+        } else if j_lo {
+            if let Some(ref s) = neighbors.slices[3] {
+                return s[slice_index(i as usize, k as usize)];
+            }
+        } else if k_hi {
             if let Some(ref s) = neighbors.slices[4] {
-                return s[slice_index(i, j)];
+                return s[slice_index(i as usize, j as usize)];
             }
+        } else if k_lo && let Some(ref s) = neighbors.slices[5] {
+            return s[slice_index(i as usize, j as usize)];
         }
         // Slice missing: best-effort fallback to the clamped own voxel.
-        let ci = i.min(CS - 1);
-        let cj = j.min(CS - 1);
-        let ck = k.min(CS - 1);
         return voxels[voxel_index(ci, cj, ck)];
     }
 
-    // hi >= 2: combine all available face slices that "touch" this corner
-    // plus the chunk's own clamped voxel. Pick the one with the highest
-    // density so that uniform-material chunk edges don't fabricate sign
-    // changes.
-    let mut best = voxels[voxel_index(i.min(CS - 1), j.min(CS - 1), k.min(CS - 1))];
+    // extreme >= 2: combine all available face slices that "touch" this
+    // corner plus the chunk's own clamped voxel. Pick the one with the
+    // highest density so that uniform-material chunk edges don't
+    // fabricate sign changes.
+    let mut best = voxels[voxel_index(ci, cj, ck)];
     let mut best_density = best.density;
 
     let consider = |v: Voxel, best: &mut Voxel, best_density: &mut f32| {
@@ -114,26 +161,26 @@ fn corner_voxel(voxels: &[Voxel], neighbors: &NeighborSlices, i: usize, j: usize
         }
     };
 
-    if i == CS {
+    if i_hi {
         if let Some(ref s) = neighbors.slices[0] {
-            let jj = j.min(CS - 1);
-            let kk = k.min(CS - 1);
-            consider(s[slice_index(jj, kk)], &mut best, &mut best_density);
+            consider(s[slice_index(cj, ck)], &mut best, &mut best_density);
         }
+    } else if i_lo && let Some(ref s) = neighbors.slices[1] {
+        consider(s[slice_index(cj, ck)], &mut best, &mut best_density);
     }
-    if j == CS {
+    if j_hi {
         if let Some(ref s) = neighbors.slices[2] {
-            let ii = i.min(CS - 1);
-            let kk = k.min(CS - 1);
-            consider(s[slice_index(ii, kk)], &mut best, &mut best_density);
+            consider(s[slice_index(ci, ck)], &mut best, &mut best_density);
         }
+    } else if j_lo && let Some(ref s) = neighbors.slices[3] {
+        consider(s[slice_index(ci, ck)], &mut best, &mut best_density);
     }
-    if k == CS {
+    if k_hi {
         if let Some(ref s) = neighbors.slices[4] {
-            let ii = i.min(CS - 1);
-            let jj = j.min(CS - 1);
-            consider(s[slice_index(ii, jj)], &mut best, &mut best_density);
+            consider(s[slice_index(ci, cj)], &mut best, &mut best_density);
         }
+    } else if k_lo && let Some(ref s) = neighbors.slices[5] {
+        consider(s[slice_index(ci, cj)], &mut best, &mut best_density);
     }
     best
 }
@@ -149,9 +196,18 @@ fn sdf_value(v: Voxel) -> f32 {
 /// 12 edges of a unit cube as (corner_a, corner_b) index pairs into the 8
 /// cube corners. Corner ordering: bit 0 = X, bit 1 = Y, bit 2 = Z.
 const CUBE_EDGES: [(u8, u8); 12] = [
-    (0b000, 0b001), (0b010, 0b011), (0b100, 0b101), (0b110, 0b111), // X-edges
-    (0b000, 0b010), (0b001, 0b011), (0b100, 0b110), (0b101, 0b111), // Y-edges
-    (0b000, 0b100), (0b001, 0b101), (0b010, 0b110), (0b011, 0b111), // Z-edges
+    (0b000, 0b001),
+    (0b010, 0b011),
+    (0b100, 0b101),
+    (0b110, 0b111), // X-edges
+    (0b000, 0b010),
+    (0b001, 0b011),
+    (0b100, 0b110),
+    (0b101, 0b111), // Y-edges
+    (0b000, 0b100),
+    (0b001, 0b101),
+    (0b010, 0b110),
+    (0b011, 0b111), // Z-edges
 ];
 
 /// Compute the surface-net vertex inside a cell from the 8 corner SDFs.
@@ -204,13 +260,11 @@ fn cell_material(corner_voxels: &[Voxel; 8], corner_sdf: &[f32; 8]) -> MaterialI
             continue;
         }
         if v.material == MaterialId::WATER {
-            if best_water.map_or(true, |(_, s)| corner_sdf[i] > s) {
+            if best_water.is_none_or(|(_, s)| corner_sdf[i] > s) {
                 best_water = Some((i, corner_sdf[i]));
             }
-        } else {
-            if best_solid.map_or(true, |(_, s)| corner_sdf[i] > s) {
-                best_solid = Some((i, corner_sdf[i]));
-            }
+        } else if best_solid.is_none_or(|(_, s)| corner_sdf[i] > s) {
+            best_solid = Some((i, corner_sdf[i]));
         }
     }
     if let Some((i, _)) = best_solid {
@@ -237,7 +291,7 @@ struct CellGrid {
 impl CellGrid {
     fn new() -> Self {
         Self {
-            vertex: vec![None; CS * CS * CS],
+            vertex: vec![None; CSP1 * CSP1 * CSP1],
         }
     }
 }
@@ -253,34 +307,40 @@ pub fn surface_nets_mesh(
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    // Step 1: build SDF + voxel grids over the (CS+1)^3 corner grid.
-    let total_corners = CSP1 * CSP1 * CSP1;
+    // Step 1: build SDF + voxel grids over the (CS+2)^3 corner grid
+    // spanning corners at indices -1..=CS on each axis.
+    let total_corners = CSP2 * CSP2 * CSP2;
     let mut corner_sdf = vec![0.0f32; total_corners];
     let mut corner_vox = vec![Voxel::default(); total_corners];
-    for k in 0..CSP1 {
-        for j in 0..CSP1 {
-            for i in 0..CSP1 {
+    for k in -1..=CSI {
+        for j in -1..=CSI {
+            for i in -1..=CSI {
                 let v = corner_voxel(voxels, neighbors, i, j, k);
-                let idx = corner_index(i, j, k);
+                let idx = corner_index_ext(i, j, k);
                 corner_sdf[idx] = sdf_value(v);
                 corner_vox[idx] = v;
             }
         }
     }
 
-    // Step 2: per-cell vertex placement.
+    // Step 2: per-cell vertex placement over cells at indices -1..CS
+    // on each axis. Cells at i=-1 (etc.) are owned by the -X neighbour
+    // physically, but we mesh them so we can emit our -X face seam
+    // quads with vertex positions identical to what that neighbour
+    // computes (because the underlying voxel data on the seam is
+    // shared via the 1-layer slice).
     let mut grid = CellGrid::new();
-    for k in 0..CS {
-        for j in 0..CS {
-            for i in 0..CS {
+    for k in -1..CSI {
+        for j in -1..CSI {
+            for i in -1..CSI {
                 let mut sdf8 = [0.0f32; 8];
                 let mut vox8 = [Voxel::default(); 8];
                 let mut mask: u8 = 0;
                 for c in 0..8u8 {
-                    let dx = (c & 1) as usize;
-                    let dy = ((c >> 1) & 1) as usize;
-                    let dz = ((c >> 2) & 1) as usize;
-                    let ci = corner_index(i + dx, j + dy, k + dz);
+                    let dx = (c & 1) as isize;
+                    let dy = ((c >> 1) & 1) as isize;
+                    let dz = ((c >> 2) & 1) as isize;
+                    let ci = corner_index_ext(i + dx, j + dy, k + dz);
                     sdf8[c as usize] = corner_sdf[ci];
                     vox8[c as usize] = corner_vox[ci];
                     if corner_sdf[ci] >= 0.0 {
@@ -297,7 +357,7 @@ pub fn surface_nets_mesh(
                     k as f32 + 0.5 + off[2],
                 ];
                 let mat = cell_material(&vox8, &sdf8);
-                let cidx = cell_index(i, j, k);
+                let cidx = cell_index_ext(i, j, k);
                 let v_idx = positions.len() as u32;
                 positions.push(pos);
                 normals.push([0.0, 0.0, 0.0]); // accumulated below
@@ -309,10 +369,12 @@ pub fn surface_nets_mesh(
 
     // Step 3: emit one quad per axis-aligned edge that has a sign change.
     //
-    // For an X-axis edge between corner (i, j, k) and (i+1, j, k) the
-    // four surrounding cells share x-index i and span (j-1..j) × (k-1..k).
-    // Quad winding is chosen so the front face points toward the
-    // negative-SDF side.
+    // Edge loops uniformly span 0..CS on every axis. For each axis, the
+    // varying axis of the edge runs 0..CS (start corners 0..=CS-1), and
+    // the orthogonal axes also run 0..CS. This emits all in-chunk edges
+    // plus the -X/-Y/-Z face seam edges (whose surrounding cells include
+    // the i=-1 / j=-1 / k=-1 cells we computed above). +X/+Y/+Z face
+    // seams are owned by the neighbouring chunk's matching loop.
     let emit_quad = |positions: &mut Vec<[f32; 3]>,
                      normals: &mut Vec<[f32; 3]>,
                      indices: &mut Vec<u32>,
@@ -344,84 +406,104 @@ pub fn surface_nets_mesh(
             n[2] += nrm[2];
         }
         if reversed {
-            indices.extend_from_slice(&[verts[0], verts[2], verts[1], verts[0], verts[3], verts[2]]);
+            indices
+                .extend_from_slice(&[verts[0], verts[2], verts[1], verts[0], verts[3], verts[2]]);
         } else {
-            indices.extend_from_slice(&[verts[0], verts[1], verts[2], verts[0], verts[2], verts[3]]);
+            indices
+                .extend_from_slice(&[verts[0], verts[1], verts[2], verts[0], verts[2], verts[3]]);
         }
     };
 
     // X-axis edges: edge at corner (i, j, k) → (i+1, j, k). Surrounding
-    // cells need j ≥ 1 and k ≥ 1 (and j ≤ CS-1, k ≤ CS-1).
-    for k in 1..CS {
-        for j in 1..CS {
-            for i in 0..CS {
-                let ca = corner_index(i, j, k);
-                let cb = corner_index(i + 1, j, k);
+    // cells span (i, j-1..j, k-1..k), needing j-1 ≥ -1 and k-1 ≥ -1.
+    for k in 0..CSI {
+        for j in 0..CSI {
+            for i in 0..CSI {
+                let ca = corner_index_ext(i, j, k);
+                let cb = corner_index_ext(i + 1, j, k);
                 let pos_a = corner_sdf[ca] >= 0.0;
                 let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
                 }
-                let v00 = grid.vertex[cell_index(i, j - 1, k - 1)];
-                let v10 = grid.vertex[cell_index(i, j, k - 1)];
-                let v11 = grid.vertex[cell_index(i, j, k)];
-                let v01 = grid.vertex[cell_index(i, j - 1, k)];
+                let v00 = grid.vertex[cell_index_ext(i, j - 1, k - 1)];
+                let v10 = grid.vertex[cell_index_ext(i, j, k - 1)];
+                let v11 = grid.vertex[cell_index_ext(i, j, k)];
+                let v01 = grid.vertex[cell_index_ext(i, j - 1, k)];
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
                 // Default ordering [v00, v10, v11, v01] gives +X normal;
                 // flip when solid sits on the +X side (pos_b).
-                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], !pos_a);
+                emit_quad(
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    [v00, v10, v11, v01],
+                    !pos_a,
+                );
             }
         }
     }
 
     // Y-axis edges: edge at corner (i, j, k) → (i, j+1, k). Surrounding
-    // cells need i ≥ 1 and k ≥ 1.
-    for k in 1..CS {
-        for j in 0..CS {
-            for i in 1..CS {
-                let ca = corner_index(i, j, k);
-                let cb = corner_index(i, j + 1, k);
+    // cells span (i-1..i, j, k-1..k).
+    for k in 0..CSI {
+        for j in 0..CSI {
+            for i in 0..CSI {
+                let ca = corner_index_ext(i, j, k);
+                let cb = corner_index_ext(i, j + 1, k);
                 let pos_a = corner_sdf[ca] >= 0.0;
                 let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
                 }
-                let v00 = grid.vertex[cell_index(i - 1, j, k - 1)];
-                let v10 = grid.vertex[cell_index(i, j, k - 1)];
-                let v11 = grid.vertex[cell_index(i, j, k)];
-                let v01 = grid.vertex[cell_index(i - 1, j, k)];
+                let v00 = grid.vertex[cell_index_ext(i - 1, j, k - 1)];
+                let v10 = grid.vertex[cell_index_ext(i, j, k - 1)];
+                let v11 = grid.vertex[cell_index_ext(i, j, k)];
+                let v01 = grid.vertex[cell_index_ext(i - 1, j, k)];
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
                 // Default ordering produces -Y normal (CW in (i,k) plane
                 // viewed from +Y); flip when solid is below (pos_a).
-                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], pos_a);
+                emit_quad(
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    [v00, v10, v11, v01],
+                    pos_a,
+                );
             }
         }
     }
 
     // Z-axis edges: edge at corner (i, j, k) → (i, j, k+1). Surrounding
-    // cells need i ≥ 1 and j ≥ 1.
-    for k in 0..CS {
-        for j in 1..CS {
-            for i in 1..CS {
-                let ca = corner_index(i, j, k);
-                let cb = corner_index(i, j, k + 1);
+    // cells span (i-1..i, j-1..j, k).
+    for k in 0..CSI {
+        for j in 0..CSI {
+            for i in 0..CSI {
+                let ca = corner_index_ext(i, j, k);
+                let cb = corner_index_ext(i, j, k + 1);
                 let pos_a = corner_sdf[ca] >= 0.0;
                 let pos_b = corner_sdf[cb] >= 0.0;
                 if pos_a == pos_b {
                     continue;
                 }
-                let v00 = grid.vertex[cell_index(i - 1, j - 1, k)];
-                let v10 = grid.vertex[cell_index(i, j - 1, k)];
-                let v11 = grid.vertex[cell_index(i, j, k)];
-                let v01 = grid.vertex[cell_index(i - 1, j, k)];
+                let v00 = grid.vertex[cell_index_ext(i - 1, j - 1, k)];
+                let v10 = grid.vertex[cell_index_ext(i, j - 1, k)];
+                let v11 = grid.vertex[cell_index_ext(i, j, k)];
+                let v01 = grid.vertex[cell_index_ext(i - 1, j, k)];
                 let (Some(v00), Some(v10), Some(v11), Some(v01)) = (v00, v10, v11, v01) else {
                     continue;
                 };
-                emit_quad(&mut positions, &mut normals, &mut indices, [v00, v10, v11, v01], !pos_a);
+                emit_quad(
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    [v00, v10, v11, v01],
+                    !pos_a,
+                );
             }
         }
     }
@@ -438,7 +520,12 @@ pub fn surface_nets_mesh(
         }
     }
 
-    ChunkMesh { positions, normals, colors, indices }
+    ChunkMesh {
+        positions,
+        normals,
+        colors,
+        indices,
+    }
 }
 
 #[cfg(test)]
@@ -509,9 +596,12 @@ mod tests {
         for p in &mesh.positions {
             // Keep only cells safely inside the chunk (avoid +X/+Y/+Z fall-off
             // into the missing-neighbour AIR layer which biases averages).
-            if p[0] > 2.0 && p[0] < (CS as f32 - 2.0)
-                && p[2] > 2.0 && p[2] < (CS as f32 - 2.0)
-                && p[1] > 0.5 && p[1] < (CS as f32 - 0.5)
+            if p[0] > 2.0
+                && p[0] < (CS as f32 - 2.0)
+                && p[2] > 2.0
+                && p[2] < (CS as f32 - 2.0)
+                && p[1] > 0.5
+                && p[1] < (CS as f32 - 0.5)
             {
                 y_sum += p[1];
                 count += 1;
@@ -546,9 +636,7 @@ mod tests {
         let mut y_sum = 0.0;
         let mut count = 0;
         for p in &mesh.positions {
-            if p[0] > 2.0 && p[0] < (CS as f32 - 2.0)
-                && p[2] > 2.0 && p[2] < (CS as f32 - 2.0)
-            {
+            if p[0] > 2.0 && p[0] < (CS as f32 - 2.0) && p[2] > 2.0 && p[2] < (CS as f32 - 2.0) {
                 y_sum += p[1];
                 count += 1;
             }
