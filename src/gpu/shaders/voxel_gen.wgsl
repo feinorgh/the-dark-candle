@@ -86,7 +86,8 @@ struct NoiseParams {
     ocean_floor_depth: f32,
     ocean_floor_amplitude: f32,
     seed: u32,
-    _pad0: u32,
+    /// 1 = sample the pre-baked planetary heightmap; 0 = use FBM Perlin noise.
+    use_heightmap: u32,
     mean_radius: f32,
     height_scale: f32,
 }
@@ -139,6 +140,11 @@ struct DispatchParams {
 
 // Permutation tables: NUM_PERM_TABLES × 256 u32 values.
 @group(1) @binding(1) var<storage, read> perm_tables: array<u32>;
+
+// Bind group 1, binding 2: pre-baked equirectangular elevation map (2048×1024 f32).
+// Each element is the surface elevation offset from mean_radius in metres.
+// Sampled only when noise_params.use_heightmap == 1.
+@group(1) @binding(2) var<storage, read> heightmap_data: array<f32>;
 
 // ─── Permutation-table-based Perlin noise ────────────────────────────────────
 //
@@ -392,6 +398,47 @@ fn lat_lon(pos: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(lat, lon);
 }
 
+// ─── Planetary heightmap sampling ────────────────────────────────────────────
+
+// Dimensions must match constants in src/planet/gpu_heightmap.rs.
+const HEIGHTMAP_W: u32 = 2048u;
+const HEIGHTMAP_H: u32 = 1024u;
+const PI: f32 = 3.14159265358979323846;
+
+/// Sample the baked equirectangular elevation map at `(lat, lon)` with
+/// bilinear interpolation.
+///
+/// `lat` ∈ [−π/2, π/2],  `lon` ∈ [−π, π].
+/// Returns the elevation offset from `mean_radius` in metres.
+fn sample_heightmap(lat: f32, lon: f32) -> f32 {
+    // Map lon → u ∈ [0, 1], wrapping at the antimeridian.
+    let u = fract(lon / (2.0 * PI) + 0.5);
+    // Map lat → v ∈ [0 (north), 1 (south)].
+    let v = 0.5 - lat / PI;
+
+    // Sub-pixel position (texel centres at +0.5).
+    let px = u * f32(HEIGHTMAP_W) - 0.5;
+    let py = v * f32(HEIGHTMAP_H) - 0.5;
+
+    let ix = i32(floor(px));
+    let iy = i32(floor(py));
+    let tx = px - floor(px);
+    let ty = py - floor(py);
+
+    // Wrap x, clamp y.
+    let x0 = u32((ix + i32(HEIGHTMAP_W)) % i32(HEIGHTMAP_W));
+    let x1 = u32((ix + 1 + i32(HEIGHTMAP_W)) % i32(HEIGHTMAP_W));
+    let y0 = u32(clamp(iy,     0, i32(HEIGHTMAP_H) - 1));
+    let y1 = u32(clamp(iy + 1, 0, i32(HEIGHTMAP_H) - 1));
+
+    let v00 = heightmap_data[y0 * HEIGHTMAP_W + x0];
+    let v10 = heightmap_data[y0 * HEIGHTMAP_W + x1];
+    let v01 = heightmap_data[y1 * HEIGHTMAP_W + x0];
+    let v11 = heightmap_data[y1 * HEIGHTMAP_W + x1];
+
+    return mix(mix(v00, v10, tx), mix(v01, v11, tx), ty);
+}
+
 // Order-preserving float → u32 mapping for signed floats so that
 // `atomicMin` / `atomicMax` on the encoded value match float ordering.
 // Needed because surface offsets can be negative (e.g. ocean floor below
@@ -564,13 +611,24 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let ll = lat_lon(world, dispatch_params.rotation_axis.xyz);
 
-    // sample_terrain excludes micro-detail, matching CPU sample_surface_radius()
-    let combined = sample_terrain(ll.y, ll.x);
-    // Store surface offset from mean_radius, not absolute radius. Fits in f32
-    // with sub-mm precision (|offset| ≤ height_scale ≈ 8.8 km for Earth) and
-    // avoids catastrophic cancellation when compared against voxel r_offset
-    // in `voxel_pass`.
-    let sr_offset = combined * noise_params.height_scale;
+    // Compute surface radius offset from mean_radius in metres.
+    // When the planetary heightmap is available, sample it directly — this
+    // reproduces the CPU PlanetaryTerrainSampler path (IDW tectonic elevation +
+    // detail noise + ocean-biome clamp) at f32 precision without running FBM.
+    // Fall back to the FBM Perlin path when no heightmap has been uploaded yet.
+    var sr_offset: f32;
+    if noise_params.use_heightmap == 1u {
+        // ll.x = lat, ll.y = lon (see lat_lon() return convention).
+        sr_offset = sample_heightmap(ll.x, ll.y);
+    } else {
+        // sample_terrain excludes micro-detail, matching CPU sample_surface_radius()
+        let combined = sample_terrain(ll.y, ll.x);
+        // Store surface offset from mean_radius, not absolute radius. Fits in f32
+        // with sub-mm precision (|offset| ≤ height_scale ≈ 8.8 km for Earth) and
+        // avoids catastrophic cancellation when compared against voxel r_offset
+        // in `voxel_pass`.
+        sr_offset = combined * noise_params.height_scale;
+    }
 
     let out_idx = chunk.chunk_index * CHUNK_AREA + col_idx;
     surface_radii[out_idx] = sr_offset;

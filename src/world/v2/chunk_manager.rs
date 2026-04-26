@@ -175,6 +175,12 @@ pub struct GpuTerrainDispatcher {
     compute: Option<Arc<GpuVoxelCompute>>,
 }
 
+/// Tracks whether the planetary heightmap has been injected into the GPU pipeline.
+///
+/// Once injected the system no longer runs, avoiding repeated async spawns.
+#[derive(Resource, Default, PartialEq)]
+pub struct GpuHeightmapInjected(bool);
+
 /// Cached voxel data for chunks that have completed terrain generation.
 ///
 /// Entries are stored as `Arc`-wrapped data for zero-copy sharing with mesh tasks.
@@ -1155,6 +1161,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<V2InvalidationQueue>()
             .init_resource::<V2VoxelCache>()
             .init_resource::<GpuTerrainDispatcher>()
+            .init_resource::<GpuHeightmapInjected>()
             .init_resource::<V2PipelineStats>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
@@ -1169,6 +1176,10 @@ impl Plugin for V2WorldPlugin {
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
+            )
+            .add_systems(
+                Update,
+                try_inject_gpu_heightmap.run_if(not(resource_equals(GpuHeightmapInjected(true)))),
             )
             .add_systems(
                 PostUpdate,
@@ -1289,6 +1300,48 @@ fn v2_init_terrain_gen(
     } else {
         info!("V2 pipeline: no noise config, GPU terrain generation disabled");
     }
+}
+
+/// One-shot system that bakes the planetary heightmap and uploads it to the GPU.
+///
+/// Runs every frame until both `V2TerrainGen` (which becomes available once
+/// `PlanetaryData` is inserted) and a GPU pipeline are present.  The bake is
+/// offloaded to `AsyncComputeTaskPool` so it does not block the render thread.
+/// After the async task completes it writes directly into the `GpuVoxelCompute`
+/// via `Arc::set_heightmap()` (which takes `&self`).
+fn try_inject_gpu_heightmap(
+    mut injected: ResMut<GpuHeightmapInjected>,
+    terrain_gen: Option<Res<V2TerrainGen>>,
+    gpu_dispatcher: Res<GpuTerrainDispatcher>,
+) {
+    if injected.0 {
+        return;
+    }
+    let Some(tgen) = terrain_gen else { return };
+    let Some(compute) = gpu_dispatcher.compute.clone() else {
+        return;
+    };
+
+    injected.0 = true;
+
+    // Clone the Arc so the async task owns its own reference.
+    let gen_arc = tgen.0.clone();
+    let pool = AsyncComputeTaskPool::get();
+    pool.spawn(async move {
+        use crate::planet::gpu_heightmap::bake_elevation_map;
+        info!(
+            "GPU heightmap: baking {}×{} elevation map from PlanetaryTerrainSampler…",
+            crate::planet::gpu_heightmap::HEIGHTMAP_WIDTH,
+            crate::planet::gpu_heightmap::HEIGHTMAP_HEIGHT,
+        );
+        let data = bake_elevation_map(&gen_arc.0);
+        compute.set_heightmap(&data);
+        info!(
+            "GPU heightmap: uploaded {} floats — heightmap mode active",
+            data.len()
+        );
+    })
+    .detach();
 }
 
 #[cfg(test)]

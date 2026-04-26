@@ -9,6 +9,7 @@
 //! Falls back gracefully when no GPU is available.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use wgpu;
 
@@ -220,7 +221,10 @@ struct NoiseParamsGpu {
     ocean_floor_depth: f32,
     ocean_floor_amplitude: f32,
     seed: u32,
-    _pad0: u32,
+    /// 1 = use the pre-baked planetary heightmap storage buffer for surface
+    /// radius; 0 = fall back to FBM Perlin noise (default before heightmap
+    /// upload is complete).
+    use_heightmap: u32,
     mean_radius: f32,
     height_scale: f32,
 }
@@ -249,7 +253,7 @@ impl NoiseParamsGpu {
             ocean_floor_depth: config.ocean_floor_depth as f32,
             ocean_floor_amplitude: config.ocean_floor_amplitude as f32,
             seed,
-            _pad0: 0,
+            use_heightmap: 0,
             mean_radius: mean_radius as f32,
             height_scale: height_scale as f32,
         }
@@ -328,12 +332,17 @@ pub struct GpuVoxelCompute {
     materials_buffer: wgpu::Buffer,
     densities_buffer: wgpu::Buffer,
     perm_tables_buffer: wgpu::Buffer,
+    /// Pre-allocated 2048×1024 f32 storage buffer for the planetary heightmap.
+    /// All-zero until `set_heightmap()` is called.
+    heightmap_buffer: wgpu::Buffer,
     // Staging buffers for CPU readback.
     materials_staging: wgpu::Buffer,
     densities_staging: wgpu::Buffer,
     chunk_info_staging: wgpu::Buffer,
     // Cached noise params.
     noise_params: NoiseParamsGpu,
+    /// 0 = use FBM noise, 1 = use heightmap buffer. Written by `set_heightmap()`.
+    use_heightmap_flag: AtomicU32,
 }
 
 impl GpuVoxelCompute {
@@ -378,12 +387,12 @@ impl GpuVoxelCompute {
                 entries: &[bgl_uniform(0), bgl_uniform(1)],
             });
 
-        // Bind group 1: chunk descriptors + permutation tables (read-only storage)
+        // Bind group 1: chunk descriptors + permutation tables + heightmap (read-only storage)
         let bgl_chunks = ctx
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("voxel_chunks_layout"),
-                entries: &[bgl_storage_ro(0), bgl_storage_ro(1)],
+                entries: &[bgl_storage_ro(0), bgl_storage_ro(1), bgl_storage_ro(2)],
             });
 
         // Bind group 2: surface pass outputs (surface_radii + chunk_info)
@@ -539,6 +548,17 @@ impl GpuVoxelCompute {
         ctx.queue
             .write_buffer(&perm_tables_buffer, 0, bytemuck::cast_slice(&perm_data));
 
+        // Heightmap buffer: 2048×1024 f32 = 8 MB, pre-allocated all-zero.
+        // Filled lazily by `set_heightmap()` when planetary data is ready.
+        use crate::planet::gpu_heightmap::{HEIGHTMAP_HEIGHT, HEIGHTMAP_WIDTH};
+        let heightmap_size = (HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT) as u64 * 4;
+        let heightmap_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voxel_heightmap"),
+            size: heightmap_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             ctx,
             surface_pipeline,
@@ -556,11 +576,39 @@ impl GpuVoxelCompute {
             materials_buffer,
             densities_buffer,
             perm_tables_buffer,
+            heightmap_buffer,
             materials_staging,
             densities_staging,
             chunk_info_staging,
             noise_params,
+            use_heightmap_flag: AtomicU32::new(0),
         }
+    }
+
+    /// Upload a pre-baked planetary heightmap and activate GPU heightmap sampling.
+    ///
+    /// `data` must have length `HEIGHTMAP_WIDTH × HEIGHTMAP_HEIGHT` floats.
+    /// Each element is the surface elevation offset from `mean_radius` in metres.
+    ///
+    /// This method is `&self` (not `&mut self`) so it can be called through an
+    /// `Arc<GpuVoxelCompute>` without exclusive ownership.  After this call,
+    /// all subsequent `generate_batch()` calls will use the heightmap instead
+    /// of FBM Perlin noise for surface radius computation.
+    pub fn set_heightmap(&self, data: &[f32]) {
+        use crate::planet::gpu_heightmap::{HEIGHTMAP_HEIGHT, HEIGHTMAP_WIDTH};
+        let expected = (HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT) as usize;
+        assert_eq!(
+            data.len(),
+            expected,
+            "heightmap data length {} != expected {expected}",
+            data.len()
+        );
+        self.ctx
+            .queue
+            .write_buffer(&self.heightmap_buffer, 0, bytemuck::cast_slice(data));
+        // Memory ordering: Release ensures the buffer write is visible before
+        // any subsequent generate_batch() Acquire-reads the flag.
+        self.use_heightmap_flag.store(1, Ordering::Release);
     }
 
     /// Run the full voxel generation pipeline for a batch of chunks.
@@ -605,11 +653,13 @@ impl GpuVoxelCompute {
             bytemuck::bytes_of(&dispatch_params),
         );
 
-        // Upload noise params (in case they changed).
+        // Upload noise params, incorporating the current heightmap flag.
+        let mut noise_params = self.noise_params;
+        noise_params.use_heightmap = self.use_heightmap_flag.load(Ordering::Acquire);
         self.ctx.queue.write_buffer(
             &self.noise_params_buffer,
             0,
-            bytemuck::bytes_of(&self.noise_params),
+            bytemuck::bytes_of(&noise_params),
         );
 
         // Upload chunk descriptors.
@@ -658,6 +708,7 @@ impl GpuVoxelCompute {
                 entries: &[
                     bg_entry(0, &self.chunks_buffer),
                     bg_entry(1, &self.perm_tables_buffer),
+                    bg_entry(2, &self.heightmap_buffer),
                 ],
             });
 

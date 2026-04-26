@@ -11,6 +11,7 @@ pub mod biomes;
 pub mod celestial;
 pub mod detail;
 pub mod geology;
+pub mod gpu_heightmap;
 pub mod grid;
 pub mod impacts;
 pub mod persistence;
