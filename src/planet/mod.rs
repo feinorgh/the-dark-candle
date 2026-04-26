@@ -13,6 +13,7 @@ pub mod detail;
 pub mod geology;
 pub mod grid;
 pub mod impacts;
+pub mod persistence;
 pub mod projections;
 pub mod render;
 pub mod tectonics;

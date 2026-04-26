@@ -26,7 +26,7 @@ use super::biome_map::{self, EnvironmentMap};
 use super::chunk::{CHUNK_SIZE, Chunk};
 use super::erosion::{ErosionConfig, FlowMap, carve_valley};
 use super::noise::NoiseStack;
-use super::planet::{PlanetConfig, TerrainMode};
+use super::planet::PlanetConfig;
 use super::voxel::MaterialId;
 
 /// Compute continuous density for Surface Nets interpolation.
@@ -866,180 +866,86 @@ fn material_from_layer_name(name: &str) -> MaterialId {
 // Unified terrain generator
 // ---------------------------------------------------------------------------
 
-/// Unified terrain generator that dispatches to flat or spherical mode.
-pub enum UnifiedTerrainGenerator {
-    Flat(Box<TerrainGenerator>),
-    Spherical(Box<SphericalTerrainGenerator>),
-    /// Planet-data-driven spherical generator.
-    Planetary(Box<super::planetary_sampler::PlanetaryTerrainSampler>),
-}
+/// Unified terrain generator: wraps `PlanetaryTerrainSampler` for all terrain.
+///
+/// Previously a 3-variant enum (Flat / Spherical / Planetary).  The flat and
+/// noise-based spherical modes have been retired; the game exclusively uses the
+/// tectonic/biome-driven `PlanetaryTerrainSampler`.
+pub struct UnifiedTerrainGenerator(pub super::planetary_sampler::PlanetaryTerrainSampler);
 
 impl UnifiedTerrainGenerator {
-    /// Create from a `PlanetConfig` (uses mode to decide).
-    pub fn from_planet_config(planet: &PlanetConfig) -> Self {
-        match planet.mode {
-            TerrainMode::Flat => {
-                let config = TerrainConfig {
-                    seed: planet.seed,
-                    sea_level: planet.sea_level_radius as i32,
-                    height_scale: planet.height_scale,
-                    continent_freq: planet.continent_freq,
-                    detail_freq: planet.detail_freq,
-                    cave_freq: planet.cave_freq,
-                    cave_threshold: planet.cave_threshold,
-                    soil_depth: planet.soil_depth as i32,
-                    erosion: planet.erosion.clone().unwrap_or_default(),
-                };
-                if let Some(ref noise_cfg) = planet.noise {
-                    let stack = NoiseStack::new(planet.seed, noise_cfg.clone());
-                    Self::Flat(Box::new(TerrainGenerator::with_noise_stack(config, stack)))
-                } else {
-                    Self::Flat(Box::new(TerrainGenerator::new(config)))
-                }
-            }
-            TerrainMode::Spherical => {
-                Self::Spherical(Box::new(SphericalTerrainGenerator::new(planet.clone())))
-            }
-        }
+    /// Construct from `PlanetData` and a world-space `PlanetConfig`.
+    pub fn new(
+        planet_data: std::sync::Arc<crate::planet::PlanetData>,
+        planet_config: PlanetConfig,
+    ) -> Self {
+        Self(super::planetary_sampler::PlanetaryTerrainSampler::new(
+            planet_data,
+            planet_config,
+        ))
     }
 
-    /// Fill a chunk with terrain.
-    ///
-    /// Returns `Some(ChunkBiomeData)` when using the planetary generator;
-    /// `None` for flat/spherical noise-based generators.
+    /// Fill a chunk with terrain, returning biome data.
     pub fn generate_chunk(
         &self,
         chunk: &mut Chunk,
     ) -> Option<super::planetary_sampler::ChunkBiomeData> {
-        match self {
-            Self::Flat(g) => {
-                g.generate_chunk(chunk);
-                None
-            }
-            Self::Spherical(g) => {
-                g.generate_chunk(chunk);
-                None
-            }
-            Self::Planetary(g) => {
-                let biome = g.generate_chunk(chunk);
-                Some(biome)
-            }
-        }
+        Some(self.0.generate_chunk(chunk))
     }
 
-    /// Fill a chunk using GPU-precomputed surface radii (spherical mode only).
+    /// Fill a chunk using GPU-precomputed surface radii.
     ///
-    /// For non-spherical modes, falls back to the standard CPU path.
+    /// Falls back to the CPU path because `PlanetaryTerrainSampler` does not
+    /// yet consume pre-computed GPU heights.
     pub fn generate_chunk_with_gpu_heights(
         &self,
         chunk: &mut Chunk,
-        gpu_heights: &[f32],
+        _gpu_heights: &[f32],
     ) -> Option<super::planetary_sampler::ChunkBiomeData> {
-        match self {
-            Self::Spherical(g) => {
-                g.generate_chunk_with_gpu_heights(chunk, gpu_heights);
-                None
-            }
-            _ => self.generate_chunk(chunk),
-        }
+        self.generate_chunk(chunk)
     }
 
-    /// Access the flat terrain config, if in flat mode.
+    /// Always `None` — planetary mode has no flat `TerrainConfig`.
     pub fn config(&self) -> Option<&TerrainConfig> {
-        match self {
-            Self::Flat(g) => Some(g.config()),
-            Self::Spherical(_) | Self::Planetary(_) => None,
-        }
+        None
     }
 
-    /// Access the cached flow-accumulation map (flat mode only).
-    ///
-    /// Returns `None` in spherical mode or if erosion is disabled.
-    /// Triggers lazy computation on first call.
+    /// Always `None` — flow maps are a flat-mode concept.
     pub fn flow_map(&self) -> Option<&FlowMap> {
-        match self {
-            Self::Flat(g) if g.config().erosion.enabled => Some(g.get_or_compute_flow_map()),
-            _ => None,
-        }
+        None
     }
 
-    /// Sample terrain surface height at the given world (x, z) coordinates.
-    ///
-    /// For flat mode, delegates to the noise-based height function and returns
-    /// a Y value.
-    ///
-    /// For spherical mode, converts the Cartesian (x, z) position to (lat, lon)
-    /// and returns the surface radius at that angular position. The caller must
-    /// interpret this as a radial distance from the planet center, not a Y value.
-    pub fn sample_height(&self, world_x: f64, world_z: f64) -> f64 {
-        match self {
-            Self::Flat(g) => g.sample_height(world_x, world_z),
-            Self::Spherical(g) => {
-                let pos = bevy::math::DVec3::new(world_x, 0.0, world_z);
-                let (lat, lon) = g.planet().lat_lon(pos);
-                g.sample_surface_radius(lat, lon)
-            }
-            Self::Planetary(g) => {
-                // Use column mid-Y for the unit-sphere projection.
-                let pos = bevy::math::DVec3::new(world_x, g.planet_config.mean_radius, world_z);
-                let unit = pos.normalize_or(bevy::math::DVec3::Y);
-                let (surface_r, _) = g.surface_radius_at(unit);
-                surface_r
-            }
-        }
-    }
-
-    /// Whether the terrain is in spherical mode.
+    /// Always `true` — planetary terrain is spherical.
     pub fn is_spherical(&self) -> bool {
-        matches!(self, Self::Spherical(_) | Self::Planetary(_))
+        true
     }
 
-    /// Access the spherical terrain generator, if in spherical mode.
+    /// Always `None` — there is no noise-based spherical generator.
     pub fn spherical(&self) -> Option<&SphericalTerrainGenerator> {
-        match self {
-            Self::Spherical(g) => Some(g),
-            _ => None,
-        }
+        None
     }
 
-    /// Sample the surface radius at a given (lat, lon) in radians.
-    ///
-    /// For spherical mode, returns the radial distance from the planet center.
-    /// For planetary mode, queries the tectonic sampler.
-    /// For flat mode, returns 0 (meaningless — use `sample_height` instead).
+    /// Sample terrain surface height (as a radial distance) at `(world_x, world_z)`.
+    pub fn sample_height(&self, world_x: f64, world_z: f64) -> f64 {
+        let pos = bevy::math::DVec3::new(world_x, self.0.planet_config.mean_radius, world_z);
+        let unit = pos.normalize_or(bevy::math::DVec3::Y);
+        let (surface_r, _) = self.0.surface_radius_at(unit);
+        surface_r
+    }
+
+    /// Sample the surface radius at a given `(lat, lon)` in radians.
     pub fn sample_surface_radius_at(&self, lat: f64, lon: f64) -> f64 {
-        match self {
-            Self::Spherical(g) => g.sample_surface_radius(lat, lon),
-            Self::Planetary(g) => {
-                // Use the SAME lat/lon → direction convention as the planet
-                // map rendering (`planet::detail::lat_lon_to_pos`) so the
-                // voxel terrain and the global map refer to the same globe.
-                let dir = crate::planet::detail::lat_lon_to_pos(lat, lon);
-                let (surface_r, _) = g.surface_radius_at(dir);
-                surface_r
-            }
-            Self::Flat(_) => 0.0,
-        }
+        let dir = crate::planet::detail::lat_lon_to_pos(lat, lon);
+        let (surface_r, _) = self.0.surface_radius_at(dir);
+        surface_r
     }
 
     /// Return a reference to the active `PlanetConfig`.
-    ///
-    /// Panics if called on a `Flat` generator, which has no `PlanetConfig`.
     pub fn planet_config(&self) -> &PlanetConfig {
-        match self {
-            Self::Spherical(g) => g.planet(),
-            Self::Planetary(g) => &g.planet_config,
-            Self::Flat(_) => panic!("planet_config() called on a Flat terrain generator"),
-        }
+        &self.0.planet_config
     }
 
-    /// Determine the material at a radial position for spherical/planetary modes.
-    ///
-    /// Delegates to `SphericalTerrainGenerator::material_at_radius` for
-    /// `Spherical`, and to `PlanetaryTerrainSampler::material_at_radius` for
-    /// `Planetary` (uses `PlanetConfig`-derived rules, not per-cell biome data).
-    ///
-    /// Panics if called on a `Flat` generator.
+    /// Determine the material at a radial position.
     pub fn material_at_radius(
         &self,
         r: f64,
@@ -1048,11 +954,8 @@ impl UnifiedTerrainGenerator {
         world_y: f64,
         world_z: f64,
     ) -> crate::world::voxel::MaterialId {
-        match self {
-            Self::Spherical(g) => g.material_at_radius(r, surface_r, world_x, world_y, world_z),
-            Self::Planetary(g) => g.material_at_radius(r, surface_r, world_x, world_y, world_z),
-            Self::Flat(_) => panic!("material_at_radius() called on a Flat terrain generator"),
-        }
+        self.0
+            .material_at_radius(r, surface_r, world_x, world_y, world_z)
     }
 }
 
@@ -1409,26 +1312,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Unified generator tests
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn unified_flat_mode_uses_flat_generator() {
-        let planet = PlanetConfig {
-            mode: TerrainMode::Flat,
-            ..PlanetConfig::default()
-        };
-        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
-        assert!(matches!(tgen, UnifiedTerrainGenerator::Flat(_)));
-    }
-
-    #[test]
-    fn unified_spherical_mode_uses_spherical_generator() {
-        let planet = PlanetConfig {
-            mode: TerrainMode::Spherical,
-            ..PlanetConfig::default()
-        };
-        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
-        assert!(matches!(tgen, UnifiedTerrainGenerator::Spherical(_)));
-    }
 
     // -----------------------------------------------------------------------
     // Erosion integration tests

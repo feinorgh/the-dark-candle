@@ -20,6 +20,7 @@ bevy_common_assets = { version = "0.15", features = ["ron", "yaml"] }
 noise = "0.9.0"
 rand = "0.9"
 ron = "0.8"
+bincode = { version = "2", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = "27.0"
 pollster = "0.4"

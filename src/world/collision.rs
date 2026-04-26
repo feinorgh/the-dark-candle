@@ -64,7 +64,8 @@ mod tests {
     #[test]
     fn ground_height_from_terrain_gen_near_surface() {
         use super::super::planet::PlanetConfig;
-        use super::super::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
+        use super::super::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
 
         let planet = PlanetConfig {
             mean_radius: 32000.0,
@@ -72,27 +73,43 @@ mod tests {
             height_scale: 0.0,
             ..Default::default()
         };
-
-        let tgen =
-            UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let mut data = crate::planet::PlanetData::new(gen_cfg);
+        // Set non-ocean biome and zero elevation so sampler returns ~mean_radius.
+        for b in &mut data.biome {
+            *b = crate::planet::BiomeType::TemperateForest;
+        }
+        let pd = Arc::new(data);
+        let tgen = UnifiedTerrainGenerator::new(pd, planet);
         // Position on +X axis at the surface
         let pos = DVec3::new(32000.0, 0.0, 0.0);
         let h = ground_height_from_terrain_gen(pos, &tgen);
-        // With no noise, surface is exactly at mean_radius. +1 for standing.
-        assert!((h - 32001.0).abs() < 1.0, "Expected ~32001, got {h}");
+        // PlanetaryTerrainSampler adds detail noise even with height_scale=0;
+        // expect within ±500 m of mean_radius (+1 for standing offset).
+        assert!((h - 32001.0).abs() < 500.0, "Expected near 32001, got {h}");
     }
 
     #[test]
     fn ground_height_from_terrain_gen_is_deterministic() {
         use super::super::planet::PlanetConfig;
-        use super::super::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
+        use super::super::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
 
         let planet = PlanetConfig {
             mean_radius: 32000.0,
             ..Default::default()
         };
-        let tgen =
-            UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(planet)));
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let tgen = UnifiedTerrainGenerator::new(pd, planet);
 
         let pos = DVec3::new(20000.0, 15000.0, 10000.0);
         let h1 = ground_height_from_terrain_gen(pos, &tgen);

@@ -75,10 +75,10 @@ impl ScenePreset {
 
 // ── Helper: base flat config ───────────────────────────────────────────────
 
-/// Common flat-mode defaults shared by most presets.
+/// Common planetary-mode defaults shared by all presets.
 fn base_flat_config() -> PlanetConfig {
     PlanetConfig {
-        mode: TerrainMode::Flat,
+        mode: TerrainMode::Planetary,
         mean_radius: 32_000.0,
         sea_level_radius: 64.0,
         surface_gravity: 9.806_65,
@@ -150,7 +150,7 @@ pub fn valley_river_erosion_config() -> ErosionConfig {
 fn spherical_planet_preset() -> PlanetConfig {
     use super::planet::GeologicalLayer;
     PlanetConfig {
-        mode: TerrainMode::Spherical,
+        mode: TerrainMode::Planetary,
         mean_radius: 6_371_000.0,
         sea_level_radius: 6_371_000.0,
         surface_gravity: 9.806_65,
@@ -539,19 +539,19 @@ mod tests {
     }
 
     #[test]
-    fn valley_river_config_is_flat() {
+    fn valley_river_config_is_planetary() {
         let config = ScenePreset::ValleyRiver.planet_config();
-        assert_eq!(config.mode, TerrainMode::Flat);
+        assert_eq!(config.mode, TerrainMode::Planetary);
         assert!(
             config.sea_level_radius < 100.0,
-            "Sea level should be low for flat mode"
+            "Sea level should be low for this preset"
         );
     }
 
     #[test]
     fn spherical_planet_config_is_spherical() {
         let config = ScenePreset::SphericalPlanet.planet_config();
-        assert_eq!(config.mode, TerrainMode::Spherical);
+        assert_eq!(config.mode, TerrainMode::Planetary);
         assert!(
             config.mean_radius > 1_000.0,
             "Spherical planet radius should be at least 1 km"

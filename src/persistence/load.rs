@@ -24,8 +24,7 @@ use crate::{
     },
     world::{
         chunk::{Chunk, ChunkCoord},
-        chunk_manager::{ChunkMap, TerrainGeneratorRes},
-        terrain::{TerrainConfig, TerrainGenerator, UnifiedTerrainGenerator},
+        chunk_manager::ChunkMap,
         voxel::MaterialId,
     },
 };
@@ -112,7 +111,6 @@ pub fn load_game(
     mut commands: Commands,
     load_request: Option<Res<LoadRequest>>,
     mut chunk_map: Option<ResMut<ChunkMap>>,
-    mut terrain_gen: ResMut<TerrainGeneratorRes>,
     mut faction_registry: ResMut<FactionRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -203,18 +201,9 @@ pub fn load_game(
     *faction_registry = FactionRegistry::default();
 
     // --- Restore terrain generator ---------------------------------------
-    let tc = &save.terrain;
-    terrain_gen.0 = UnifiedTerrainGenerator::Flat(Box::new(TerrainGenerator::new(TerrainConfig {
-        seed: tc.seed,
-        sea_level: tc.sea_level,
-        height_scale: tc.height_scale,
-        continent_freq: tc.continent_freq,
-        detail_freq: tc.detail_freq,
-        cave_freq: tc.cave_freq,
-        cave_threshold: tc.cave_threshold,
-        soil_depth: tc.soil_depth,
-        ..Default::default()
-    })));
+    // Planetary mode does not restore terrain from save data; the
+    // PlanetaryTerrainSampler is rebuilt on startup from PlanetaryData.
+    let _ = &save.terrain;
 
     // --- Restore chunks (only when V1 ChunkMap is present) ----------------
     if let Some(ref mut cm) = chunk_map {

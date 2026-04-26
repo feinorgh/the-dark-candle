@@ -413,7 +413,7 @@ mod tests {
 
         // Small planet so chunks land on the surface.
         let planet_config = PlanetConfig {
-            mode: TerrainMode::Spherical,
+            mode: TerrainMode::Planetary,
             mean_radius: 6_371_000.0,
             sea_level_radius: 6_371_000.0,
             height_scale: 5_000.0,

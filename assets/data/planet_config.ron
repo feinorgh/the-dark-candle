@@ -19,7 +19,7 @@
 //                               sea level (no above-sea spikes in ocean blobs)
 //   ocean_floor_amplitude: 0.05 → ±200 m floor variation
 (
-    mode: Spherical,
+    mode: Planetary,
     mean_radius: 32000.0,
     sea_level_radius: 32000.0,
     surface_gravity: 9.80665,

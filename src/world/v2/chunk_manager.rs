@@ -1238,27 +1238,27 @@ fn v2_init_terrain_gen(
     mut commands: Commands,
     shared: Option<Res<SharedTerrainGen>>,
     planet: Res<PlanetConfig>,
+    planetary: Option<Res<crate::world::PlanetaryData>>,
     mut gpu_dispatcher: ResMut<GpuTerrainDispatcher>,
 ) {
     if let Some(shared) = shared {
-        if matches!(
-            shared.0.as_ref(),
-            crate::world::terrain::UnifiedTerrainGenerator::Flat(_)
-        ) {
-            warn!(
-                "V2 pipeline: flat terrain mode is not supported; \
-                 V2 rendering disabled for this preset"
-            );
-            return;
-        }
         commands.insert_resource(V2TerrainGen(shared.0.clone()));
         info!("V2 pipeline: initialized terrain generator from SharedTerrainGen");
     } else {
-        // Fallback when SharedTerrainGen isn't ready yet: create from PlanetConfig.
-        use crate::world::terrain::SphericalTerrainGenerator;
-        let tgen = SphericalTerrainGenerator::new(planet.clone());
-        let unified = Arc::new(crate::world::terrain::UnifiedTerrainGenerator::Spherical(
-            Box::new(tgen),
+        // Fallback: create from PlanetaryData if available, else placeholder.
+        let planet_data = if let Some(ref pd) = planetary {
+            pd.0.clone()
+        } else {
+            let gen_cfg = crate::planet::PlanetConfig {
+                seed: planet.seed as u64,
+                grid_level: 3,
+                ..Default::default()
+            };
+            Arc::new(crate::planet::PlanetData::new(gen_cfg))
+        };
+        let unified = Arc::new(crate::world::terrain::UnifiedTerrainGenerator::new(
+            planet_data,
+            planet.clone(),
         ));
         commands.insert_resource(V2TerrainGen(unified));
         info!("V2 pipeline: initialized terrain generator from PlanetConfig (fallback)");
@@ -1294,7 +1294,7 @@ fn v2_init_terrain_gen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::terrain::{SphericalTerrainGenerator, UnifiedTerrainGenerator};
+    use crate::world::terrain::UnifiedTerrainGenerator;
     use crate::world::v2::cubed_sphere::CubeSphereCoord;
 
     #[test]
@@ -1377,9 +1377,15 @@ mod tests {
             ..Default::default()
         };
 
-        let tgen = Arc::new(UnifiedTerrainGenerator::Spherical(Box::new(
-            SphericalTerrainGenerator::new(planet.clone()),
-        )));
+        let tgen = {
+            let gen_cfg = crate::planet::PlanetConfig {
+                seed: planet.seed as u64,
+                grid_level: 3,
+                ..Default::default()
+            };
+            let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+            Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()))
+        };
         app.insert_resource(planet);
         app.insert_resource(V2TerrainGen(tgen));
         app.insert_resource(V2LoadRadius {
@@ -1497,9 +1503,15 @@ mod tests {
             height_scale: 50.0,
             ..Default::default()
         };
-        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
-            cfg.clone(),
-        )));
+        let tgen = {
+            let gen_cfg = crate::planet::PlanetConfig {
+                seed: cfg.seed as u64,
+                grid_level: 3,
+                ..Default::default()
+            };
+            let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+            UnifiedTerrainGenerator::new(pd, cfg.clone())
+        };
         let fce = CubeSphereCoord::face_chunks_per_edge(cfg.mean_radius);
         let max_uv = fce as i32;
 
@@ -1587,9 +1599,15 @@ mod tests {
         let altitude = 6600.0_f64;
         let cam_pos = DVec3::new(cfg.mean_radius + altitude, 0.0, 0.0);
 
-        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
-            cfg.clone(),
-        )));
+        let tgen = {
+            let gen_cfg = crate::planet::PlanetConfig {
+                seed: cfg.seed as u64,
+                grid_level: 3,
+                ..Default::default()
+            };
+            let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+            UnifiedTerrainGenerator::new(pd, cfg.clone())
+        };
         let desired = desired_chunks_v2(cam_pos, &cfg, &radius, Some(&tgen));
 
         // The camera's own L0 chunk MUST be in the desired set.

@@ -336,11 +336,15 @@ fn spawn_camera(
     }
 }
 
-/// Grab cursor on left-click (while Playing).
+/// Grab cursor on left-click (while Playing). Skipped in agent capture mode.
 fn cursor_grab(
+    agent: Option<Res<crate::diagnostics::agent_capture::AgentCaptureConfig>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
+    if agent.is_some() {
+        return;
+    }
     let Ok(mut cursor) = cursor_q.single_mut() else {
         return;
     };
@@ -351,7 +355,14 @@ fn cursor_grab(
 }
 
 /// Lock cursor and hide it when entering Playing state.
-fn grab_cursor(mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+/// Skipped in agent capture mode (no mouse attached).
+fn grab_cursor(
+    agent: Option<Res<crate::diagnostics::agent_capture::AgentCaptureConfig>>,
+    mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
+) {
+    if agent.is_some() {
+        return;
+    }
     let Ok(mut cursor) = cursor_q.single_mut() else {
         return;
     };
@@ -803,16 +814,31 @@ mod tests {
 
     #[test]
     fn find_random_land_returns_above_sea_level() {
-        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::planet::PlanetConfig;
         use crate::world::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
 
         let planet = PlanetConfig {
-            mode: TerrainMode::Spherical,
-            height_scale: 4000.0,
-            noise: Some(crate::world::noise::NoiseConfig::default()),
+            mean_radius: 32000.0,
+            sea_level_radius: 28000.0, // Sea level well below mean so flat terrain is "land".
+            height_scale: 0.0,
             ..Default::default()
         };
-        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let mut data = crate::planet::PlanetData::new(gen_cfg);
+        // Set non-ocean biome so planetary sampler treats cells as land.
+        for b in &mut data.biome {
+            *b = crate::planet::BiomeType::TemperateForest;
+        }
+        for e in &mut data.elevation {
+            *e = 500.0; // 500 m above sea level
+        }
+        let pd = Arc::new(data);
+        let tgen = UnifiedTerrainGenerator::new(pd, planet.clone());
         let result = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
         assert!(result.is_some(), "should find land on a default planet");
         let (lat, lon) = result.unwrap();
@@ -826,33 +852,47 @@ mod tests {
 
     #[test]
     fn find_random_land_is_deterministic() {
-        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::planet::PlanetConfig;
         use crate::world::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
 
         let planet = PlanetConfig {
-            mode: TerrainMode::Spherical,
             height_scale: 4000.0,
             noise: Some(crate::world::noise::NoiseConfig::default()),
             ..Default::default()
         };
-        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg.clone()));
+        let tgen = UnifiedTerrainGenerator::new(pd, planet.clone());
+        let pd2 = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let tgen2 = UnifiedTerrainGenerator::new(pd2, planet.clone());
         let a = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
-        let b = find_random_land(&tgen, planet.sea_level_radius, 2000, 42);
+        let b = find_random_land(&tgen2, planet.sea_level_radius, 2000, 42);
         assert_eq!(a, b, "same seed should produce same spawn");
     }
 
     #[test]
     fn find_coastline_has_water_neighbor() {
-        use crate::world::planet::{PlanetConfig, TerrainMode};
+        use crate::world::planet::PlanetConfig;
         use crate::world::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
 
         let planet = PlanetConfig {
-            mode: TerrainMode::Spherical,
             height_scale: 4000.0,
             noise: Some(crate::world::noise::NoiseConfig::default()),
             ..Default::default()
         };
-        let tgen = UnifiedTerrainGenerator::from_planet_config(&planet);
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let tgen = UnifiedTerrainGenerator::new(pd, planet.clone());
         let result = find_coastline(&tgen, planet.sea_level_radius, 10000, 42);
         if let Some((lat, lon)) = result {
             // The point itself should be land.

@@ -98,12 +98,65 @@ struct Cli {
     /// Omit to spawn at the default 45°N, 0°E.
     #[arg(long)]
     spawn: Option<String>,
+
+    // ── Agent capture flags ──────────────────────────────────────────────────
+    /// Enable agent capture mode: suppress cursor grab, auto-exit after capture.
+    /// Typically combined with `--capture`, `--settle`, and `--capture-out`.
+    #[arg(long)]
+    agent: bool,
+
+    /// Frames to wait before capturing (lets chunks load and mesh).
+    /// Default: 120 frames.
+    #[arg(long, default_value_t = 120)]
+    settle: u32,
+
+    /// Capture mode: `screenshot` (single frame) or `video` (N frames → MP4).
+    #[arg(long, value_enum, default_value = "screenshot")]
+    capture: CaptureModeCli,
+
+    /// Number of video frames to record (only used with `--capture video`).
+    #[arg(long, default_value_t = 120)]
+    capture_frames: u32,
+
+    /// Output directory for captures. Created if it does not exist.
+    #[arg(long, default_value = "agent_captures")]
+    capture_out: String,
+
+    /// Video FPS for ffmpeg encoding (only used with `--capture video`).
+    #[arg(long, default_value_t = 30)]
+    capture_fps: u32,
+}
+
+/// CLI enum for capture mode selection.
+#[derive(clap::ValueEnum, Debug, Clone)]
+enum CaptureModeCli {
+    Screenshot,
+    Video,
 }
 
 fn main() {
     let cli = Cli::parse();
 
     let mut app = App::new();
+
+    // ── Agent capture mode ────────────────────────────────────────────────────
+    if cli.agent {
+        use the_dark_candle::diagnostics::agent_capture::{
+            AgentCaptureConfig, AgentCapturePlugin, CaptureMode,
+        };
+        let mode = match cli.capture {
+            CaptureModeCli::Screenshot => CaptureMode::Screenshot,
+            CaptureModeCli::Video => CaptureMode::Video,
+        };
+        app.insert_resource(AgentCaptureConfig {
+            settle_frames: cli.settle,
+            mode,
+            capture_frames: cli.capture_frames,
+            output_dir: std::path::PathBuf::from(&cli.capture_out),
+            fps: cli.capture_fps,
+        });
+        app.add_plugins(AgentCapturePlugin);
+    }
 
     // --planet shortcut: run the full planetary pipeline and insert PlanetaryData.
     let use_planet = cli.planet
@@ -116,37 +169,56 @@ fn main() {
 
     if use_planet {
         use std::sync::Arc;
+        use the_dark_candle::planet::persistence::{load_planet, save_planet};
         use the_dark_candle::planet::{
             PlanetConfig as PlanetGenConfig, PlanetData, biomes::run_biomes, geology::run_geology,
             tectonics::run_tectonics,
         };
         use the_dark_candle::world::PlanetaryData;
 
-        info!(
-            "Generating planet: seed={}, level={}…",
-            cli.planet_seed, cli.planet_level
-        );
-        let t0 = std::time::Instant::now();
+        let preset = ScenePreset::SphericalPlanet;
+        let planet_config = preset.planet_config();
 
-        let gen_config = PlanetGenConfig {
-            seed: cli.planet_seed,
-            grid_level: cli.planet_level,
-            ..Default::default()
+        // Try to load a previously saved planet for this seed/level combination.
+        let data = if let Some(loaded) = load_planet(cli.planet_seed) {
+            info!(
+                "Loaded persisted planet: seed={}, cells={}",
+                cli.planet_seed,
+                loaded.grid.cell_count(),
+            );
+            loaded
+        } else {
+            info!(
+                "Generating planet: seed={}, level={}…",
+                cli.planet_seed, cli.planet_level
+            );
+            let t0 = std::time::Instant::now();
+
+            let gen_config = PlanetGenConfig {
+                seed: cli.planet_seed,
+                grid_level: cli.planet_level,
+                ..Default::default()
+            };
+            let mut data = PlanetData::new(gen_config);
+            run_tectonics(&mut data, |_| {});
+            run_biomes(&mut data);
+            run_geology(&mut data);
+
+            info!(
+                "Planet generated in {:.1}s ({} cells)",
+                t0.elapsed().as_secs_f32(),
+                data.grid.cell_count(),
+            );
+
+            if let Err(e) = save_planet(&data) {
+                warn!("Failed to save planet to disk: {e}");
+            }
+
+            data
         };
-        let mut data = PlanetData::new(gen_config);
-        run_tectonics(&mut data, |_| {});
-        run_biomes(&mut data);
-        run_geology(&mut data);
-
-        info!(
-            "Planet generated in {:.1}s ({} cells)",
-            t0.elapsed().as_secs_f32(),
-            data.grid.cell_count(),
-        );
 
         // Insert both the PlanetaryData resource AND the spherical PlanetConfig.
-        let preset = ScenePreset::SphericalPlanet;
-        app.insert_resource(preset.planet_config());
+        app.insert_resource(planet_config);
         app.insert_resource(PlanetaryData(Arc::new(data)));
     } else if let Some(name) = &cli.scene {
         // Non-planet scene preset

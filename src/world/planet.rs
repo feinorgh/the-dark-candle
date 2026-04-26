@@ -36,14 +36,12 @@ pub struct GeologicalLayer {
     pub material: String,
 }
 
-/// Terrain generation mode: flat (legacy) or spherical (Phase 8).
+/// Terrain generation mode.
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
 pub enum TerrainMode {
-    /// Legacy flat terrain with Y-axis as up. Sea level at `sea_level_y`.
+    /// Planet-data-driven spherical terrain (PlanetaryTerrainSampler).
     #[default]
-    Flat,
-    /// Spherical planet centered at origin. Sea level at `sea_level_radius`.
-    Spherical,
+    Planetary,
 }
 
 /// Configuration for a spherical planet, loaded from RON.
@@ -169,7 +167,7 @@ fn default_soil_depth() -> f64 {
 impl Default for PlanetConfig {
     fn default() -> Self {
         Self {
-            mode: TerrainMode::Flat,
+            mode: TerrainMode::Planetary,
             mean_radius: 32_000.0,
             sea_level_radius: 32_000.0,
             surface_gravity: 9.806_65,
@@ -396,9 +394,9 @@ impl PlanetConfig {
             .find(|l| radius >= l.inner_radius && radius < l.outer_radius)
     }
 
-    /// Whether the planet uses spherical mode.
+    /// Whether the planet uses spherical mode.  Always `true` in planetary mode.
     pub fn is_spherical(&self) -> bool {
-        self.mode == TerrainMode::Spherical
+        true
     }
 }
 
@@ -452,9 +450,9 @@ mod tests {
     // --- Basic properties ---
 
     #[test]
-    fn default_config_is_flat() {
+    fn default_config_is_planetary() {
         let cfg = default_config();
-        assert!(!cfg.is_spherical());
+        assert!(cfg.is_spherical());
         assert_eq!(cfg.mean_radius, 32_000.0);
         assert!((cfg.surface_gravity - 9.806_65).abs() < 1e-4);
     }
@@ -777,13 +775,4 @@ mod tests {
     }
 
     // --- Terrain mode ---
-
-    #[test]
-    fn flat_mode_is_not_spherical() {
-        let cfg = PlanetConfig {
-            mode: TerrainMode::Flat,
-            ..default_config()
-        };
-        assert!(!cfg.is_spherical());
-    }
 }

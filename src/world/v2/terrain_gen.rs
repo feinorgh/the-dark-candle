@@ -527,7 +527,6 @@ pub fn generate_single_boundary_slice(
 mod tests {
     use super::*;
     use crate::world::planet::PlanetConfig;
-    use crate::world::terrain::SphericalTerrainGenerator;
     use crate::world::v2::cubed_sphere::CubeFace;
 
     fn small_planet_gen() -> (UnifiedTerrainGenerator, PlanetConfig) {
@@ -539,9 +538,13 @@ mod tests {
             cave_threshold: -999.0,
             ..Default::default()
         };
-        let tgen = UnifiedTerrainGenerator::Spherical(Box::new(SphericalTerrainGenerator::new(
-            cfg.clone(),
-        )));
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: cfg.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let pd = std::sync::Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let tgen = UnifiedTerrainGenerator::new(pd, cfg.clone());
         (tgen, cfg)
     }
 

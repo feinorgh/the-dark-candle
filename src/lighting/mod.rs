@@ -24,7 +24,6 @@ use crate::world::planet::PlanetConfig;
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Sun;
 
-
 /// Current time of day in hours (0.0–24.0).
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct TimeOfDay(pub f32);

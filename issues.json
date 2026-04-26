@@ -1,13 +1,13 @@
 [
   {
     "id": "SKY-001",
-    "title": "No atmospheric sky effects visible \u2014 world appears gray/colorless",
+    "title": "No atmospheric sky effects visible — world appears gray/colorless",
     "category": "rendering",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-01",
     "description": "When running the game, the sky appears gray or black instead of showing a blue sky with Rayleigh scattering from the Bevy Atmosphere component. The world looks colorless despite Atmosphere::earthlike(), ClearColor::BLACK, and DistanceFog all being configured.",
-    "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up \u2014 sky should be blue with sun-driven scattering but appears flat gray.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking`. Look up — sky should be blue with sun-driven scattering but appears flat gray.",
     "suspected_files": [
       "src/camera/mod.rs",
       "src/lighting/mod.rs"
@@ -16,18 +16,18 @@
     "related_commits": [
       "74e5f7e"
     ],
-    "resolution": "Root cause: compute_sun_direction() used a body-frame rotation model that kept the sun permanently on the horizon (Y=0). Replaced with standard astronomical solar position formula using observer latitude (default 45\u00b0N). Sun now arcs from sunrise (6AM, 0\u00b0) to noon (45\u00b0) and sets properly.",
+    "resolution": "Root cause: compute_sun_direction() used a body-frame rotation model that kept the sun permanently on the horizon (Y=0). Replaced with standard astronomical solar position formula using observer latitude (default 45°N). Sun now arcs from sunrise (6AM, 0°) to noon (45°) and sets properly.",
     "notes": [
       "Code investigation shows all components are present: Atmosphere::earthlike(medium), ScatteringMedium::default(), ClearColor::BLACK, DistanceFog, Bloom::NATURAL (for HDR).",
-      "AtmospherePlugin is auto-registered by PbrPlugin \u2014 no extra plugin needed.",
-      "Atmosphere requires HDR on the camera \u2014 Bloom::NATURAL should satisfy this but verify at runtime.",
+      "AtmospherePlugin is auto-registered by PbrPlugin — no extra plugin needed.",
+      "Atmosphere requires HDR on the camera — Bloom::NATURAL should satisfy this but verify at runtime.",
       "Try running with RUST_LOG=bevy_pbr=debug to check for atmosphere shader warnings.",
-      "Fixed orbital model: replaced body-frame rotation matrix with standard solar position formula (altitude = arcsin(sin(\u03c6)sin(\u03b4) + cos(\u03c6)cos(\u03b4)cos(H))). Added compute_sun_direction_at_latitude() for latitude-aware computation."
+      "Fixed orbital model: replaced body-frame rotation matrix with standard solar position formula (altitude = arcsin(sin(φ)sin(δ) + cos(φ)cos(δ)cos(H))). Added compute_sun_direction_at_latitude() for latitude-aware computation."
     ]
   },
   {
     "id": "TERRAIN-001",
-    "title": "Deformed terrain geometry \u2014 visible surface distortion",
+    "title": "Deformed terrain geometry — visible surface distortion",
     "category": "terrain",
     "severity": "high",
     "status": "resolved",
@@ -39,13 +39,13 @@
       "src/world/terrain.rs",
       "src/world/lod.rs"
     ],
-    "suspected_cause": "Possible causes: (1) LOD stride mismatch \u2014 when LOD level > 0, Surface Nets uses stride = 2^level which coarsens geometry; transitions between LOD levels may create visible seams, (2) Chunk boundary stitching may have edge cases where neighbor snapshots are missing (treats boundary as air), (3) Noise values at terrain surface may produce ambiguous isosurface crossings, (4) Vertex normal computation may be wrong for steep terrain.",
+    "suspected_cause": "Possible causes: (1) LOD stride mismatch — when LOD level > 0, Surface Nets uses stride = 2^level which coarsens geometry; transitions between LOD levels may create visible seams, (2) Chunk boundary stitching may have edge cases where neighbor snapshots are missing (treats boundary as air), (3) Noise values at terrain surface may produce ambiguous isosurface crossings, (4) Vertex normal computation may be wrong for steep terrain.",
     "related_commits": [],
-    "resolution": "Two-part fix: (1) Neighbor invalidation \u2014 chunks re-mesh when neighbors arrive. (2) Continuous density field \u2014 Voxel.density encodes signed distance to terrain surface, enabling Surface Nets sub-voxel vertex interpolation instead of binary cell-center placement.",
+    "resolution": "Two-part fix: (1) Neighbor invalidation — chunks re-mesh when neighbors arrive. (2) Continuous density field — Voxel.density encodes signed distance to terrain surface, enabling Surface Nets sub-voxel vertex interpolation instead of binary cell-center placement.",
     "notes": [
       "Surface Nets implementation has proper boundary handling via 6 face-neighbor snapshots.",
       "LOD hysteresis (12% dead-band) should prevent thrashing but may not eliminate all visual artifacts.",
-      "Integration tests validate chunk stitching (meshing.rs:1114, 1401) \u2014 issue may be data-dependent.",
+      "Integration tests validate chunk stitching (meshing.rs:1114, 1401) — issue may be data-dependent.",
       "Check if deformation correlates with LOD transitions by temporarily disabling LOD (force level 0).",
       "Two changes: neighbor invalidation in chunk_manager.rs + mesh deferral in meshing.rs. 2 new unit tests added.",
       "Added density: f32 to Voxel struct (24 bytes, at size limit). terrain_density() helper computes smooth gradient. All 3 terrain generators (flat, spherical, planetary) set density."
@@ -64,7 +64,7 @@
       "src/world/meshing.rs",
       "src/world/chunk.rs"
     ],
-    "suspected_cause": "Possible causes: (1) Surface Nets generating quads for internal isosurface crossings (e.g., cave surfaces inside solid rock), (2) Backface culling not enabled \u2014 internal faces visible from outside, (3) Octree subdivision creating surface artifacts at resolution boundaries, (4) Chunk overlap regions producing duplicate geometry.",
+    "suspected_cause": "Possible causes: (1) Surface Nets generating quads for internal isosurface crossings (e.g., cave surfaces inside solid rock), (2) Backface culling not enabled — internal faces visible from outside, (3) Octree subdivision creating surface artifacts at resolution boundaries, (4) Chunk overlap regions producing duplicate geometry.",
     "related_commits": [],
     "resolution": "Same root cause as TERRAIN-001. Continuous density field eliminates staircase artifacts from binary voxel sampling in Surface Nets.",
     "notes": [
@@ -89,7 +89,7 @@
       "src/map/ui.rs",
       "src/game_state.rs"
     ],
-    "suspected_cause": "Possible causes: (1) toggle_map system may have a .run_if() condition that prevents it from running in the Playing state, (2) GameState transition from Playing \u2192 Map may not trigger OnEnter(GameState::Map), (3) KeyCode::KeyM may not match the physical key on all keyboard layouts, (4) MapPlugin may not be registered or may conflict with another input handler consuming the M key.",
+    "suspected_cause": "Possible causes: (1) toggle_map system may have a .run_if() condition that prevents it from running in the Playing state, (2) GameState transition from Playing → Map may not trigger OnEnter(GameState::Map), (3) KeyCode::KeyM may not match the physical key on all keyboard layouts, (4) MapPlugin may not be registered or may conflict with another input handler consuming the M key.",
     "related_commits": [
       "b002808"
     ],
@@ -97,11 +97,11 @@
     "notes": [
       "Code investigation shows MapPlugin IS registered in main.rs.",
       "toggle_map system listens for KeyCode::KeyM with just_pressed().",
-      "System has .run_if(in_state(GameState::Playing).or(in_state(GameState::Map))) \u2014 verify this compiles and runs.",
+      "System has .run_if(in_state(GameState::Playing).or(in_state(GameState::Map))) — verify this compiles and runs.",
       "Add temporary debug logging to toggle_map to confirm the system is executing.",
       "Fixed: track_discoveries now does a full scan on first run (Local<bool> guard), no longer relying solely on is_changed() which may miss chunks loaded during Loading state.",
       "Added: debug!() logging to toggle_map for runtime diagnostics (enable with RUST_LOG=the_dark_candle::map=debug).",
-      "Added: 4 unit tests for toggle_map logic (Playing\u2192Map, Map\u2192Playing, ESC close, M ignored in other states).",
+      "Added: 4 unit tests for toggle_map logic (Playing→Map, Map→Playing, ESC close, M ignored in other states).",
       "If still not working: run with RUST_LOG=the_dark_candle::map=debug to see if toggle_map fires, check if game reaches Playing state."
     ]
   },
@@ -112,20 +112,20 @@
     "severity": "medium",
     "status": "open",
     "reported": "2026-04-01",
-    "description": "Function keys (F1\u2013F12) either do not respond or produce unexpected behavior compared to what documentation describes. Known bindings: F3 (debug overlay), F5 (ECS state dump), F9 (toggle chunk borders), F11 (fullscreen), F12 (screenshot).",
+    "description": "Function keys (F1–F12) either do not respond or produce unexpected behavior compared to what documentation describes. Known bindings: F3 (debug overlay), F5 (ECS state dump), F9 (toggle chunk borders), F11 (fullscreen), F12 (screenshot).",
     "reproduction": "Run the game. Press F3, F5, F9, F11, F12 individually. Compare behavior to README.md and diagnostics docs.",
     "suspected_files": [
       "src/diagnostics/mod.rs",
       "src/planet/render.rs",
       "src/main.rs"
     ],
-    "suspected_cause": "Possible causes: (1) F12 has DUPLICATE screenshot_system functions \u2014 one in diagnostics/mod.rs:260 and one in planet/render.rs:615, which may cause conflicts, (2) Some F-key systems may only run in specific GameStates (e.g., only Playing, not WorldCreation), (3) Desktop environment (Wayland) may intercept certain F-keys before they reach the application, (4) DiagnosticsPlugin may not be registered or may have incorrect run conditions.",
+    "suspected_cause": "Possible causes: (1) F12 has DUPLICATE screenshot_system functions — one in diagnostics/mod.rs:260 and one in planet/render.rs:615, which may cause conflicts, (2) Some F-key systems may only run in specific GameStates (e.g., only Playing, not WorldCreation), (3) Desktop environment (Wayland) may intercept certain F-keys before they reach the application, (4) DiagnosticsPlugin may not be registered or may have incorrect run conditions.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "Code investigation confirmed: F3, F5, F9, F11 are all properly bound in diagnostics/mod.rs.",
-      "F12 screenshot has CONFIRMED duplicate function definitions \u2014 this is a real bug that needs fixing.",
-      "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings \u2014 check compositor config.",
+      "F12 screenshot has CONFIRMED duplicate function definitions — this is a real bug that needs fixing.",
+      "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings — check compositor config.",
       "Test with WINIT_UNIX_BACKEND=x11 to rule out Wayland-specific key capture."
     ]
   },
@@ -141,12 +141,12 @@
     "suspected_files": [
       "src/world/terrain.rs"
     ],
-    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() \u2014 logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
+    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() — logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "CRITICAL: Need user to provide backtrace from `RUST_BACKTRACE=1 cargo run --features bevy/dynamic_linking`.",
-      "terrain.rs:385 unwrap() is the most likely candidate \u2014 should be hardened regardless.",
+      "terrain.rs:385 unwrap() is the most likely candidate — should be hardened regardless.",
       "No other unsafe unwrap() patterns found in hot paths (Update/FixedUpdate systems).",
       "Once backtrace is available, update this issue with the specific panic location.",
       "Separate GPU-related crash: 'Buffer is already mapped' in wgpu - race condition in async readback. Not caused by noise mismatch fix. Occurs when multiple async compute tasks try to map the same staging buffer."
@@ -170,7 +170,7 @@
     ],
     "resolution": "Added scale: f32 parameter to generate_mesh_generic(). LOD callers pass lod_step as f32, non-LOD callers pass 1.0. Position calculation: (cx + vertex_pos.x) * scale. Added bounding-box test.",
     "notes": [
-      "Pre-existing bug \u2014 less visible with binary density (all vertices at cell centers).",
+      "Pre-existing bug — less visible with binary density (all vertices at cell centers).",
       "Became obvious after continuous density field (4754dbc) shifted vertices within cells.",
       "Test: lod_mesh_spans_full_chunk_size verifies meshes at stride 1, 2, 4 span [0..CHUNK_SIZE]."
     ]
@@ -194,20 +194,20 @@
     ],
     "resolution": "Corrected IDs 4-7 colors to match actual MaterialId constants. Added fallback colors for IDs 12-27 (glass through copper_ore). Extended from_defaults() range from 0..=11 to 0..=27.",
     "notes": [
-      "MaterialRegistry RON files have correct colors \u2014 sync_color_map_from_registry() eventually overrides fallbacks.",
+      "MaterialRegistry RON files have correct colors — sync_color_map_from_registry() eventually overrides fallbacks.",
       "But there's a startup race: first meshes may use wrong fallback colors before registry loads.",
       "RGB values sourced from assets/data/materials/*.material.ron for consistency."
     ]
   },
   {
     "id": "CAMERA-001",
-    "title": "Camera horizon tilted at 45\u00b0 on spherical planet at 45\u00b0 latitude",
+    "title": "Camera horizon tilted at 45° on spherical planet at 45° latitude",
     "category": "camera",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "In spherical terrain mode, the player spawns at 45\u00b0 latitude but the camera always treats global Y as 'up'. The local surface normal at 45\u00b0 latitude is (cos45\u00b0, sin45\u00b0, 0), creating a 45\u00b0 mismatch between the camera's horizon and the actual ground plane. The ground appears tilted by the same angle as the player's latitude.",
-    "reproduction": "Run `cargo run --features bevy/dynamic_linking` with spherical terrain mode (default). Observe the ground is tilted ~45\u00b0 from the camera's horizon.",
+    "description": "In spherical terrain mode, the player spawns at 45° latitude but the camera always treats global Y as 'up'. The local surface normal at 45° latitude is (cos45°, sin45°, 0), creating a 45° mismatch between the camera's horizon and the actual ground plane. The ground appears tilted by the same angle as the player's latitude.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking` with spherical terrain mode (default). Observe the ground is tilted ~45° from the camera's horizon.",
     "suspected_files": [
       "src/camera/mod.rs"
     ],
@@ -215,20 +215,20 @@
     "related_commits": [],
     "resolution": "Three fixes in src/camera/mod.rs: (1) camera_look() now prepends Quat::from_rotation_arc(Vec3::Y, local_up) as a base orientation in spherical mode, aligning camera Y with the radial surface normal. (2) spawn_camera() passes the local surface normal as the looking_at up hint. (3) Fly-mode Space/Shift use local_up instead of Vec3::Y. Added local_up_from_position() helper reused by all three systems. 6 new unit tests.",
     "notes": [
-      "Gravity and movement tangent-plane projection were already correct \u2014 only the camera orientation was wrong.",
-      "Quat::from_rotation_arc has a singularity at the south pole (local_up \u2248 -Y) but this is an acceptable edge case.",
+      "Gravity and movement tangent-plane projection were already correct — only the camera orientation was wrong.",
+      "Quat::from_rotation_arc has a singularity at the south pole (local_up ≈ -Y) but this is an acceptable edge case.",
       "The fix applies only in spherical mode; flat mode behavior is unchanged."
     ]
   },
   {
     "id": "RENDER-001",
-    "title": "Atmosphere radii mismatch \u2014 sky horizon wrong on small planet",
+    "title": "Atmosphere radii mismatch — sky horizon wrong on small planet",
     "category": "rendering",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-06-18",
     "description": "Atmosphere::earthlike() sets bottom_radius=6,360,000m (Earth) but our planet is 32,000m. The shader thinks the camera is deep inside a massive planet, causing wrong sky horizon and scattering.",
-    "reproduction": "Run game in spherical mode. Look at horizon \u2014 sky scattering looks wrong, horizon doesn't match planet curvature.",
+    "reproduction": "Run game in spherical mode. Look at horizon — sky scattering looks wrong, horizon doesn't match planet curvature.",
     "suspected_files": [
       "src/camera/mod.rs"
     ],
@@ -236,18 +236,18 @@
     "related_commits": [],
     "resolution": "Replaced Atmosphere::earthlike(medium) with custom Atmosphere { bottom_radius: mean_radius, top_radius: mean_radius + 60000 } in spawn_camera when in spherical mode. ScatteringMedium::default() 60km coefficients are preserved.",
     "notes": [
-      "Bevy hardcodes atmo_y=Vec3::Y in prepare_atmosphere_transforms \u2014 LUT is always Y-up. Can't fix without Bevy PR. But correct radii fix scattering math."
+      "Bevy hardcodes atmo_y=Vec3::Y in prepare_atmosphere_transforms — LUT is always Y-up. Can't fix without Bevy PR. But correct radii fix scattering math."
     ]
   },
   {
     "id": "RENDER-002",
-    "title": "Flat terrain on spherical planet \u2014 noise config too weak",
+    "title": "Flat terrain on spherical planet — noise config too weak",
     "category": "rendering",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-06-18",
     "description": "height_scale=32m on a 32km planet (0.1%) makes terrain invisible. No NoiseConfig in planet_config.ron, legacy 2-layer blend with continent_freq=0.005 in radian-space produces nearly constant noise.",
-    "reproduction": "Run game \u2014 terrain appears completely flat, no mountains or features visible.",
+    "reproduction": "Run game — terrain appears completely flat, no mountains or features visible.",
     "suspected_files": [
       "assets/data/planet_config.ron"
     ],
@@ -263,43 +263,43 @@
     "severity": "medium",
     "status": "resolved",
     "reported": "2026-06-18",
-    "description": "compute_normals() falls back to [0,1,0] for degenerate triangles. On a sphere, this is wrong \u2014 the fallback should be the radial direction from the planet center.",
+    "description": "compute_normals() falls back to [0,1,0] for degenerate triangles. On a sphere, this is wrong — the fallback should be the radial direction from the planet center.",
     "reproduction": "Run game in spherical mode. Observe terrain spikes/lighting artifacts along chunk boundaries where normals collapse.",
     "suspected_files": [
       "src/world/meshing.rs"
     ],
     "suspected_cause": "Hardcoded [0,1,0] fallback in compute_normals doesn't account for spherical geometry.",
     "related_commits": [],
-    "resolution": "Added spherical:bool parameter through generate_mesh_generic \u2192 compute_normals. When spherical, degenerate fallback uses normalize(vertex_position) instead of [0,1,0]. Threaded from dispatch_mesh_tasks via PlanetConfig.",
+    "resolution": "Added spherical:bool parameter through generate_mesh_generic → compute_normals. When spherical, degenerate fallback uses normalize(vertex_position) instead of [0,1,0]. Threaded from dispatch_mesh_tasks via PlanetConfig.",
     "notes": []
   },
   {
     "id": "PERF-001",
-    "title": "Spherical terrain generation 125\u00d7 slower with NoiseStack \u2014 per-voxel noise sampling",
+    "title": "Spherical terrain generation 125× slower with NoiseStack — per-voxel noise sampling",
     "category": "performance",
     "severity": "critical",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "SphericalTerrainGenerator::generate_chunk() called sample_surface_radius() for every voxel (32768\u00d7) instead of caching per angular column (1024\u00d7). With NoiseStack (15 Perlin calls per sample), chunk gen took 332ms vs 2.6ms legacy.",
+    "description": "SphericalTerrainGenerator::generate_chunk() called sample_surface_radius() for every voxel (32768×) instead of caching per angular column (1024×). With NoiseStack (15 Perlin calls per sample), chunk gen took 332ms vs 2.6ms legacy.",
     "reproduction": "Run game with height_scale=4000 and noise: Some(...) in planet_config.ron.",
     "suspected_files": [
       "src/world/terrain.rs"
     ],
     "suspected_cause": "No column caching for surface_radius in spherical generate_chunk. Each voxel recomputes noise even though lat/lon varies <0.001 rad within a 32m chunk.",
     "related_commits": [],
-    "resolution": "Pre-compute surface_radius for each (lx,lz) column at chunk mid-Y, reuse for all Y levels. Reduced noise calls 32\u00d7 (32768\u21921024 per chunk). Chunk gen: 332ms\u219290ms.",
+    "resolution": "Pre-compute surface_radius for each (lx,lz) column at chunk mid-Y, reuse for all Y levels. Reduced noise calls 32× (32768→1024 per chunk). Chunk gen: 332ms→90ms.",
     "notes": [
-      "Remaining time after column caching was dominated by Perlin::new() inside all noise functions \u2014 fixed in PERF-003."
+      "Remaining time after column caching was dominated by Perlin::new() inside all noise functions — fixed in PERF-003."
     ]
   },
   {
     "id": "PERF-002",
-    "title": "Shell loading centered on mean_radius \u2014 no chunks load when height_scale > shell_depth",
+    "title": "Shell loading centered on mean_radius — no chunks load when height_scale > shell_depth",
     "category": "performance",
     "severity": "critical",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "desired_chunks_spherical() computed shell bounds as mean_radius\u00b1128m. With height_scale=4000, camera spawns at r\u224833265 (actual surface) \u2014 outside the shell. Zero chunks loaded, game unresponsive.",
+    "description": "desired_chunks_spherical() computed shell bounds as mean_radius±128m. With height_scale=4000, camera spawns at r≈33265 (actual surface) — outside the shell. Zero chunks loaded, game unresponsive.",
     "reproduction": "Set height_scale=4000 in planet_config.ron, run game. Camera spawns on surface but no terrain loads.",
     "suspected_files": [
       "src/world/chunk_manager.rs"
@@ -311,12 +311,12 @@
   },
   {
     "id": "PERF-003",
-    "title": "Perlin::new() called ~340K times per chunk \u2014 permutation table rebuilt on every noise evaluation",
+    "title": "Perlin::new() called ~340K times per chunk — permutation table rebuilt on every noise evaluation",
     "category": "performance",
     "severity": "critical",
     "status": "resolved",
     "reported": "2026-04-01",
-    "description": "NoiseStack methods (fbm, ridged, selector, warp, micro, continent) and terrain helper functions (ore_material, strata_material, is_multi_scale_cave, is_crystal_deposit) all created fresh Perlin objects inside their hot loops. With ~15 Perlin creations per NoiseStack::sample() \u00d7 1024 columns + ~10 per underground voxel, each chunk built ~340,000 Perlin objects. Each Perlin::new() initializes a permutation table from the seed.",
+    "description": "NoiseStack methods (fbm, ridged, selector, warp, micro, continent) and terrain helper functions (ore_material, strata_material, is_multi_scale_cave, is_crystal_deposit) all created fresh Perlin objects inside their hot loops. With ~15 Perlin creations per NoiseStack::sample() × 1024 columns + ~10 per underground voxel, each chunk built ~340,000 Perlin objects. Each Perlin::new() initializes a permutation table from the seed.",
     "reproduction": "Run game with NoiseStack enabled in planet_config.ron. Game freezes on startup due to chunk generation consuming all CPU time.",
     "suspected_files": [
       "src/world/noise.rs",
@@ -324,7 +324,7 @@
     ],
     "suspected_cause": "Perlin objects created inside evaluation loops instead of being cached at construction time.",
     "related_commits": [],
-    "resolution": "Cached all Perlin objects at construction time: NoiseStack stores 14 Perlin fields (fbm\u00d78, ridged\u00d78, selector, warp\u00d72, micro, continent, ocean_floor), CachedGeologyPerlin stores 10 (strata, ore\u00d74, cave\u00d74, crystal). Both TerrainGenerator and SphericalTerrainGenerator hold a CachedGeologyPerlin. Chunk gen: 90ms \u2192 5ms (18\u00d7 speedup).",
+    "resolution": "Cached all Perlin objects at construction time: NoiseStack stores 14 Perlin fields (fbm×8, ridged×8, selector, warp×2, micro, continent, ocean_floor), CachedGeologyPerlin stores 10 (strata, ore×4, cave×4, crystal). Both TerrainGenerator and SphericalTerrainGenerator hold a CachedGeologyPerlin. Chunk gen: 90ms → 5ms (18× speedup).",
     "notes": []
   },
   {
@@ -334,7 +334,7 @@
     "severity": "enhancement",
     "status": "resolved",
     "reported": "2026-06-19",
-    "description": "Surface noise evaluation (NoiseStack::sample()) for terrain height consumes CPU thread pool time that could be used for meshing, underground voxel fill, and physics. Offloading the 2D column noise to GPU compute frees CPU cores and achieves 93\u00d7 speedup for surface noise specifically.",
+    "description": "Surface noise evaluation (NoiseStack::sample()) for terrain height consumes CPU thread pool time that could be used for meshing, underground voxel fill, and physics. Offloading the 2D column noise to GPU compute frees CPU cores and achieves 93× speedup for surface noise specifically.",
     "reproduction": "N/A (enhancement, not bug).",
     "suspected_files": [
       "src/world/noise.rs",
@@ -343,10 +343,10 @@
     ],
     "suspected_cause": "Surface noise is embarrassingly parallel (1024 independent columns per chunk). GPU hash-based Perlin executes all columns in parallel.",
     "related_commits": [],
-    "resolution": "Added GpuNoiseCompute pipeline (noise_compute.rs + noise_eval.wgsl). ChunkManagerPlugin auto-initializes GPU on startup (graceful fallback via GpuContext::try_new()). update_chunks batches up to 8 chunks (8192 columns) per GPU dispatch. Benchmark: 433\u00b5s per 8-chunk batch, 54\u00b5s per chunk. Phase 1: surface noise only; underground geology (caves, ore, strata) stays on CPU.",
+    "resolution": "Added GpuNoiseCompute pipeline (noise_compute.rs + noise_eval.wgsl). ChunkManagerPlugin auto-initializes GPU on startup (graceful fallback via GpuContext::try_new()). update_chunks batches up to 8 chunks (8192 columns) per GPU dispatch. Benchmark: 433µs per 8-chunk batch, 54µs per chunk. Phase 1: surface noise only; underground geology (caves, ore, strata) stays on CPU.",
     "notes": [
-      "GPU uses hash-based f32 Perlin vs CPU permutation-table f64 \u2014 terrain is NOT bit-identical but statistically comparable (GPU std/CPU std ratio ~2.6).",
-      "Phase 2 (future): underground 3D noise on GPU \u2014 accounts for 95% of total noise evals but requires porting material classification logic to WGSL."
+      "GPU uses hash-based f32 Perlin vs CPU permutation-table f64 — terrain is NOT bit-identical but statistically comparable (GPU std/CPU std ratio ~2.6).",
+      "Phase 2 (future): underground 3D noise on GPU — accounts for 95% of total noise evals but requires porting material classification logic to WGSL."
     ]
   },
   {
@@ -389,7 +389,8 @@
       "src/world/collision.rs",
       "src/world/chunk_manager.rs"
     ],
-    "reproduction": "Start a game in a non-planet mode (e.g. flat/local terrain). The player entity falls through the terrain mesh instead of colliding with it."
+    "reproduction": "Start a game in a non-planet mode (e.g. flat/local terrain). The player entity falls through the terrain mesh instead of colliding with it.",
+    "description": " NOTE: flat/local terrain mode removed (2025 refactor). All terrain is now planetary. Re-evaluate whether this issue persists in planetary-only mode."
   },
   {
     "id": "UI-001",
@@ -463,7 +464,7 @@
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-05",
-    "description": "steam.material.ron had boiling_point: None. The state_transitions.rs condensation check requires boiling_point to be Some(...). Because it was None, steam never condensed back to water regardless of temperature, breaking the steam_condensation simulation scenario and any game mechanic relying on steam\u2192water transition.",
+    "description": "steam.material.ron had boiling_point: None. The state_transitions.rs condensation check requires boiling_point to be Some(...). Because it was None, steam never condensed back to water regardless of temperature, breaking the steam_condensation simulation scenario and any game mechanic relying on steam→water transition.",
     "reproduction": "Run cargo test --test simulations -- steam_condensation. Steam at 450K in a stone box never condenses even after thousands of ticks.",
     "suspected_files": [
       "assets/data/materials/steam.material.ron",
@@ -471,7 +472,7 @@
     ],
     "suspected_cause": "Data entry oversight: boiling_point field left as None instead of Some(373.15) when the material was authored.",
     "related_commits": [],
-    "resolution": "Fixed boiling_point: None \u2192 boiling_point: Some(373.15) in steam.material.ron. All simulation scenarios now pass.",
+    "resolution": "Fixed boiling_point: None → boiling_point: Some(373.15) in steam.material.ron. All simulation scenarios now pass.",
     "notes": "condensed_into: Some(\"Water\") was already correctly set; only boiling_point was missing."
   },
   {
@@ -481,7 +482,7 @@
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-05",
-    "description": "lava.material.ron had melting_point: None. The state_transitions.rs frozen_into check for Phase::Liquid requires melting_point to be Some(...). Because it was None, lava never solidified back to stone regardless of temperature, breaking the lava_cooling_to_stone simulation scenario and any game mechanic relying on lava\u2192stone solidification.",
+    "description": "lava.material.ron had melting_point: None. The state_transitions.rs frozen_into check for Phase::Liquid requires melting_point to be Some(...). Because it was None, lava never solidified back to stone regardless of temperature, breaking the lava_cooling_to_stone simulation scenario and any game mechanic relying on lava→stone solidification.",
     "reproduction": "Run cargo test --test simulations -- lava_cooling. After 50000 ticks, 81 lava voxels remain despite being well below 1473K solidification temperature.",
     "suspected_files": [
       "assets/data/materials/lava.material.ron",
@@ -489,7 +490,7 @@
     ],
     "suspected_cause": "Data entry oversight: melting_point field left as None instead of Some(1473.0) when the material was authored.",
     "related_commits": [],
-    "resolution": "Fixed melting_point: None \u2192 melting_point: Some(1473.0) in lava.material.ron. Lava now solidifies to stone at 1473K.",
+    "resolution": "Fixed melting_point: None → melting_point: Some(1473.0) in lava.material.ron. Lava now solidifies to stone at 1473K.",
     "notes": "frozen_into: Some(\"Stone\") was already correctly set; only melting_point was missing."
   },
   {
@@ -497,7 +498,7 @@
     "title": "Spherical planet terrain appears flat at ground level due to wrong noise frequency units",
     "category": "terrain",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "affected_files": [
       "src/world/noise.rs",
       "src/world/scene_presets.rs",
@@ -505,7 +506,7 @@
     ],
     "description": "In spherical terrain mode, noise is sampled as perlin.get([lon * freq, lat * freq]) where lon/lat are in radians. The SphericalPlanet preset and NoiseConfig defaults use frequencies tuned for flat terrain (world-meters), not radians. With mean_radius=32000m, 1 radian = 32km at the surface. fbm_base_freq=0.005 produces features at 1/0.005 * 32km = 6400km wavelength, while the entire planet circumference is only ~201km. From ground level (visibility ~500m), the terrain is completely flat because all noise features are thousands of km wide. micro_freq=0.15 gives 213km features with only 3m amplitude -- undetectable at ground level. The frequencies need to be scaled by mean_radius (roughly 2000x) to produce ground-level terrain variation.",
     "suspected_cause": "Flat-terrain NoiseConfig defaults (fbm_base_freq=0.005, ridged_base_freq=0.008, micro_freq=0.15) are reused unchanged for spherical terrain, but spherical terrain samples noise in radians while flat terrain samples in meters. Correct frequencies for a 32km planet: fbm_base_freq ~2.0-5.0, ridged_base_freq ~3.0-6.0, micro_freq ~100-200 (for ~200m ground-level features), warp_strength ~0.1-0.3 radians.",
-    "resolution": null
+    "resolution": "Surface terrain now uses PlanetaryTerrainSampler (IDW from tectonic PlanetData) instead of SphericalTerrainGenerator FBM noise. Noise frequency mismatch no longer affects surface terrain appearance. SphericalTerrainGenerator is retained only for internal cave carving in PlanetaryTerrainSampler."
   },
   {
     "id": "SKY-002",
@@ -651,7 +652,7 @@
   },
   {
     "id": "SPAWN-001",
-    "title": "Player spawns before terrain loads \u2014 falls through or floats above surface",
+    "title": "Player spawns before terrain loads — falls through or floats above surface",
     "category": "gameplay",
     "severity": "high",
     "status": "resolved",
@@ -680,7 +681,7 @@
       "src/camera/mod.rs",
       "src/world/collision.rs"
     ],
-    "suspected_cause": "Default spawn at 45\u00b0N/0\u00b0E could be ocean. snap_to_surface and camera_gravity used ground_height_from_terrain_gen() (terrain surface only) without clamping to sea level, placing the player on the ocean floor.",
+    "suspected_cause": "Default spawn at 45°N/0°E could be ocean. snap_to_surface and camera_gravity used ground_height_from_terrain_gen() (terrain surface only) without clamping to sea level, placing the player on the ocean floor.",
     "resolution": "rebuild_terrain_gen_if_planetary was setting terrain_res.0 to a Spherical noise generator via from_planet_config(), while shared_gen and V2TerrainGen used the Planetary tectonic sampler. Spawn position queries used the wrong elevation map. Fixed by creating a second PlanetaryTerrainSampler for terrain_res.",
     "resolved_commit": "5a137c9"
   },
@@ -725,7 +726,7 @@
   },
   {
     "id": "RENDER-004",
-    "title": "Gaps between chunks \u2014 grid-like seams vary with latitude",
+    "title": "Gaps between chunks — grid-like seams vary with latitude",
     "category": "rendering",
     "severity": "high",
     "status": "resolved",
@@ -742,24 +743,24 @@
     "related_commits": [],
     "resolution": "Phase 1: Changed NeighborSlices to 2D boundary slices sampled in the current chunk's own local frame. Phase 2: Added world_transform_scaled() that computes per-chunk tangent-plane scale factors from the gnomonic angular footprint. Terrain generation and boundary slices now use scaled local offsets. Chunk entity Transforms include non-uniform (scale_x, 1.0, scale_z) so meshes cover the correct angular extent. Tests verify adjacent chunk edges meet within 1m.",
     "notes": [
-      "Each voxel now covers slightly more or less than 1m depending on position (0.6m at face edges, 1.27m at face centers). This is geometrically correct \u2014 there's more surface area to cover at face centers."
+      "Each voxel now covers slightly more or less than 1m depending on position (0.6m at face edges, 1.27m at face centers). This is geometrically correct — there's more surface area to cover at face centers."
     ]
   },
   {
     "id": "RENDER-005",
-    "title": "Terrain disappears at altitude \u2014 hard view distance cutoff",
+    "title": "Terrain disappears at altitude — hard view distance cutoff",
     "category": "rendering",
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-18",
-    "description": "When flying at high altitude, the terrain disappears completely beyond a fixed distance. There is no graceful LOD fallback \u2014 instead of rendering lower-detail chunks at greater distances, the terrain simply stops. Players should be able to fly at arbitrary altitude and still see terrain below, albeit at reduced detail.",
+    "description": "When flying at high altitude, the terrain disappears completely beyond a fixed distance. There is no graceful LOD fallback — instead of rendering lower-detail chunks at greater distances, the terrain simply stops. Players should be able to fly at arbitrary altitude and still see terrain below, albeit at reduced detail.",
     "reproduction": "Run the game and fly upward (increase altitude significantly). At a certain height the terrain vanishes entirely, leaving only sky. Expected: terrain remains visible at all altitudes with progressively coarser LOD.",
     "suspected_files": [
       "src/world/v2/chunk_manager.rs"
     ],
     "suspected_cause": "V2LoadRadius was fixed at horizontal=12, vertical=2. desired_chunks_v2 used a fixed loop range and skipped out-of-range u/v coords instead of wrapping cross-face.",
     "related_commits": [],
-    "resolution": "Implemented adaptive load radius using horizon distance formula d=sqrt(2Rh+h\u00b2). Horizontal radius now scales with altitude, capped at 48 chunks. Vertical range always extends from surface (layer 0) to camera layer plus padding. Added cross-face chunk loading via wrap_cross_face(). Surface-layer chunks get dispatch priority.",
+    "resolution": "Implemented adaptive load radius using horizon distance formula d=sqrt(2Rh+h²). Horizontal radius now scales with altitude, capped at 48 chunks. Vertical range always extends from surface (layer 0) to camera layer plus padding. Added cross-face chunk loading via wrap_cross_face(). Surface-layer chunks get dispatch priority.",
     "notes": [
       "Long-term: proper LOD/impostor system still needed for very high altitudes where even 48-chunk radius is insufficient."
     ]
@@ -794,7 +795,7 @@
   },
   {
     "id": "LOD-001",
-    "title": "LOD vertical scaling broken \u2014 chunks are thin pancakes",
+    "title": "LOD vertical scaling broken — chunks are thin pancakes",
     "category": "rendering",
     "severity": "critical",
     "status": "resolved",
@@ -830,7 +831,7 @@
     "resolution": "Replaced GPU hash-based Perlin with permutation-table-based implementation matching the noise crate exactly. Pre-compute 32 perm tables (one per noise function) on CPU, upload as storage buffer. Fixed 3D gradient function (cases 13/14 differ from classic Perlin shortcut). Fixed micro-detail inclusion, continent blend coordinates, and crystal seed mismatches. All 1635 tests pass.",
     "related_commits": [],
     "notes": [
-      "3D gradient: noise crate maps case 13\u2192(-x+y), 14\u2192(-y+z), while classic Perlin shortcut gives 13\u2192(-y+z), 14\u2192(y-x)",
+      "3D gradient: noise crate maps case 13→(-x+y), 14→(-y+z), while classic Perlin shortcut gives 13→(-y+z), 14→(y-x)",
       "noise_floor quirk: floor_to_isize(0.0) = -1 (not 0), replicated in WGSL",
       "Perm table generation verified against noise crate output at multiple test points"
     ]
@@ -842,7 +843,7 @@
     "title": "Phantom camera from AmbientLight #[require(Camera)] causes dark/conflicting render",
     "description": "spawn_lights spawned (SkyAmbient, AmbientLight{...}) as a standalone entity. In Bevy 0.18, AmbientLight has #[require(Camera)], so Bevy auto-adds Camera + its required components to that entity, creating a phantom camera at (0,0,0) rendering to the primary window at the same order as the player camera. This caused camera ambiguity (black render). Additionally, update_ambient queried this phantom entity instead of updating the GlobalAmbientLight resource, so the player camera ambient was never updated from its default.",
     "status": "resolved",
-    "resolution": "Removed the SkyAmbient entity/component. spawn_lights now sets GlobalAmbientLight resource directly. update_ambient now takes ResMut<GlobalAmbientLight> and updates it each frame. Also added safe up-hint fallback in looking_at calls when sun_vec is near \u00b1Y.",
+    "resolution": "Removed the SkyAmbient entity/component. spawn_lights now sets GlobalAmbientLight resource directly. update_ambient now takes ResMut<GlobalAmbientLight> and updates it each frame. Also added safe up-hint fallback in looking_at calls when sun_vec is near ±Y.",
     "suspected_cause": "Bevy 0.18 API change: AmbientLight became a per-camera component with #[require(Camera)] rather than a standalone entity component",
     "affected_files": [
       "src/lighting/mod.rs"
@@ -853,7 +854,7 @@
     "category": "rendering",
     "severity": "high",
     "title": "Non-collidable terrain walls sticking up everywhere near coastlines",
-    "description": "Players spawning at the coastline (via find_coastline()) see many thin vertical walls rising from the ground in what appears to be flat ocean water. The walls have no collision because the physics system uses radial-only height-field collision. Root cause: the noise amplitude for all biomes is `roughness * 2000` metres. For ocean biomes (roughness\u22480.08) the amplitude is \u00b1160 m. Near coastlines the IDW-interpolated elevation can be as shallow as \u221250 to 0 m; noise then pushes individual columns above sea level, producing land spikes adjacent to water columns. Surface Nets correctly generates vertical faces between these columns, producing the visible walls.",
+    "description": "Players spawning at the coastline (via find_coastline()) see many thin vertical walls rising from the ground in what appears to be flat ocean water. The walls have no collision because the physics system uses radial-only height-field collision. Root cause: the noise amplitude for all biomes is `roughness * 2000` metres. For ocean biomes (roughness≈0.08) the amplitude is ±160 m. Near coastlines the IDW-interpolated elevation can be as shallow as −50 to 0 m; noise then pushes individual columns above sea level, producing land spikes adjacent to water columns. Surface Nets correctly generates vertical faces between these columns, producing the visible walls.",
     "status": "resolved",
     "resolution": "Partial fix: ocean surface clamped in Planetary mode detail.rs (commit 3f8d14b, 9ce98dc). Root cause: continent_enabled:false in Spherical mode allows noise-spike land columns throughout ocean areas. Full fix: continent_enabled:true in planet_config.ron noise block eliminates random land patches in ocean blobs. Coastline walls at true continent boundaries remain (expected).",
     "suspected_cause": "Noise amplitude (roughness * 2000 m) exceeded shallow ocean depth near coastlines, allowing ocean terrain to breach sea level and generate land column spikes with non-collidable Surface Nets walls.",
@@ -866,11 +867,11 @@
     "category": "rendering",
     "severity": "high",
     "title": "Blocky Minecraft-style terrain at high LOD levels",
-    "description": "At LOD 2+ (voxel size 4\u201316+ metres), terrain rendered with Surface Nets produced large flat-topped rectangular blocks with perfect vertical walls \u2014 Minecraft-style geometry instead of smooth slopes. Root cause: terrain_density(depth) = clamp(0.5 + depth*0.5, 0.0, 1.0) saturates to exactly 0.0 or 1.0 for any voxel more than 1 m from the surface. At LOD 4 (16 m voxels), virtually every voxel was binary. With a binary SDF Surface Nets always placed vertices at exact voxel midpoints (t=0.5 in cell_vertex_offset), eliminating all sub-voxel gradient information and making every surface look like axis-aligned blocks.",
+    "description": "At LOD 2+ (voxel size 4–16+ metres), terrain rendered with Surface Nets produced large flat-topped rectangular blocks with perfect vertical walls — Minecraft-style geometry instead of smooth slopes. Root cause: terrain_density(depth) = clamp(0.5 + depth*0.5, 0.0, 1.0) saturates to exactly 0.0 or 1.0 for any voxel more than 1 m from the surface. At LOD 4 (16 m voxels), virtually every voxel was binary. With a binary SDF Surface Nets always placed vertices at exact voxel midpoints (t=0.5 in cell_vertex_offset), eliminating all sub-voxel gradient information and making every surface look like axis-aligned blocks.",
     "status": "resolved",
     "reported": "2026-04-26",
-    "resolution": "Applied LOD-scaled density gradient: changed terrain_density(depth) calls to terrain_density(depth / lod_scale) in both generate_voxels_core and generate_single_boundary_slice (src/world/v2/terrain_gen.rs) and in the GPU compute shader voxel_pass (src/gpu/shaders/voxel_gen.wgsl). lod_scale = 2^lod, so the gradient spans \u00b1lod_scale metres = \u00b11 voxel at any LOD. The isosurface position is unchanged (density=0.5 when depth=0). Added regression test high_lod_surface_voxels_have_intermediate_density verifying LOD-4 chunks have non-binary densities near the surface.",
-    "suspected_cause": "terrain_density gradient width (\u00b11 m) was independent of LOD voxel size, so high-LOD voxels (16 m) all saturated to binary SDF values.",
+    "resolution": "Applied LOD-scaled density gradient: changed terrain_density(depth) calls to terrain_density(depth / lod_scale) in both generate_voxels_core and generate_single_boundary_slice (src/world/v2/terrain_gen.rs) and in the GPU compute shader voxel_pass (src/gpu/shaders/voxel_gen.wgsl). lod_scale = 2^lod, so the gradient spans ±lod_scale metres = ±1 voxel at any LOD. The isosurface position is unchanged (density=0.5 when depth=0). Added regression test high_lod_surface_voxels_have_intermediate_density verifying LOD-4 chunks have non-binary densities near the surface.",
+    "suspected_cause": "terrain_density gradient width (±1 m) was independent of LOD voxel size, so high-LOD voxels (16 m) all saturated to binary SDF values.",
     "affected_files": [
       "src/world/v2/terrain_gen.rs",
       "src/gpu/shaders/voxel_gen.wgsl"
@@ -881,7 +882,7 @@
     "category": "rendering",
     "severity": "high",
     "title": "Gray opaque ceiling above player when spawning at sea",
-    "description": "The Surface Nets Y-axis edge loop in surface_nets_mesh ran `for j in 0..CSI` (CS=32). At j=CS-1=31, this emitted the edge (i,31,k)\u2192(i,32,k), where corner j=32 is read from slices[2] (the +Y neighbour's j=0 face via generate_single_boundary_slice resampling). In the sea chunk, j=31 is AIR (r\u224832015.5 > sea_level=32000) but the +Y neighbour's resampled j=0 row contains STONE for terrain columns where surface_r > 32016.5 nearby. This AIR\u2192STONE sign change generated a downward-facing (-Y normal) stone face at the very top of the sea chunk, visible to the player below as a large gray opaque ceiling slab.",
+    "description": "The Surface Nets Y-axis edge loop in surface_nets_mesh ran `for j in 0..CSI` (CS=32). At j=CS-1=31, this emitted the edge (i,31,k)→(i,32,k), where corner j=32 is read from slices[2] (the +Y neighbour's j=0 face via generate_single_boundary_slice resampling). In the sea chunk, j=31 is AIR (r≈32015.5 > sea_level=32000) but the +Y neighbour's resampled j=0 row contains STONE for terrain columns where surface_r > 32016.5 nearby. This AIR→STONE sign change generated a downward-facing (-Y normal) stone face at the very top of the sea chunk, visible to the player below as a large gray opaque ceiling slab.",
     "status": "resolved",
     "resolution": "Y-axis edge loop shifted to j in -1..(CS-1) to prevent +Y cross-chunk seam ceiling (commit b8fd38d). Root cause further identified as continent_enabled:false producing random land patches above sea level near ocean spawns. Full fix: continent_enabled:true added to planet_config.ron noise block (see RENDER-009).",
     "suspected_cause": "Off-by-one in Y-axis loop range: emitted the +Y cross-chunk seam instead of the correct -Y seam. The +Y chunk being AllAir (emitting no mesh) exposed the spurious face.",
@@ -891,7 +892,7 @@
   },
   {
     "id": "RENDER-009",
-    "title": "Phantom ceiling and walls in ocean \u2014 continent masking disabled",
+    "title": "Phantom ceiling and walls in ocean — continent masking disabled",
     "status": "resolved",
     "category": "rendering",
     "severity": "major",
@@ -902,6 +903,19 @@
     ],
     "description": "continent_enabled: false caused NoiseStack.sample() to return raw land noise (combined in [-1,1]) for ALL positions. Even ocean spawns had adjacent columns with combined > 0 (land above sea level). With height_scale=4000, even combined=0.001 gives 4m land bumps. Random land patches near ocean spawn created vertical walls (X/Z sign changes) and ceiling-like top faces of nearby land columns visible from sea level.",
     "root_cause": "continent_enabled: false in planet_config.ron noise block. The NoiseStack.sample() code path branches on this flag; when false it returns sample_land() for all positions regardless of ocean/land territory. Previous RENDER-006/007/008 fixes targeted meshing seams and Planetary mode code paths, not this Spherical mode terrain generation issue.",
-    "resolution": "Set continent_enabled: true with continent_freq: 0.3, continent_threshold: 0.0, shelf_blend_width: 0.1, ocean_floor_depth: 0.1, ocean_floor_amplitude: 0.05 inside the noise: Some((...)) block of assets/data/planet_config.ron. Ocean blobs now have combined \u2248 -0.1 (surface_r \u2248 31600m, 400m below sea level), eliminating land patches inside ocean territory."
+    "resolution": "Set continent_enabled: true with continent_freq: 0.3, continent_threshold: 0.0, shelf_blend_width: 0.1, ocean_floor_depth: 0.1, ocean_floor_amplitude: 0.05 inside the noise: Some((...)) block of assets/data/planet_config.ron. Ocean blobs now have combined ≈ -0.1 (surface_r ≈ 31600m, 400m below sea level), eliminating land patches inside ocean territory."
+  },
+  {
+    "id": "GPU-PARITY-001",
+    "title": "GPU voxel shader does not implement planetary terrain (IDW) — FBM noise only",
+    "category": "gpu",
+    "severity": "medium",
+    "status": "open",
+    "affected_files": [
+      "src/gpu/voxel_compute.rs",
+      "src/gpu/shaders/terrain.wgsl"
+    ],
+    "description": "The GPU compute shader for voxel generation implements FBM noise terrain (matching the old SphericalTerrainGenerator). After the planetary refactor, the CPU path uses PlanetaryTerrainSampler (IDW from tectonic PlanetData). The GPU and CPU terrain algorithms are now mismatched. GPU parity tests (gpu_vs_cpu_surface_chunk_comparison, gpu_vs_cpu_parity_earth_scale_surface_chunk) are marked #[ignore] until the GPU shader is updated.",
+    "resolution": null
   }
 ]

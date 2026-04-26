@@ -23,7 +23,6 @@ use bevy_common_assets::ron::RonAssetPlugin;
 use std::sync::Arc;
 
 use planet::PlanetConfig;
-use planetary_sampler::PlanetaryTerrainSampler;
 
 /// Handle to the `planet_config.ron` asset so we can poll for load completion.
 #[derive(Resource)]
@@ -63,6 +62,29 @@ pub struct PlanetaryData(pub Arc<crate::planet::PlanetData>);
 
 pub struct WorldPlugin;
 
+/// Build a `UnifiedTerrainGenerator` from optional `PlanetaryData` and a `PlanetConfig`.
+///
+/// When `planetary` is `None` a minimal placeholder `PlanetData` (level-3 grid,
+/// 642 cells) is constructed.  This is fast and allows the terrain system to
+/// start immediately; `rebuild_terrain_gen_if_planetary` will upgrade to the
+/// real dataset once `PlanetaryData` is available.
+fn make_terrain_gen(
+    planetary: Option<&PlanetaryData>,
+    planet_config: &PlanetConfig,
+) -> terrain::UnifiedTerrainGenerator {
+    let planet_data = if let Some(pd) = planetary {
+        pd.0.clone()
+    } else {
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet_config.seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        Arc::new(crate::planet::PlanetData::new(gen_cfg))
+    };
+    terrain::UnifiedTerrainGenerator::new(planet_data, planet_config.clone())
+}
+
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.configure_sets(Update, WorldSet::Meshing.after(WorldSet::ChunkManagement))
@@ -90,8 +112,9 @@ impl Plugin for WorldPlugin {
             .get_resource::<PlanetConfig>()
             .cloned()
             .unwrap_or_default();
-        let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
-        let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet);
+        let planetary = app.world().get_resource::<PlanetaryData>().cloned();
+        let generator = make_terrain_gen(planetary.as_ref(), &planet);
+        let shared_generator = make_terrain_gen(planetary.as_ref(), &planet);
         app.insert_resource(chunk_manager::TerrainGeneratorRes(generator))
             .insert_resource(chunk_manager::SharedTerrainGen(Arc::new(shared_generator)))
             .add_plugins(v2::chunk_manager::V2WorldPlugin);
@@ -122,6 +145,7 @@ fn apply_planet_config_from_asset(
     mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
     v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
     skip: Option<Res<crate::game_state::SkipWorldCreation>>,
+    planetary: Option<Res<PlanetaryData>>,
     mut done: Local<bool>,
 ) {
     if *done {
@@ -152,21 +176,13 @@ fn apply_planet_config_from_asset(
 
     // Rebuild both terrain generator resources so chunk generation and
     // camera/physics queries all use the new config.
-    let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    terrain_res.0 = generator;
+    terrain_res.0 = make_terrain_gen(planetary.as_deref(), &planet_config);
 
-    let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    let shared_arc = Arc::new(shared_generator);
+    let shared_arc = Arc::new(make_terrain_gen(planetary.as_deref(), &planet_config));
     *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
-    // Rebuild the V2 terrain generator if the V2 pipeline is active
-    // (only spherical/planetary modes are supported by V2).
-    if let Some(mut v2) = v2_gen
-        && !matches!(
-            shared_arc.as_ref(),
-            terrain::UnifiedTerrainGenerator::Flat(_)
-        )
-    {
+    // Rebuild the V2 terrain generator if the V2 pipeline is active.
+    if let Some(mut v2) = v2_gen {
         v2.0 = shared_arc;
         info!("V2 pipeline: rebuilt terrain generator from updated PlanetConfig");
     }
@@ -182,6 +198,7 @@ fn rebuild_terrain_on_config_change(
     mut shared_gen: ResMut<chunk_manager::SharedTerrainGen>,
     mut terrain_res: ResMut<chunk_manager::TerrainGeneratorRes>,
     v2_gen: Option<ResMut<v2::chunk_manager::V2TerrainGen>>,
+    planetary: Option<Res<PlanetaryData>>,
 ) {
     if !planet_config.is_changed() || planet_config.is_added() {
         return;
@@ -192,26 +209,20 @@ fn rebuild_terrain_on_config_change(
         planet_config.seed,
     );
 
-    let generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    terrain_res.0 = generator;
+    terrain_res.0 = make_terrain_gen(planetary.as_deref(), &planet_config);
 
-    let shared_generator = terrain::UnifiedTerrainGenerator::from_planet_config(&planet_config);
-    let shared_arc = Arc::new(shared_generator);
+    let shared_arc = Arc::new(make_terrain_gen(planetary.as_deref(), &planet_config));
     *shared_gen = chunk_manager::SharedTerrainGen(shared_arc.clone());
 
-    if let Some(mut v2) = v2_gen
-        && !matches!(
-            shared_arc.as_ref(),
-            terrain::UnifiedTerrainGenerator::Flat(_)
-        )
-    {
+    if let Some(mut v2) = v2_gen {
         v2.0 = shared_arc;
     }
 }
-/// `PlanetaryTerrainSampler` that uses the real tectonic/biome data.
+
+/// Switch to a `PlanetaryTerrainSampler` backed by real tectonic/biome data.
 ///
-/// This runs once in `PostStartup` after all plugins have been built, so that
-/// a `PlanetaryData` resource inserted in `main()` is picked up automatically.
+/// Runs once in `PostStartup` after all plugins have been built, so that a
+/// `PlanetaryData` resource inserted in `main()` is picked up automatically.
 fn rebuild_terrain_gen_if_planetary(
     planetary: Option<Res<PlanetaryData>>,
     planet_config: Res<PlanetConfig>,
@@ -230,17 +241,14 @@ fn rebuild_terrain_gen_if_planetary(
         planetary.0.config.seed,
     );
 
-    let sampler = PlanetaryTerrainSampler::new(planetary.0.clone(), planet_config.clone());
-    let unified = Arc::new(terrain::UnifiedTerrainGenerator::Planetary(Box::new(
-        sampler,
-    )));
-    // Build a second Planetary sampler for TerrainGeneratorRes so that
-    // surface queries (spawn positioning, camera gravity, map) match the
-    // actual chunk terrain.  Previously this created a Spherical noise
-    // generator which had a completely different elevation map, causing
-    // the player to spawn in the ocean.
-    let sampler2 = PlanetaryTerrainSampler::new(planetary.0.clone(), planet_config.clone());
-    terrain_res.0 = terrain::UnifiedTerrainGenerator::Planetary(Box::new(sampler2));
+    let unified = Arc::new(terrain::UnifiedTerrainGenerator::new(
+        planetary.0.clone(),
+        planet_config.clone(),
+    ));
+    // Build a second sampler for TerrainGeneratorRes so that surface queries
+    // (spawn positioning, camera gravity, map) match the actual chunk terrain.
+    terrain_res.0 =
+        terrain::UnifiedTerrainGenerator::new(planetary.0.clone(), planet_config.clone());
     *shared_gen = chunk_manager::SharedTerrainGen(unified.clone());
 
     // Propagate the planetary generator to the V2 pipeline so V2 chunk

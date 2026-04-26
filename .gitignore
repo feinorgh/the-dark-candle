@@ -19,3 +19,4 @@ Thumbs.db
 *.dylib
 *.dll
 test_output/
+assets/data/planets/
