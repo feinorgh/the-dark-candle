@@ -847,5 +847,18 @@
     "affected_files": [
       "src/lighting/mod.rs"
     ]
+  },
+  {
+    "id": "RENDER-006",
+    "category": "rendering",
+    "severity": "high",
+    "title": "Gray opaque ceiling above player when spawning at sea",
+    "description": "The Surface Nets Y-axis edge loop in surface_nets_mesh ran `for j in 0..CSI` (CS=32). At j=CS-1=31, this emitted the edge (i,31,k)→(i,32,k), where corner j=32 is read from slices[2] (the +Y neighbour's j=0 face via generate_single_boundary_slice resampling). In the sea chunk, j=31 is AIR (r≈32015.5 > sea_level=32000) but the +Y neighbour's resampled j=0 row contains STONE for terrain columns where surface_r > 32016.5 nearby. This AIR→STONE sign change generated a downward-facing (-Y normal) stone face at the very top of the sea chunk, visible to the player below as a large gray opaque ceiling slab.",
+    "status": "resolved",
+    "resolution": "Changed Y-axis loop from `for j in 0..CSI` to `for j in -1_isize..(CSI - 1)`. This excludes the j=CS-1→j=CS cross-chunk edge (owned by the +Y neighbour) and adds the correct j=-1→j=0 seam edge (current chunk's -Y seam). The +Y chunk is AllAir at sea and emits no mesh, so the face correctly disappears. Added two regression tests: y_pos_seam_not_owned_by_current_chunk and y_neg_seam_owned_by_current_chunk.",
+    "suspected_cause": "Off-by-one in Y-axis loop range: emitted the +Y cross-chunk seam instead of the correct -Y seam. The +Y chunk being AllAir (emitting no mesh) exposed the spurious face.",
+    "affected_files": [
+      "src/world/v2/surface_nets.rs"
+    ]
   }
 ]

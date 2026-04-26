@@ -24,12 +24,20 @@
 // Seamless meshing strategy: each chunk meshes a *padded* volume that
 // extends one cell into each of its -X/-Y/-Z neighbours. This requires
 // the corner grid to span indices `-1..=CS` (CSP2 entries per axis) and
-// cells to span `-1..CS` (CSP1 entries). Edge emission then runs the
-// full `0..CS` for all three axes uniformly: the chunk owns -X/-Y/-Z
-// face seam quads, while +X/+Y/+Z face seams are owned by the
-// corresponding +face neighbour (whose -X/-Y/-Z extension lands on the
-// same physical cells with identical voxel data, so vertex positions
-// match across the seam).
+// cells to span `-1..CS` (CSP1 entries). Edge emission:
+//   * X-axis loop runs `i in 0..CS`: owns +X face seam; -X owned by -X neighbour.
+//   * Y-axis loop runs `j in -1..CS-1`: owns -Y face seam (uses slices[3]);
+//     the +Y seam (`j=CS-1 → j=CS`) is owned by the +Y neighbour's j=-1 edge.
+//     This is critical: the +Y cross-chunk edge would sample slices[2] using
+//     resampled data that doesn't reflect the +Y chunk's true voxel content.
+//     When the +Y chunk is AllAir it emits no mesh at all, so the +Y seam must
+//     not be emitted here either — otherwise a spurious downward-facing face
+//     appears as an opaque ceiling above the player.
+//   * Z-axis loop runs `k in 0..CS`: owns +Z face seam; -Z owned by -Z neighbour.
+//
+// The +X/+Z seams are vertical walls and seam-ownership asymmetry is harmless.
+// The Y axis is special: emitting the wrong cross-chunk horizontal face produces
+// the ceiling artifact, so Y ownership is explicitly -Y (not +Y).
 //
 // Only the existing 1-layer NeighborSlices are needed: a cell at e.g.
 // i=-1 reads i=-1 corners from the -X slice (= the -X neighbour's
@@ -448,8 +456,17 @@ pub fn surface_nets_mesh(
 
     // Y-axis edges: edge at corner (i, j, k) → (i, j+1, k). Surrounding
     // cells span (i-1..i, j, k-1..k).
+    //
+    // Range: j in -1..CSI-1 (i.e. j = -1, 0, 1, …, CS-2).
+    //   * j = -1  → edge (-1→0) uses slices[3] for the -Y seam corner.  This
+    //     is the -Y face seam this chunk owns.
+    //   * j = CS-1 → edge (CS-1→CS) is EXCLUDED. That edge samples slices[2]
+    //     (+Y neighbour's j=0 row). When the +Y chunk is AllAir it emits no
+    //     mesh at all; emitting this edge here would produce a spurious
+    //     downward-facing stone face — the "gray ceiling" bug.  The +Y
+    //     neighbour handles this edge via its own j=-1 iteration.
     for k in 0..CSI {
-        for j in 0..CSI {
+        for j in -1_isize..(CSI - 1) {
             for i in 0..CSI {
                 let ca = corner_index_ext(i, j, k);
                 let cb = corner_index_ext(i, j + 1, k);
@@ -613,6 +630,77 @@ mod tests {
             (avg_y - mid).abs() < 0.6,
             "mean surface y ({avg_y}) should be near midplane ({mid})"
         );
+    }
+
+    #[test]
+    fn y_pos_seam_not_owned_by_current_chunk() {
+        // Regression test for the "gray ceiling" bug (RENDER-006).
+        //
+        // Scenario: current chunk is entirely AIR (simulating the sea layer
+        // above water level). The +Y neighbour (slices[2]) has STONE at its
+        // j=0 row. Before the fix the Y loop ran `j in 0..CS`, which included
+        // j=CS-1: corner(j=CS-1)=AIR + corner(j=CS)=STONE → sign change →
+        // downward-facing face at the top of the chunk (ceiling artifact).
+        //
+        // After the fix the Y loop runs `j in -1..CS-1`, which excludes
+        // j=CS-1. The current chunk must emit zero faces; the +Y neighbour
+        // (if Mixed) emits the face via its own j=-1 edge.
+        let voxels = vec![Voxel::default(); CHUNK_VOLUME]; // all AIR, density=0
+        let stone_slice = vec![
+            Voxel {
+                material: MaterialId::STONE,
+                density: 1.0,
+                ..Voxel::default()
+            };
+            CS * CS
+        ];
+        let mut neighbors = NeighborSlices::empty();
+        neighbors.slices[2] = Some(stone_slice); // +Y neighbour's j=0 face = stone
+        let cmap = MaterialColorMap::default();
+        let mesh = surface_nets_mesh(&voxels, &neighbors, &cmap);
+        assert_eq!(
+            mesh.indices.len(),
+            0,
+            "air chunk with stone +Y neighbour must emit zero faces (no ceiling); \
+             got {} vertex positions and {} index entries",
+            mesh.positions.len(),
+            mesh.indices.len(),
+        );
+    }
+
+    #[test]
+    fn y_neg_seam_owned_by_current_chunk() {
+        // The current chunk must correctly emit the -Y seam face (j=-1→j=0)
+        // when the -Y neighbour (slices[3]) is STONE and the current chunk's
+        // j=0 row is AIR. This verifies that the shift to `j in -1..CS-1`
+        // adds the -Y seam without regression.
+        let voxels = vec![Voxel::default(); CHUNK_VOLUME]; // all AIR
+        let stone_slice = vec![
+            Voxel {
+                material: MaterialId::STONE,
+                density: 1.0,
+                ..Voxel::default()
+            };
+            CS * CS
+        ];
+        let mut neighbors = NeighborSlices::empty();
+        neighbors.slices[3] = Some(stone_slice); // -Y neighbour's j=CS-1 face = stone
+        let cmap = MaterialColorMap::default();
+        let mesh = surface_nets_mesh(&voxels, &neighbors, &cmap);
+        assert!(
+            !mesh.positions.is_empty(),
+            "stone -Y neighbour + air j=0 must emit seam faces"
+        );
+        // All emitted vertices should be near y=0 (the -Y chunk boundary).
+        for p in &mesh.positions {
+            assert!(
+                p[1] < 1.5,
+                "seam vertex y={} should be near y=0 (chunk bottom)",
+                p[1]
+            );
+        }
+        assert_eq!(mesh.positions.len(), mesh.normals.len());
+        assert_eq!(mesh.indices.len() % 3, 0);
     }
 
     #[test]
