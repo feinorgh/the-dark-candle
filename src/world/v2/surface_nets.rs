@@ -156,14 +156,19 @@ fn corner_voxel(
     }
 
     // extreme >= 2: combine all available face slices that "touch" this
-    // corner plus the chunk's own clamped voxel. Pick the one with the
-    // highest density so that uniform-material chunk edges don't
-    // fabricate sign changes.
+    // corner plus the chunk's own clamped voxel. Pick the highest-density
+    // candidate that is on the SAME side of the isosurface as the own voxel.
+    //
+    // Allowing candidates from the opposite side (the old max-density approach)
+    // caused phantom faces along chunk edges where an ocean chunk's corner
+    // neighbor slice contained solid land — the SOLID density "won" and created
+    // a spurious sign change in what should be uniform-air territory.
     let mut best = voxels[voxel_index(ci, cj, ck)];
     let mut best_density = best.density;
+    let own_solid = best_density >= 0.5;
 
     let consider = |v: Voxel, best: &mut Voxel, best_density: &mut f32| {
-        if v.density > *best_density {
+        if (v.density >= 0.5) == own_solid && v.density > *best_density {
             *best_density = v.density;
             *best = v;
         }

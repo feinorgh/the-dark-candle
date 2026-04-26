@@ -130,10 +130,12 @@ pub fn interpolate_elevation(data: &PlanetData, pos: DVec3, nearest: CellId) -> 
 ///
 /// # Ocean surface guarantee
 ///
-/// When the IDW-interpolated elevation is negative (i.e. below sea level), the
-/// final result is clamped to at most −2 m.  This prevents high-frequency noise
-/// from pushing shallow coastal ocean columns above sea level, which would
-/// generate land spikes next to water columns and produce non-collidable terrain
+/// When the IDW-interpolated elevation is negative (below sea level) **or** the
+/// nearest cell is an ocean biome, the final result is clamped to at most −2 m.
+/// The biome guard covers IDW transition zones near coastlines where the
+/// interpolated elevation can be slightly positive even for ocean-biome cells;
+/// without it, ocean roughness noise (≈ ±160 m) would spike the surface radius
+/// well above sea level and produce phantom SOLID voxels and non-collidable
 /// walls at the coastline.
 pub fn sample_detailed_elevation(
     data: &PlanetData,
@@ -150,8 +152,13 @@ pub fn sample_detailed_elevation(
         data.boundary_type[ci],
     );
     let offset = noise.sample(pos, roughness);
-    let elevation = if interp < 0.0 {
-        // Below-sea-level territory: never let noise lift terrain above sea level.
+    let is_ocean_biome = matches!(data.biome[ci], BiomeType::Ocean | BiomeType::DeepOcean);
+    let elevation = if interp < 0.0 || is_ocean_biome {
+        // Below-sea-level territory or ocean-biome cell: never let noise lift
+        // terrain above sea level.  The biome guard catches transition zones
+        // where IDW gives a slightly positive interp near a coastline — without
+        // it, ocean roughness noise (≈ ±160 m) can spike the surface radius
+        // well above sea level, generating phantom SOLID voxels and walls.
         (interp + offset).min(-2.0)
     } else {
         interp + offset
