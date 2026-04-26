@@ -127,6 +127,14 @@ pub fn interpolate_elevation(data: &PlanetData, pos: DVec3, nearest: CellId) -> 
 /// Compute detailed elevation: interpolation + procedural noise.
 ///
 /// Returns `(elevation_m, nearest_cell_index)`.
+///
+/// # Ocean surface guarantee
+///
+/// When the IDW-interpolated elevation is negative (i.e. below sea level), the
+/// final result is clamped to at most −2 m.  This prevents high-frequency noise
+/// from pushing shallow coastal ocean columns above sea level, which would
+/// generate land spikes next to water columns and produce non-collidable terrain
+/// walls at the coastline.
 pub fn sample_detailed_elevation(
     data: &PlanetData,
     noise: &TerrainNoise,
@@ -142,7 +150,13 @@ pub fn sample_detailed_elevation(
         data.boundary_type[ci],
     );
     let offset = noise.sample(pos, roughness);
-    (interp + offset, ci)
+    let elevation = if interp < 0.0 {
+        // Below-sea-level territory: never let noise lift terrain above sea level.
+        (interp + offset).min(-2.0)
+    } else {
+        interp + offset
+    };
+    (elevation, ci)
 }
 
 // ─── Hillshading ──────────────────────────────────────────────────────────────
@@ -274,6 +288,46 @@ mod tests {
     fn roughness_ocean_is_low() {
         let r = terrain_roughness(BiomeType::Ocean, -3000.0, 0.0, BoundaryType::Interior);
         assert!(r < 0.3, "ocean roughness should be low, got {r}");
+    }
+
+    /// Shallow ocean columns must never produce terrain above sea level (−2 m
+    /// margin), regardless of noise.  This is the regression test for the
+    /// "phantom walls at coastlines" bug: high-frequency noise was previously
+    /// able to push ocean terrain above sea level, generating land spikes in
+    /// what appeared to be open water.
+    #[test]
+    fn shallow_ocean_elevation_stays_below_sea_level() {
+        use crate::planet::tectonics::run_tectonics;
+        use crate::planet::{PlanetConfig, PlanetData};
+
+        let config = PlanetConfig {
+            seed: 77,
+            grid_level: 2,
+            ..Default::default()
+        };
+        let mut data = PlanetData::new(config);
+        run_tectonics(&mut data, |_| {});
+
+        let noise = TerrainNoise::new(77);
+
+        // Force all cells to shallow ocean so IDW always returns ~ −50 m.
+        let n_cells = data.elevation.len();
+        for i in 0..n_cells {
+            data.elevation[i] = -50.0;
+            data.biome[i] = BiomeType::Ocean;
+        }
+
+        // Sample at each cell centre — nearest cell is exactly that cell, so
+        // IDW returns exactly −50 m as the interpolated elevation.
+        for ci in 0..n_cells {
+            let cell = CellId(ci as u32);
+            let pos = data.grid.cell_position(cell);
+            let (elev, _) = sample_detailed_elevation(&data, &noise, pos, cell);
+            assert!(
+                elev <= -2.0,
+                "shallow ocean elevation {elev:.1} m exceeds −2 m at cell {ci}"
+            );
+        }
     }
 
     #[test]

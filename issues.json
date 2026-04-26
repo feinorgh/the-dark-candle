@@ -849,6 +849,19 @@
     ]
   },
   {
+    "id": "RENDER-007",
+    "category": "rendering",
+    "severity": "high",
+    "title": "Non-collidable terrain walls sticking up everywhere near coastlines",
+    "description": "Players spawning at the coastline (via find_coastline()) see many thin vertical walls rising from the ground in what appears to be flat ocean water. The walls have no collision because the physics system uses radial-only height-field collision. Root cause: the noise amplitude for all biomes is `roughness * 2000` metres. For ocean biomes (roughness≈0.08) the amplitude is ±160 m. Near coastlines the IDW-interpolated elevation can be as shallow as −50 to 0 m; noise then pushes individual columns above sea level, producing land spikes adjacent to water columns. Surface Nets correctly generates vertical faces between these columns, producing the visible walls.",
+    "status": "resolved",
+    "resolution": "In sample_detailed_elevation() (src/planet/detail.rs), added a clamp: when the IDW-interpolated elevation is negative (below sea level), the final elevation is clamped to at most −2 m. This prevents noise from pushing any below-sea-level point above sea level, eliminating the land spikes. A regression test (shallow_ocean_elevation_stays_below_sea_level) verifies all cell positions stay ≤ −2 m when forced to shallow ocean depth. Committed with tests in place.",
+    "suspected_cause": "Noise amplitude (roughness * 2000 m) exceeded shallow ocean depth near coastlines, allowing ocean terrain to breach sea level and generate land column spikes with non-collidable Surface Nets walls.",
+    "affected_files": [
+      "src/planet/detail.rs"
+    ]
+  },
+  {
     "id": "RENDER-006",
     "category": "rendering",
     "severity": "high",
