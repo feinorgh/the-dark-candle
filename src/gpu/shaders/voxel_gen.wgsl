@@ -640,10 +640,13 @@ fn voxel_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 
     var density: f32;
+    // Scale depth by 1/lod_scale so the gradient spans ±1 voxel at every
+    // LOD level, giving surface nets enough sub-voxel information to produce
+    // smooth diagonal surfaces instead of Minecraft-style blocks.
     if material == MAT_WATER {
-        density = terrain_density_gpu(chunk.sea_level_offset - r_offset);
+        density = terrain_density_gpu((chunk.sea_level_offset - r_offset) / chunk.lod_scale);
     } else {
-        density = terrain_density_gpu(surface_r_offset - r_offset);
+        density = terrain_density_gpu((surface_r_offset - r_offset) / chunk.lod_scale);
     }
 
     let out_idx = chunk.chunk_index * CHUNK_VOLUME + voxel_idx;

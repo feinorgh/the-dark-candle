@@ -156,10 +156,16 @@ fn generate_voxels_core(
                 let idx = lz * cs * cs + ly * cs + lx;
                 voxels[idx].material = material;
 
+                // Scale depth by 1/lod_scale so the density gradient spans ±1
+                // voxel at every LOD level.  Without this, at LOD ≥ 2 any
+                // voxel more than 1 m from the surface saturates to density 0
+                // or 1 (binary), and surface nets degenerates to Minecraft-style
+                // flat-topped / vertical-walled geometry instead of smooth
+                // sub-voxel-interpolated surfaces.
                 let density = if material == MaterialId::WATER {
-                    terrain_density(sea - r)
+                    terrain_density((sea - r) / lod_scale)
                 } else {
-                    terrain_density(surface_r - r)
+                    terrain_density((surface_r - r) / lod_scale)
                 };
                 voxels[idx].density = density;
             }
@@ -451,6 +457,10 @@ pub fn generate_single_boundary_slice(
         coord.world_transform_scaled(mean_radius, face_chunks_per_edge);
     let sea = tgen.planet_config().sea_level_radius;
     let slice_size = cs * cs;
+    // Same LOD-scaled density as generate_voxels_core — boundary voxels must
+    // use an identical gradient width so surface nets produces seamless geometry
+    // across the chunk boundary.
+    let lod_scale = (1u64 << coord.lod) as f64;
 
     let mut slice = vec![Voxel::default(); slice_size];
 
@@ -499,9 +509,9 @@ pub fn generate_single_boundary_slice(
 
             let material = tgen.material_at_radius(r, surface_r, wpos.x, wpos.y, wpos.z);
             let density = if material == MaterialId::WATER {
-                terrain_density(sea - r)
+                terrain_density((sea - r) / lod_scale)
             } else {
-                terrain_density(surface_r - r)
+                terrain_density((surface_r - r) / lod_scale)
             };
 
             let idx = a * cs + b;
@@ -788,5 +798,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// At LOD 4 (lod_scale=16), the density gradient must span multiple metres
+    /// so that Surface Nets can detect the surface direction across 16 m voxels.
+    /// Without LOD scaling the density would saturate to 0.0 or 1.0 for any
+    /// voxel > 1 m from the surface, making the SDF binary and causing
+    /// Minecraft-style block geometry.  With the fix, voxels near the surface
+    /// must have intermediate densities (strictly between 0 and 1).
+    #[test]
+    fn high_lod_surface_voxels_have_intermediate_density() {
+        let (tgen, cfg) = small_planet_gen();
+        let fce_lod4 = CubeSphereCoord::face_chunks_per_edge_lod(cfg.mean_radius, 4);
+        let coord = CubeSphereCoord {
+            face: CubeFace::PosX,
+            u: fce_lod4 as i32 / 2,
+            v: fce_lod4 as i32 / 2,
+            layer: 0,
+            lod: 4,
+        };
+        let data = generate_v2_voxels(coord, cfg.mean_radius, fce_lod4, &tgen);
+
+        // Must be Mixed (surface-crossing) to have any intermediate densities.
+        let CachedVoxels::Mixed(ref voxels) = data.voxels else {
+            // If not Mixed the test is inconclusive — surface didn't cross this chunk.
+            return;
+        };
+
+        // At least some surface-adjacent voxels must have density strictly
+        // between 0 and 1 (the LOD-scaled gradient is visible).
+        let has_gradient = voxels.iter().any(|v| v.density > 0.01 && v.density < 0.99);
+        assert!(
+            has_gradient,
+            "LOD-4 surface chunk must have voxels with intermediate density \
+             (0 < density < 1); binary-only densities mean the gradient is too \
+             narrow and surface nets will produce blocky geometry"
+        );
     }
 }
