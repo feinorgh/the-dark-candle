@@ -512,10 +512,12 @@ impl Plugin for LightingPlugin {
         // Black clear color — the Atmosphere shader renders the sky over it.
         app.insert_resource(ClearColor(Color::BLACK));
 
-        // Initialize OrbitalState so rotation corresponds to TimeOfDay default (10:00).
-        let initial_rotation = 10.0 / 24.0 * std::f64::consts::TAU;
+        // Start at solar noon (rotation_angle = π) so the player always spawns
+        // in full daylight.  Time scale 6× gives ~30 min of real-time before
+        // dusk; press `]` to speed up or `[` to slow down, `\` resets to 72×.
         app.insert_resource(orbital::OrbitalState {
-            rotation_angle: initial_rotation,
+            rotation_angle: std::f64::consts::PI,
+            time_scale: 6.0,
             ..Default::default()
         });
 
