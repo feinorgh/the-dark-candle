@@ -22,14 +22,10 @@ use crate::{
         factions::{Faction, FactionId, FactionRegistry, FactionRelation},
         relationships::{CreatureId, Relationship, Relationships},
     },
-    world::{
-        chunk::{Chunk, ChunkCoord},
-        chunk_manager::ChunkMap,
-        voxel::MaterialId,
-    },
+    world::voxel::MaterialId,
 };
 
-use super::types::{LEGACY_SAVE_PATH, SAVE_VERSION, SaveId, SaveSlot, decode_rle};
+use super::types::{LEGACY_SAVE_PATH, SAVE_VERSION, SaveId, SaveSlot};
 
 /// Migrate a save from an older version to the current format.
 /// Returns true if migration was applied, false if already current.
@@ -110,11 +106,9 @@ pub fn load_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     load_request: Option<Res<LoadRequest>>,
-    mut chunk_map: Option<ResMut<ChunkMap>>,
     mut faction_registry: ResMut<FactionRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    chunk_query: Query<Entity, With<Chunk>>,
     creature_query: Query<Entity, With<Creature>>,
     item_query: Query<Entity, With<Item>>,
     enemy_query: Query<Entity, With<Enemy>>,
@@ -183,9 +177,6 @@ pub fn load_game(
     );
 
     // --- Despawn all persistent entities ---------------------------------
-    for e in &chunk_query {
-        commands.entity(e).despawn();
-    }
     for e in &creature_query {
         commands.entity(e).despawn();
     }
@@ -195,40 +186,12 @@ pub fn load_game(
     for e in &enemy_query {
         commands.entity(e).despawn();
     }
-    if let Some(ref mut cm) = chunk_map {
-        cm.clear();
-    }
     *faction_registry = FactionRegistry::default();
 
     // --- Restore terrain generator ---------------------------------------
     // Planetary mode does not restore terrain from save data; the
     // PlanetaryTerrainSampler is rebuilt on startup from PlanetaryData.
     let _ = &save.terrain;
-
-    // --- Restore chunks (only when V1 ChunkMap is present) ----------------
-    if let Some(ref mut cm) = chunk_map {
-        for cs in &save.chunks {
-            let coord = ChunkCoord::new(cs.coord[0], cs.coord[1], cs.coord[2]);
-            let voxels = decode_rle(&cs.runs);
-
-            let mut chunk = Chunk::new_empty(coord);
-            {
-                let dst = chunk.voxels_mut();
-                let len = dst.len().min(voxels.len());
-                dst[..len].copy_from_slice(&voxels[..len]);
-            }
-
-            let origin = coord.world_origin();
-            let entity = commands
-                .spawn((
-                    chunk,
-                    coord,
-                    Transform::from_xyz(origin.x as f32, origin.y as f32, origin.z as f32),
-                ))
-                .id();
-            cm.insert(coord, entity);
-        }
-    }
 
     // --- Restore creatures (phase 1: spawn, record SaveId → Entity) ------
     let mut save_id_to_entity: HashMap<u64, Entity> = HashMap::new();

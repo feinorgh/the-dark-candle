@@ -10,7 +10,6 @@ use crate::data::MaterialRegistry;
 use crate::game_state::GameState;
 use crate::hud::Player;
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
 pub struct InteractionPlugin;
@@ -67,7 +66,6 @@ fn world_raycast(
     origin: Vec3,
     dir: Vec3,
     max_dist: f32,
-    chunk_map: &ChunkMap,
     chunks: &Query<&Chunk>,
 ) -> Option<WorldHit> {
     if dir.length_squared() < 1e-10 {
@@ -140,10 +138,7 @@ fn world_raycast(
 
         // Look up this voxel in loaded chunks
         let cc = ChunkCoord::from_voxel_pos(ix, iy, iz);
-        let Some(entity) = chunk_map.get(&cc) else {
-            continue;
-        };
-        let Ok(chunk) = chunks.get(entity) else {
+        let Some(chunk) = chunks.iter().find(|c| c.coord == cc) else {
             continue;
         };
 
@@ -188,7 +183,6 @@ pub struct BlockTarget {
 
 fn update_block_target(
     cam_q: Query<&Transform, With<Player>>,
-    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     mut target: ResMut<BlockTarget>,
 ) {
@@ -196,14 +190,10 @@ fn update_block_target(
         target.hit = None;
         return;
     };
-    let Some(chunk_map) = chunk_map else {
-        target.hit = None;
-        return;
-    };
 
     let origin = transform.translation;
     let dir = transform.forward().as_vec3();
-    target.hit = world_raycast(origin, dir, REACH, &chunk_map, &chunks);
+    target.hit = world_raycast(origin, dir, REACH, &chunks);
 }
 
 // ---------------------------------------------------------------------------
@@ -224,17 +214,12 @@ fn break_block(
     mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
     target: Res<BlockTarget>,
-    chunk_map: Option<Res<ChunkMap>>,
     mut chunks: Query<&mut Chunk>,
     mut progress: Local<BreakProgress>,
 ) {
     let Some(hit) = &target.hit else {
         progress.target = None;
         progress.elapsed = 0.0;
-        return;
-    };
-
-    let Some(chunk_map) = chunk_map else {
         return;
     };
 
@@ -257,9 +242,7 @@ fn break_block(
     if progress.elapsed >= BREAK_TIME {
         // Break the block
         let cc = ChunkCoord::from_voxel_pos(hit.voxel_x, hit.voxel_y, hit.voxel_z);
-        if let Some(entity) = chunk_map.get(&cc)
-            && let Ok(mut chunk) = chunks.get_mut(entity)
-        {
+        if let Some(mut chunk) = chunks.iter_mut().find(|c| c.coord == cc) {
             let origin = cc.world_origin();
             let lx = (hit.voxel_x - origin.x) as usize;
             let ly = (hit.voxel_y - origin.y) as usize;
@@ -277,7 +260,6 @@ fn place_block(
     mouse: Res<ButtonInput<MouseButton>>,
     target: Res<BlockTarget>,
     hotbar: Res<Hotbar>,
-    chunk_map: Option<Res<ChunkMap>>,
     mut chunks: Query<&mut Chunk>,
     cam_q: Query<&Transform, With<Player>>,
 ) {
@@ -286,9 +268,6 @@ fn place_block(
     }
 
     let Some(hit) = &target.hit else {
-        return;
-    };
-    let Some(chunk_map) = chunk_map else {
         return;
     };
 
@@ -312,9 +291,7 @@ fn place_block(
     }
 
     let cc = ChunkCoord::from_voxel_pos(px, py, pz);
-    if let Some(entity) = chunk_map.get(&cc)
-        && let Ok(mut chunk) = chunks.get_mut(entity)
-    {
+    if let Some(mut chunk) = chunks.iter_mut().find(|c| c.coord == cc) {
         let origin = cc.world_origin();
         let lx = (px - origin.x) as usize;
         let ly = (py - origin.y) as usize;

@@ -11,7 +11,6 @@ use super::step;
 use super::types::{AccumulationGrid, ParticleBuffer};
 use crate::data::FluidConfig;
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
 /// Water boiling point (K).
@@ -87,7 +86,6 @@ fn init_particle_buffers(chunks: Query<&Chunk, Added<Chunk>>, mut state: ResMut<
 #[allow(clippy::too_many_arguments)]
 fn flip_particle_step(
     mut chunks: Query<&mut Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     config: Res<FlipConfigRes>,
     mut state: ResMut<ParticleState>,
     mut tick: ResMut<FlipTick>,
@@ -104,11 +102,6 @@ fn flip_particle_step(
         return;
     }
 
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
-
     let n_substeps = config.0.flip_substeps.max(1);
 
     let coords: Vec<ChunkCoord> = state.buffers.keys().cloned().collect();
@@ -121,24 +114,27 @@ fn flip_particle_step(
         )
     });
 
-    // Destructure to allow simultaneous mutable borrows of both HashMap fields.
     let ParticleState {
         buffers,
         accumulations,
     } = &mut *state;
 
     for coord in coords {
-        // Physics LOD: skip chunks outside the active radius.
         if let Some(ref cam) = camera_chunk
             && !lod_config.is_active(&coord, cam)
         {
             continue;
         }
 
-        let Some(entity) = chunk_map.get(&coord) else {
-            continue;
-        };
-        let Ok(mut chunk) = chunks.get_mut(entity) else {
+        // Find the chunk entity by iterating directly (no ChunkMap).
+        let mut found_chunk = None;
+        for chunk in chunks.iter_mut() {
+            if chunk.coord == coord {
+                found_chunk = Some(chunk);
+                break;
+            }
+        }
+        let Some(mut chunk) = found_chunk else {
             continue;
         };
 
@@ -162,30 +158,20 @@ fn flip_particle_step(
 }
 
 /// Remove ParticleBuffers that are empty and have no emission sources.
-fn cleanup_empty_buffers(
-    chunks: Query<&Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
-    mut state: ResMut<ParticleState>,
-) {
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
-
+fn cleanup_empty_buffers(chunks: Query<&Chunk>, mut state: ResMut<ParticleState>) {
     state.buffers.retain(|coord, buf| {
         if !buf.is_empty() {
             return true;
         }
         // Check if the chunk still has emitting surfaces.
-        if let Some(entity) = chunk_map.get(coord)
-            && let Ok(chunk) = chunks.get(entity)
-        {
-            return has_emitting_surfaces(chunk);
+        for chunk in chunks.iter() {
+            if chunk.coord == *coord {
+                return has_emitting_surfaces(chunk);
+            }
         }
         false
     });
 
-    // Collect coords to remove, then remove them (avoids simultaneous borrow).
     let keep: Vec<ChunkCoord> = state.buffers.keys().cloned().collect();
     state.accumulations.retain(|coord, _| keep.contains(coord));
 }

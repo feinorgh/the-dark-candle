@@ -9,7 +9,6 @@ use crate::diagnostics::system_timings::{ChunkStats, SystemTimings};
 use crate::lighting::TimeOfDay;
 use crate::lighting::orbital::OrbitalState;
 use crate::world::chunk::ChunkCoord;
-use crate::world::chunk_manager::{ChunkLoadRadius, ChunkMap};
 
 /// Tracks per-frame timing using an exponential moving average (EMA) and
 /// reports how much of the per-frame budget is consumed.
@@ -90,8 +89,6 @@ pub fn toggle_overlay(
 pub fn update_overlay_text(
     budget: Res<FrameBudget>,
     cam_q: Query<(&crate::floating_origin::WorldPosition, &FpsCamera)>,
-    chunk_map: Option<Res<ChunkMap>>,
-    load_radius: Option<Res<ChunkLoadRadius>>,
     orbital: Option<Res<OrbitalState>>,
     tod: Option<Res<TimeOfDay>>,
     timings: Option<Res<SystemTimings>>,
@@ -165,8 +162,8 @@ pub fn update_overlay_text(
         }
 
         // Line 5: Chunk pipeline stats
-        let chunks = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
-        let view = load_radius.as_ref().map(|r| r.horizontal).unwrap_or(0);
+        let chunks = v2_stats.as_ref().map(|s| s.loaded).unwrap_or(0);
+        let view = 0i32;
         let meshing = chunk_stats
             .as_ref()
             .map(|s| s.meshing_in_flight)

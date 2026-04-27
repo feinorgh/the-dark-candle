@@ -27,7 +27,6 @@ use bevy::prelude::*;
 
 use crate::camera::FpsCamera;
 use crate::world::chunk::{CHUNK_SIZE, Chunk};
-use crate::world::chunk_manager::ChunkMap;
 
 use state_dump::{GridSummary, MaterialStats, RangeStats, StateDump};
 
@@ -113,7 +112,6 @@ fn ecs_dump_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     chunks: Query<&Chunk>,
     camera_q: Query<(&crate::floating_origin::WorldPosition, &FpsCamera)>,
-    chunk_map: Option<Res<ChunkMap>>,
 ) {
     if !keyboard.just_pressed(KeyCode::F11) {
         return;
@@ -198,7 +196,7 @@ fn ecs_dump_system(
     // Sort chunks by coordinate for deterministic output
     chunk_snapshots.sort_by_key(|c| (c.coord[0], c.coord[1], c.coord[2]));
 
-    let loaded_count = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
+    let loaded_count = 0usize;
 
     let dump = EcsDump {
         loaded_chunk_count: loaded_count,

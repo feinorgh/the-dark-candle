@@ -11,7 +11,6 @@ use crate::game_state::GameState;
 use crate::hud::Player;
 use crate::interaction::BlockTarget;
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
 pub struct AudioPlugin;
@@ -115,14 +114,12 @@ impl Default for FootstepTimer {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn footstep_system(
     mut commands: Commands,
     time: Res<Time>,
     audio: Res<GameAudio>,
     key: Res<ButtonInput<KeyCode>>,
     cam_q: Query<(&FpsCamera, &Transform), With<Player>>,
-    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     mut timer: ResMut<FootstepTimer>,
 ) {
@@ -162,8 +159,7 @@ fn footstep_system(
         timer.elapsed -= interval;
 
         // Determine ground material for sound selection
-        let handle =
-            ground_footstep_sound(transform.translation, &audio, chunk_map.as_deref(), &chunks);
+        let handle = ground_footstep_sound(transform.translation, &audio, &chunks);
 
         if let Some(h) = handle {
             commands.spawn((
@@ -182,20 +178,15 @@ fn footstep_system(
 fn ground_footstep_sound(
     pos: Vec3,
     audio: &GameAudio,
-    chunk_map: Option<&ChunkMap>,
     chunks: &Query<&Chunk>,
 ) -> Option<Handle<AudioSource>> {
-    let Some(chunk_map) = chunk_map else {
-        return audio.footstep_stone.clone();
-    };
-
     let feet_y = (pos.y - 1.7 - 0.1).floor() as i32; // just below feet
     let vx = pos.x.floor() as i32;
     let vz = pos.z.floor() as i32;
 
     let cc = ChunkCoord::from_voxel_pos(vx, feet_y, vz);
-    let entity = chunk_map.get(&cc)?;
-    let chunk = chunks.get(entity).ok()?;
+
+    let chunk = chunks.iter().find(|c| c.coord == cc)?;
 
     let origin = cc.world_origin();
     let lx = (vx - origin.x) as usize;

@@ -12,7 +12,6 @@ use crate::lighting::TimeOfDay;
 use crate::world::chunk::CHUNK_SIZE;
 use crate::world::chunk::Chunk;
 use crate::world::chunk::ChunkCoord;
-use crate::world::chunk_manager::ChunkMap;
 
 /// Marker component identifying the player entity.
 #[derive(Component, Debug)]
@@ -213,7 +212,6 @@ fn update_health_text(
 
 fn update_temperature(
     player_q: Query<&Transform, With<Player>>,
-    chunk_map: Option<Res<ChunkMap>>,
     chunks: Query<&Chunk>,
     mut text_q: Query<(&mut Text, &mut TextColor), With<TemperatureText>>,
 ) {
@@ -223,26 +221,21 @@ fn update_temperature(
     let Ok((mut text, mut color)) = text_q.single_mut() else {
         return;
     };
-    let Some(chunk_map) = chunk_map else {
-        return;
-    };
 
     let pos = transform.translation;
     let cc = ChunkCoord::from_voxel_pos(pos.x as i32, pos.y as i32, pos.z as i32);
 
-    let temp_k = if let Some(entity) = chunk_map.get(&cc) {
-        if let Ok(chunk) = chunks.get(entity) {
+    let temp_k = chunks
+        .iter()
+        .find(|c| c.coord == cc)
+        .map(|chunk| {
             let origin = cc.world_origin();
             let lx = ((pos.x as i32 - origin.x) as usize).min(CHUNK_SIZE - 1);
             let ly = ((pos.y as i32 - origin.y) as usize).min(CHUNK_SIZE - 1);
             let lz = ((pos.z as i32 - origin.z) as usize).min(CHUNK_SIZE - 1);
             chunk.get(lx, ly, lz).temperature
-        } else {
-            288.15
-        }
-    } else {
-        288.15
-    };
+        })
+        .unwrap_or(288.15);
 
     let temp_c = temp_k - 273.15;
     **text = format!("{:.0}\u{00B0}C", temp_c);

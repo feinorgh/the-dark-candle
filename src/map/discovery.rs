@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use crate::planet::BiomeType;
 use crate::world::chunk::ChunkCoord;
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::planetary_sampler::ChunkBiomeData;
 
 /// Metadata for a single discovered chunk column.
@@ -26,23 +25,10 @@ pub struct DiscoveredColumns {
 }
 
 /// System: record all chunk columns currently in the world.
-///
-/// Runs a full scan on the first invocation (catching chunks generated during
-/// the Loading state), then only rescans when `ChunkMap` changes.
 pub fn track_discoveries(
-    chunk_map: Option<Res<ChunkMap>>,
     biome_q: Query<(&ChunkCoord, Option<&ChunkBiomeData>)>,
     mut discovered: ResMut<DiscoveredColumns>,
-    mut initial_scan_done: Local<bool>,
 ) {
-    let Some(chunk_map) = chunk_map else {
-        return;
-    };
-    if *initial_scan_done && !chunk_map.is_changed() {
-        return;
-    }
-    *initial_scan_done = true;
-
     for (coord, biome_data) in &biome_q {
         let key = [coord.x, coord.z];
         // Only record if not already discovered, or update surface_y if higher.

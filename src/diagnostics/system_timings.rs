@@ -6,8 +6,6 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use crate::world::chunk_manager::ChunkMap;
-
 /// EMA smoothing factor matching [`super::frame_budget::FrameBudget`].
 const TIMING_SMOOTHING: f32 = 0.1;
 
@@ -103,13 +101,11 @@ pub struct ChunkStats {
 /// reads the chunk map size, and checks pending terrain generation count.
 pub fn update_chunk_stats(
     mut stats: ResMut<ChunkStats>,
-    chunk_map: Option<Res<ChunkMap>>,
-    pending: Option<Res<crate::world::chunk_manager::PendingChunks>>,
-    mesh_task_q: Query<(), With<crate::world::meshing::MeshTask>>,
+    mesh_task_q: Query<(), With<crate::world::v2::chunk_manager::V2MeshTask>>,
 ) {
-    stats.loaded = chunk_map.as_ref().map(|m| m.len()).unwrap_or(0);
+    stats.loaded = 0;
     stats.meshing_in_flight = mesh_task_q.iter().count();
-    stats.generating = pending.as_ref().map(|p| p.len()).unwrap_or(0);
+    stats.generating = 0;
 }
 
 // -------------------------------------------------------------------------

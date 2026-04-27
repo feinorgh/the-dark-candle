@@ -1,9 +1,7 @@
 // Headless Bevy ECS integration tests for physics behaviour.
 //
 // Each test spins up a minimal Bevy `App` with only the physics plugin —
-// no window, no renderer, no asset server. An empty `ChunkMap` is inserted so
-// the gravity and collision systems have the resource they expect, but find no
-// terrain, which lets entities fall freely.
+// no window, no renderer, no asset server.
 
 use std::time::Duration;
 
@@ -12,7 +10,6 @@ use bevy::time::TimeUpdateStrategy;
 
 use the_dark_candle::physics::PhysicsPlugin;
 use the_dark_candle::physics::gravity::{PhysicsBody, VELOCITY_SAFETY_CAP};
-use the_dark_candle::world::chunk_manager::ChunkMap;
 use the_dark_candle::world::planet::PlanetConfig;
 
 /// Build a minimal physics app with no display and deterministic time steps.
@@ -21,7 +18,6 @@ fn physics_app() -> App {
     app.add_plugins(MinimalPlugins)
         .add_plugins(AssetPlugin::default())
         .add_plugins(PhysicsPlugin)
-        .init_resource::<ChunkMap>()
         .insert_resource(PlanetConfig::default())
         // Each call to app.update() advances virtual time by exactly 1/60 s.
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(

@@ -8,12 +8,10 @@ use std::collections::HashMap;
 
 use crate::data::FluidConfig;
 use crate::world::chunk::{Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::voxel::MaterialId;
 
 use super::injection;
 use super::step;
-use super::sync;
 use super::types::FluidGrid;
 
 /// Resource: maps chunk coordinates to their fluid simulation state.
@@ -107,8 +105,6 @@ fn init_fluid_grids(chunks: Query<&Chunk, Added<Chunk>>, mut fluid_state: ResMut
 /// Run one AMR fluid simulation step for all active fluid chunks.
 #[allow(clippy::too_many_arguments)]
 fn amr_fluid_step(
-    mut chunks: Query<&mut Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     config: Res<FluidConfigRes>,
     mut fluid_state: ResMut<FluidState>,
     mut tick: ResMut<FluidTick>,
@@ -120,11 +116,6 @@ fn amr_fluid_step(
     if dt <= 0.0 {
         return;
     }
-
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
 
     let coords: Vec<ChunkCoord> = fluid_state.grids.keys().cloned().collect();
 
@@ -148,24 +139,7 @@ fn amr_fluid_step(
             continue;
         };
 
-        // Sync external changes (FLIP deposits, chemistry state transitions) into
-        // the FluidGrid before each step. Uses a read-only borrow that drops
-        // before the mutable sync_to_chunk borrow at the end of the iteration.
-        {
-            if let Some(entity) = chunk_map.get(&coord)
-                && let Ok(chunk) = chunks.get(entity)
-            {
-                sync::sync_from_chunk(chunk, grid, None);
-            }
-        }
-
         step::fluid_step(grid, None, &config.0, dt);
-
-        if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(mut chunk) = chunks.get_mut(entity)
-        {
-            sync::sync_to_chunk(grid, &mut chunk);
-        }
     }
 
     tick.0 += 1;

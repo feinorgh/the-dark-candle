@@ -8,9 +8,6 @@
 
 use bevy::prelude::*;
 
-use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
-
 /// Axis-aligned bounding box collider, centered on the entity's Transform.
 #[derive(Component, Debug, Clone)]
 pub struct Collider {
@@ -42,108 +39,16 @@ impl Collider {
     }
 }
 
-/// Check whether any solid voxel overlaps the given AABB.
-pub fn aabb_intersects_terrain(
-    aabb_min: Vec3,
-    aabb_max: Vec3,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&Chunk>,
-) -> bool {
-    let cs = CHUNK_SIZE as i32;
-
-    // Iterate over all voxel positions the AABB covers
-    let vx_min = aabb_min.x.floor() as i32;
-    let vy_min = aabb_min.y.floor() as i32;
-    let vz_min = aabb_min.z.floor() as i32;
-    let vx_max = aabb_max.x.ceil() as i32;
-    let vy_max = aabb_max.y.ceil() as i32;
-    let vz_max = aabb_max.z.ceil() as i32;
-
-    for vy in vy_min..vy_max {
-        for vz in vz_min..vz_max {
-            for vx in vx_min..vx_max {
-                let coord =
-                    ChunkCoord::new(vx.div_euclid(cs), vy.div_euclid(cs), vz.div_euclid(cs));
-
-                let Some(entity) = chunk_map.get(&coord) else {
-                    continue;
-                };
-                let Ok(chunk) = chunks.get(entity) else {
-                    continue;
-                };
-
-                let lx = vx.rem_euclid(cs) as usize;
-                let ly = vy.rem_euclid(cs) as usize;
-                let lz = vz.rem_euclid(cs) as usize;
-
-                if chunk.get(lx, ly, lz).is_solid() {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
 /// Resolve collisions for entities with Collider + PhysicsBody.
 /// Uses per-axis resolution: tries X, then Y, then Z independently.
 /// This prevents entities from passing through terrain while allowing
 /// sliding along surfaces.
 pub fn resolve_collisions(
-    chunk_map: Option<Res<ChunkMap>>,
-    chunks: Query<&Chunk>,
-    mut bodies: Query<(&Collider, &mut super::gravity::PhysicsBody, &mut Transform)>,
+    bodies: Query<(&Collider, &mut super::gravity::PhysicsBody, &mut Transform)>,
 ) {
-    let Some(chunk_map) = chunk_map else {
-        return;
-    };
-    for (collider, mut body, mut transform) in &mut bodies {
-        let pos = transform.translation;
-
-        // Check each axis independently: if moving along that axis causes
-        // a collision, revert that axis and zero the velocity component.
-
-        // X axis
-        let test_pos = Vec3::new(pos.x, pos.y, pos.z);
-        if aabb_intersects_terrain(
-            collider.min_at(test_pos),
-            collider.max_at(test_pos),
-            &chunk_map,
-            &chunks,
-        ) {
-            // Nudge out of collision along X
-            let prev_x = pos.x - body.velocity.x * 0.016; // approximate
-            transform.translation.x = prev_x;
-            body.velocity.x = 0.0;
-        }
-
-        // Z axis
-        let test_pos = transform.translation;
-        if aabb_intersects_terrain(
-            collider.min_at(test_pos),
-            collider.max_at(test_pos),
-            &chunk_map,
-            &chunks,
-        ) {
-            let prev_z = test_pos.z - body.velocity.z * 0.016;
-            transform.translation.z = prev_z;
-            body.velocity.z = 0.0;
-        }
-
-        // Y axis (gravity already handles ground; this catches ceilings)
-        let test_pos = transform.translation;
-        if aabb_intersects_terrain(
-            collider.min_at(test_pos),
-            collider.max_at(test_pos),
-            &chunk_map,
-            &chunks,
-        ) && body.velocity.y > 0.0
-        {
-            body.velocity.y = 0.0;
-            // Let gravity system handle downward resolution
-        }
-    }
+    // V1 ChunkMap-based terrain collision has been removed.
+    // Collision against V2 cubed-sphere terrain is handled separately.
+    let _ = &bodies;
 }
 
 /// Check whether any solid voxel overlaps the given AABB using an octree.

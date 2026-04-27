@@ -31,7 +31,6 @@ use the_dark_candle::physics::constants::GRAVITY;
 use the_dark_candle::physics::gravity::{DragProfile, Mass, PhysicsBody};
 use the_dark_candle::physics::rigid_body::{AngularVelocity, MomentOfInertia, Torque};
 use the_dark_candle::physics::shapes::{CollisionShape, PhysicsMaterial};
-use the_dark_candle::world::chunk_manager::ChunkMap;
 use the_dark_candle::world::planet::PlanetConfig;
 
 // ---------------------------------------------------------------------------
@@ -270,7 +269,6 @@ fn three_bouncing_balls() {
     app.add_plugins(MinimalPlugins)
         .add_plugins(AssetPlugin::default())
         .add_plugins(PhysicsPlugin)
-        .init_resource::<ChunkMap>()
         .insert_resource(PlanetConfig::default())
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / 60.0,

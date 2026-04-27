@@ -19,7 +19,6 @@ use serde::Deserialize;
 
 use crate::physics::lbm_gas::plugin::LbmState;
 use crate::world::chunk::{CHUNK_SIZE, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 
 use super::injury::BodyHealth;
 use super::locomotion::Skeleton;
@@ -78,11 +77,10 @@ pub struct TreeSkeletonHandle(pub Handle<TreeSkeletonData>);
 /// this system is silently skipped.
 pub fn apply_wind_to_plants(
     lbm_state: Option<Res<LbmState>>,
-    chunk_map: Option<Res<ChunkMap>>,
     tree_skeleton_assets: Res<Assets<TreeSkeletonData>>,
     mut query: Query<(&mut Skeleton, &TreeSkeletonHandle, &Transform)>,
 ) {
-    let (Some(lbm), Some(_chunk_map)) = (lbm_state, chunk_map) else {
+    let Some(lbm) = lbm_state else {
         return;
     };
 

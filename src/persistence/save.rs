@@ -20,13 +20,13 @@ use crate::{
     physics::{collision::Collider, gravity::PhysicsBody},
     procgen::{creatures::Creature, items::Item},
     social::{factions::FactionRegistry, relationships::Relationships},
-    world::{chunk::Chunk, chunk_manager::TerrainGeneratorRes},
+    world::chunk_manager::TerrainGeneratorRes,
 };
 
 use super::types::{
     ChunkSave, ColliderSave, CreatureSave, EnemySave, FactionRegistrySave, FactionRelationEntry,
     FactionSave, ItemSave, PhysicsBodySave, PlayerSave, RelationshipEntry, SAVE_DIR, SAVE_VERSION,
-    SaveGame, SaveId, SaveSlot, TerrainConfigSave, encode_rle,
+    SaveGame, SaveId, SaveSlot, TerrainConfigSave,
 };
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,6 @@ pub fn save_game(
     save_request: Option<Res<SaveRequest>>,
     terrain_gen: Res<TerrainGeneratorRes>,
     faction_registry: Res<FactionRegistry>,
-    chunk_query: Query<(&Chunk, &Transform)>,
     creature_query: CreatureQuery,
     item_query: ItemQuery,
     enemy_query: Query<(Entity, &SaveId, &Transform, &Enemy)>,
@@ -146,13 +145,7 @@ pub fn save_game(
     };
 
     // --- Chunks ----------------------------------------------------------
-    let chunks: Vec<ChunkSave> = chunk_query
-        .iter()
-        .map(|(chunk, _transform)| ChunkSave {
-            coord: [chunk.coord.x, chunk.coord.y, chunk.coord.z],
-            runs: encode_rle(chunk.voxels()),
-        })
-        .collect();
+    let chunks: Vec<ChunkSave> = Vec::new();
 
     // --- Build entity-bits → SaveId lookup (for relationship remapping) --
     let entity_to_save_id: HashMap<u64, u64> = creature_query

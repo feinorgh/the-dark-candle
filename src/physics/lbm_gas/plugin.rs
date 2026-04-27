@@ -12,7 +12,6 @@ use crate::lighting::{SolarInsolation, TimeOfDay};
 use crate::physics::atmosphere::AtmosphereConfig;
 use crate::physics::flip_pic::plugin::ParticleState;
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::planet::PlanetConfig;
 use crate::world::voxel::MaterialId;
 
@@ -129,7 +128,6 @@ impl Plugin for LbmGasPlugin {
 #[allow(clippy::too_many_arguments)]
 fn apply_solar_heating(
     mut chunks: Query<&mut Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     time_of_day: Option<Res<TimeOfDay>>,
     atmosphere_config: Option<Res<AtmosphereConfig>>,
     planet_config: Option<Res<PlanetConfig>>,
@@ -140,22 +138,13 @@ fn apply_solar_heating(
     camera_q: Query<&Transform, With<Camera3d>>,
 ) {
     // Early return if any required resource is missing
-    let (
-        Some(chunk_map),
-        Some(_time_of_day),
-        Some(atmosphere),
-        Some(_planet),
-        Some(insolation),
-        Some(registry),
-    ) = (
-        chunk_map.as_ref(),
+    let (Some(_time_of_day), Some(atmosphere), Some(_planet), Some(insolation), Some(registry)) = (
         time_of_day.as_ref(),
         atmosphere_config.as_ref(),
         planet_config.as_ref(),
         solar_insolation.as_ref(),
         registry.as_ref(),
-    )
-    else {
+    ) else {
         return;
     };
 
@@ -181,20 +170,16 @@ fn apply_solar_heating(
         )
     });
 
-    // For each chunk with voxels, find surface voxels and heat them
-    for coord in chunk_map.coords() {
+    // Apply solar heating to all loaded chunk entities directly.
+    for mut chunk in chunks.iter_mut() {
+        let coord = chunk.coord;
+
         // Physics LOD: skip distant chunks for solar heating.
         if let Some(ref cam) = camera_chunk
-            && !lod_config.is_active(coord, cam)
+            && !lod_config.is_active(&coord, cam)
         {
             continue;
         }
-        let Some(entity) = chunk_map.get(coord) else {
-            continue;
-        };
-        let Ok(mut chunk) = chunks.get_mut(entity) else {
-            continue;
-        };
 
         // Process surface voxels: scan from top down, find first non-air
         for x in 0..CHUNK_SIZE {
@@ -213,7 +198,6 @@ fn apply_solar_heating(
                 };
 
                 // Check if there's air above this surface voxel
-                // (either y+1 is within chunk and is air, or y+1 is outside chunk = exposed)
                 let exposed = if sy + 1 < CHUNK_SIZE {
                     chunk.get(x, sy + 1, z).is_air()
                 } else {
@@ -238,7 +222,6 @@ fn apply_solar_heating(
                 let q_absorbed = solar_constant * insolation_factor * (1.0 - albedo);
 
                 // Temperature change for surface voxel: ΔT = Q × dt / (ρ × Cₚ × V)
-                // where V = 1 m³
                 if density > 0.0 && specific_heat > 0.0 {
                     let delta_t_surface = q_absorbed * dt / (density * specific_heat);
                     let voxel = chunk.get_mut(x, sy, z);
@@ -248,13 +231,11 @@ fn apply_solar_heating(
                     if sy + 1 < CHUNK_SIZE {
                         let air_voxel = chunk.get_mut(x, sy + 1, z);
                         if air_voxel.is_air() {
-                            // Air gets a fraction of the surface heating (thermal contact)
                             let air_mat = registry.get(air_voxel.material);
                             if let Some(air_data) = air_mat {
                                 let air_density = air_data.density;
                                 let air_cp = air_data.specific_heat_capacity;
                                 if air_density > 0.0 && air_cp > 0.0 {
-                                    // Apply ~10% of surface heating to adjacent air
                                     let delta_t_air =
                                         0.1 * q_absorbed * dt / (air_density * air_cp);
                                     air_voxel.temperature += delta_t_air;
@@ -291,7 +272,6 @@ fn init_lbm_grids(chunks: Query<&Chunk, Added<Chunk>>, mut lbm_state: ResMut<Lbm
 #[allow(clippy::too_many_arguments)]
 fn lbm_gas_step(
     mut chunks: Query<&mut Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     config: Res<LbmConfigRes>,
     mut lbm_state: ResMut<LbmState>,
     mut tick: ResMut<LbmTick>,
@@ -310,13 +290,7 @@ fn lbm_gas_step(
         return;
     }
 
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
-
     // Gravity in lattice units (small — one LBM step may be multiple seconds)
-    // Using a small value since the exact scaling depends on dt_lattice
     let gravity_lattice = [0.0, -0.001, 0.0];
     let rho_ambient = 1.0;
 
@@ -325,16 +299,12 @@ fn lbm_gas_step(
         (atmosphere_config.as_deref(), planet_config.as_deref())
     {
         if atm_cfg.coriolis_enabled {
-            // Planetary rotation vector: omega_physical = rotation_rate * rotation_axis
             let omega_physical = [
                 (planet_cfg.rotation_rate * planet_cfg.rotation_axis[0]) as f32,
                 (planet_cfg.rotation_rate * planet_cfg.rotation_axis[1]) as f32,
                 (planet_cfg.rotation_rate * planet_cfg.rotation_axis[2]) as f32,
             ];
 
-            // Convert to lattice units using same scaling as gravity
-            // gravity_lattice[1] = -0.001 corresponds to g = 9.80665 m/s²
-            // So lattice_scale = 0.001 / 9.80665 ≈ 1.02e-4
             const GRAVITY_MAGNITUDE: f32 = 9.80665;
             let lattice_scale = 0.001 / GRAVITY_MAGNITUDE;
 
@@ -361,12 +331,9 @@ fn lbm_gas_step(
         )
     });
 
-    // Pre-allocate a scratch grid for streaming double-buffer (avoids
-    // allocating ~2.8 MB per step per chunk).
     let mut scratch = LbmGrid::new_empty(crate::world::chunk::CHUNK_SIZE);
 
     for coord in coords {
-        // Physics LOD: skip chunks outside the active radius.
         if let Some(ref cam) = camera_chunk
             && !lod_config.is_active(&coord, cam)
         {
@@ -386,10 +353,12 @@ fn lbm_gas_step(
             n_steps,
             Some(&mut scratch),
         );
+    }
 
-        if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(mut chunk) = chunks.get_mut(entity)
-        {
+    // Sync LBM results to any loaded chunk entities (iterates directly).
+    for mut chunk in chunks.iter_mut() {
+        let coord = chunk.coord;
+        if let Some(grid) = lbm_state.grids.get(&coord) {
             sync::sync_to_chunk(grid, &mut chunk);
         }
     }
@@ -405,7 +374,6 @@ fn lbm_gas_step(
 #[allow(clippy::too_many_arguments)]
 fn process_moisture(
     mut chunks: Query<&mut Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     mut lbm_state: ResMut<LbmState>,
     atmosphere_config: Option<Res<AtmosphereConfig>>,
     config: Res<LbmConfigRes>,
@@ -421,11 +389,6 @@ fn process_moisture(
         return;
     }
 
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
-
     let atm_config = atmosphere_config.as_deref().cloned().unwrap_or_default();
 
     let coords: Vec<ChunkCoord> = lbm_state.grids.keys().cloned().collect();
@@ -435,35 +398,35 @@ fn process_moisture(
             continue;
         };
 
-        // Extract temperature and pressure arrays from the chunk
-        let (temps, pressures) = if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(chunk) = chunks.get(entity)
-        {
-            extract_chunk_thermodynamics(chunk)
-        } else {
-            // Fallback: use ambient values
-            let size = grid.size();
-            let n = size * size * size;
-            (
-                vec![atm_config.surface_temperature; n],
-                vec![101_325.0_f32; n],
-            )
+        // Extract temperature and pressure arrays from the chunk entity directly.
+        let (temps, pressures) = {
+            let mut found = None;
+            for chunk in chunks.iter() {
+                if chunk.coord == coord {
+                    found = Some(extract_chunk_thermodynamics(chunk));
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| {
+                let size = grid.size();
+                let n = size * size * size;
+                (
+                    vec![atm_config.surface_temperature; n],
+                    vec![101_325.0_f32; n],
+                )
+            })
         };
 
-        // Evaporation: liquid surfaces → moisture in adjacent gas cells
         moisture::evaporate(grid, &temps, &pressures, dt, &atm_config);
-
-        // Condensation + re-evaporation: excess moisture → cloud_lwc, latent heat
         let temp_deltas = moisture::condense(grid, &temps, &pressures, dt);
 
-        // Apply latent heat feedback to voxel temperatures
-        if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(mut chunk) = chunks.get_mut(entity)
-        {
-            apply_latent_heat(&mut chunk, grid, &temp_deltas);
+        for mut chunk in chunks.iter_mut() {
+            if chunk.coord == coord {
+                apply_latent_heat(&mut chunk, grid, &temp_deltas);
+                break;
+            }
         }
 
-        // Update cloud field for rendering
         let lwc_data: Vec<f32> = grid.cells().iter().map(|c| c.cloud_lwc).collect();
         if lwc_data.iter().any(|&v| v > 1e-8) {
             cloud_field.chunks.insert(coord, lwc_data);
@@ -511,7 +474,6 @@ fn apply_latent_heat(chunk: &mut Chunk, grid: &LbmGrid, temp_deltas: &[f32]) {
 #[allow(clippy::too_many_arguments)]
 fn emit_precipitation(
     chunks: Query<&Chunk>,
-    chunk_map: Option<Res<ChunkMap>>,
     mut lbm_state: ResMut<LbmState>,
     mut particle_state: ResMut<ParticleState>,
     atmosphere_config: Option<Res<AtmosphereConfig>>,
@@ -528,11 +490,6 @@ fn emit_precipitation(
         return;
     }
 
-    let chunk_map = match chunk_map {
-        Some(cm) => cm,
-        None => return,
-    };
-
     let atm_config = atmosphere_config.as_deref().cloned().unwrap_or_default();
 
     let coords: Vec<ChunkCoord> = lbm_state.grids.keys().cloned().collect();
@@ -542,41 +499,52 @@ fn emit_precipitation(
             continue;
         };
 
-        // Extract temperatures from chunk
-        let temps = if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(chunk) = chunks.get(entity)
-        {
-            chunk
-                .voxels()
-                .iter()
-                .map(|v| v.temperature)
-                .collect::<Vec<_>>()
-        } else {
-            let n = grid.size() * grid.size() * grid.size();
-            vec![atm_config.surface_temperature; n]
+        // Extract temperatures from chunk entity directly.
+        let temps: Vec<f32> = {
+            let mut found = None;
+            for chunk in chunks.iter() {
+                if chunk.coord == coord {
+                    found = Some(
+                        chunk
+                            .voxels()
+                            .iter()
+                            .map(|v| v.temperature)
+                            .collect::<Vec<_>>(),
+                    );
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| {
+                let n = grid.size() * grid.size() * grid.size();
+                vec![atm_config.surface_temperature; n]
+            })
         };
 
-        // Get or create particle buffer for this chunk
         let buf = particle_state
             .buffers
             .entry(coord)
             .or_insert_with(|| crate::physics::flip_pic::types::ParticleBuffer::new(coord));
 
-        // Emit precipitation particles from cloud cells
         precipitation::precipitate(grid, &temps, &atm_config, &mut buf.particles, dt, tick.0);
 
-        // Apply virga (sub-cloud evaporation) to existing particles
-        let pressures = if let Some(entity) = chunk_map.get(&coord)
-            && let Ok(chunk) = chunks.get(entity)
-        {
-            chunk
-                .voxels()
-                .iter()
-                .map(|v| v.pressure)
-                .collect::<Vec<_>>()
-        } else {
-            let n = grid.size() * grid.size() * grid.size();
-            vec![101_325.0_f32; n]
+        let pressures: Vec<f32> = {
+            let mut found = None;
+            for chunk in chunks.iter() {
+                if chunk.coord == coord {
+                    found = Some(
+                        chunk
+                            .voxels()
+                            .iter()
+                            .map(|v| v.pressure)
+                            .collect::<Vec<_>>(),
+                    );
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| {
+                let n = grid.size() * grid.size() * grid.size();
+                vec![101_325.0_f32; n]
+            })
         };
 
         precipitation::apply_virga(&mut buf.particles, grid, &temps, &pressures, dt);

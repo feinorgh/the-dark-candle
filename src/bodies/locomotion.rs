@@ -12,7 +12,6 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::world::chunk::{CHUNK_SIZE, Chunk, ChunkCoord};
-use crate::world::chunk_manager::ChunkMap;
 use crate::world::raycast;
 
 pub use super::skeleton::Skeleton;
@@ -172,18 +171,13 @@ const FOOT_SEARCH_DEPTH_M: usize = 4;
 ///
 /// Returns `None` if no chunk is loaded at that position or no terrain was found
 /// within `FOOT_SEARCH_DEPTH_M` metres.
-fn find_foot_placement(
-    world_pos: Vec3,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&Chunk>,
-) -> Option<Vec3> {
+fn find_foot_placement(world_pos: Vec3, chunks: &Query<&Chunk>) -> Option<Vec3> {
     let vx = world_pos.x.floor() as i32;
     let vy = world_pos.y.floor() as i32;
     let vz = world_pos.z.floor() as i32;
 
     let chunk_coord = ChunkCoord::from_voxel_pos(vx, vy, vz);
-    let chunk_entity = chunk_map.get(&chunk_coord)?;
-    let chunk = chunks.get(chunk_entity).ok()?;
+    let chunk = chunks.iter().find(|c| c.coord == chunk_coord)?;
 
     let voxels = chunk.voxels();
     let origin = chunk_coord.world_origin();
@@ -235,7 +229,6 @@ fn find_foot_placement(
 /// Should run in `FixedUpdate` after physics integration and before rendering.
 pub fn update_locomotion(
     time: Res<Time>,
-    chunk_map: Option<Res<ChunkMap>>,
     gait_assets: Res<Assets<GaitData>>,
     chunks: Query<&Chunk>,
     mut query: Query<(
@@ -276,9 +269,7 @@ pub fn update_locomotion(
             let name = &skeleton.bone_names[i];
             if name.contains("foot") || name.contains("hoof") || name.contains("paw") {
                 let foot_world = skeleton.bone_transforms[i].translation;
-                if let Some(ref cm) = chunk_map
-                    && let Some(target) = find_foot_placement(foot_world, cm, &chunks)
-                {
+                if let Some(target) = find_foot_placement(foot_world, &chunks) {
                     skeleton.ik_targets[i] = Some(target);
                 }
             }
