@@ -1085,6 +1085,7 @@ pub fn v2_collect_meshes(
         .clone();
 
     let mut collected = 0usize;
+    let mut debug_logged = false;
     for (task_entity, mut task) in &mut task_q {
         if collected >= MAX_MESH_COLLECTS_PER_FRAME {
             break;
@@ -1096,6 +1097,28 @@ pub fn v2_collect_meshes(
 
         commands.entity(task_entity).despawn();
         pending_meshes.pending.remove(&result.coord);
+
+        // DEBUG: log world position of first few meshed chunks vs render origin
+        if !debug_logged && !result.mesh.is_empty() {
+            let coord_fce_dbg =
+                CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, result.coord.lod);
+            let (center_dbg, _, _) = result
+                .coord
+                .world_transform_scaled_f64(mean_radius, coord_fce_dbg);
+            let r_dbg = center_dbg.length();
+            let origin_r = origin.0.length();
+            info!(
+                "CHUNK_DBG coord={:?} world_r={:.1} origin_r={:.1} delta_r={:+.1} \
+                 chunk_world={:.0?} origin={:.0?}",
+                result.coord,
+                r_dbg,
+                origin_r,
+                r_dbg - origin_r,
+                center_dbg.as_vec3(),
+                origin.0.as_vec3(),
+            );
+            debug_logged = true;
+        }
 
         let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, result.coord.lod);
         let (center_f64, rotation, tangent_scale) = result
@@ -1331,17 +1354,18 @@ fn try_inject_gpu_heightmap(
     let gen_arc = tgen.0.clone();
     let pool = AsyncComputeTaskPool::get();
     pool.spawn(async move {
-        use crate::planet::gpu_heightmap::bake_elevation_map;
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
         info!(
-            "GPU heightmap: baking {}×{} elevation map from PlanetaryTerrainSampler…",
+            "GPU heightmap: baking {}×{} elevation+roughness+ocean maps from PlanetaryTerrainSampler…",
             crate::planet::gpu_heightmap::HEIGHTMAP_WIDTH,
             crate::planet::gpu_heightmap::HEIGHTMAP_HEIGHT,
         );
-        let data = bake_elevation_map(&gen_arc.0);
-        compute.set_heightmap(&data);
+        let (elevation, roughness, ocean) = bake_elevation_roughness_ocean(&gen_arc.0);
+        let planet_data_seed = gen_arc.0.planet_data.config.seed;
+        compute.set_heightmap_data(&elevation, &roughness, &ocean, planet_data_seed);
         info!(
-            "GPU heightmap: uploaded {} floats — heightmap mode active",
-            data.len()
+            "GPU heightmap: uploaded elevation+roughness+ocean ({} values each) — heightmap mode active",
+            elevation.len(),
         );
     })
     .detach();

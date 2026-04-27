@@ -265,6 +265,16 @@ fn spawn_camera(
             // point ends up ~90° away from the land cell that was sampled.
             let dir_f64 = crate::planet::detail::lat_lon_to_pos(lat, lon).normalize();
             let spawn_r = surface_r.max(planet.sea_level_radius) + EYE_HEIGHT as f64;
+            info!(
+                "SPAWN_DBG lat={:.2}°N lon={:.2}°E surface_r={:.1} sea_level_r={:.1} \
+                 spawn_r={:.1} dir={:.4?}",
+                lat.to_degrees(),
+                lon.to_degrees(),
+                surface_r,
+                planet.sea_level_radius,
+                spawn_r,
+                dir_f64,
+            );
             let spawn = dir_f64 * spawn_r;
             // Look tangent to the surface (slightly ahead along the equator direction).
             let dir = Vec3::new(dir_f64.x as f32, dir_f64.y as f32, dir_f64.z as f32);

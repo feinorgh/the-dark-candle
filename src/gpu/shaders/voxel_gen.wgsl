@@ -58,6 +58,11 @@ const PERM_CAVE_TUBE_XY: u32 = 30u;
 const PERM_CRYSTAL: u32 = 31u;
 const PERM_TABLE_SIZE: u32 = 256u;
 
+// Permutation table slots for TerrainNoise (planetary IDW noise added at exact column position).
+// Must match PERM_TERRAIN_FBM_START / PERM_TERRAIN_RIDGED_START in voxel_compute.rs.
+const PERM_TERRAIN_FBM_START: u32 = 32u;    // 6 octaves: slots 32-37
+const PERM_TERRAIN_RIDGED_START: u32 = 38u; // 4 octaves: slots 38-41
+
 // Perlin scale factors matching the noise crate.
 const PERLIN_2D_SCALE: f32 = 1.4142135; // 2.0 / sqrt(2)
 const PERLIN_3D_SCALE: f32 = 1.1547005; // 2.0 / sqrt(3)
@@ -142,9 +147,19 @@ struct DispatchParams {
 @group(1) @binding(1) var<storage, read> perm_tables: array<u32>;
 
 // Bind group 1, binding 2: pre-baked equirectangular elevation map (2048×1024 f32).
-// Each element is the surface elevation offset from mean_radius in metres.
+// Each element is the IDW tectonic elevation offset from mean_radius in metres.
+// TerrainNoise (FBM + ridged) is NOT baked here — it is computed at the exact
+// column position below to avoid aliasing from 100 m/pixel bilinear interpolation.
 // Sampled only when noise_params.use_heightmap == 1.
 @group(1) @binding(2) var<storage, read> heightmap_data: array<f32>;
+
+// Bind group 1, binding 3: biome noise roughness in [0, 1] (2048×1024 f32).
+// Bilinearly interpolated — roughness varies slowly compared to TerrainNoise.
+@group(1) @binding(3) var<storage, read> roughness_data: array<f32>;
+
+// Bind group 1, binding 4: ocean biome flag (2048×1024 f32, 1.0 = ocean, 0.0 = land).
+// Sampled with nearest-neighbour logic to prevent coastline biome bleed.
+@group(1) @binding(4) var<storage, read> ocean_data: array<f32>;
 
 // ─── Permutation-table-based Perlin noise ────────────────────────────────────
 //
@@ -439,6 +454,79 @@ fn sample_heightmap(lat: f32, lon: f32) -> f32 {
     return mix(mix(v00, v10, tx), mix(v01, v11, tx), ty);
 }
 
+/// Sample the roughness buffer at `(lat, lon)` with bilinear interpolation.
+fn sample_roughness(lat: f32, lon: f32) -> f32 {
+    let u = fract(lon / (2.0 * PI) + 0.5);
+    let v = 0.5 - lat / PI;
+    let px = u * f32(HEIGHTMAP_W) - 0.5;
+    let py = v * f32(HEIGHTMAP_H) - 0.5;
+    let ix = i32(floor(px));
+    let iy = i32(floor(py));
+    let tx = px - floor(px);
+    let ty = py - floor(py);
+    let x0 = u32((ix + i32(HEIGHTMAP_W)) % i32(HEIGHTMAP_W));
+    let x1 = u32((ix + 1 + i32(HEIGHTMAP_W)) % i32(HEIGHTMAP_W));
+    let y0 = u32(clamp(iy,     0, i32(HEIGHTMAP_H) - 1));
+    let y1 = u32(clamp(iy + 1, 0, i32(HEIGHTMAP_H) - 1));
+    let v00 = roughness_data[y0 * HEIGHTMAP_W + x0];
+    let v10 = roughness_data[y0 * HEIGHTMAP_W + x1];
+    let v01 = roughness_data[y1 * HEIGHTMAP_W + x0];
+    let v11 = roughness_data[y1 * HEIGHTMAP_W + x1];
+    return mix(mix(v00, v10, tx), mix(v01, v11, tx), ty);
+}
+
+/// Sample the ocean flag at `(lat, lon)` with nearest-neighbour lookup.
+/// Returns 1u for ocean/deep-ocean biome, 0u for land.
+/// Nearest-neighbour prevents biome bleed at coastlines.
+fn sample_ocean(lat: f32, lon: f32) -> u32 {
+    let u = fract(lon / (2.0 * PI) + 0.5);
+    let v = 0.5 - lat / PI;
+    let ix = i32(u * f32(HEIGHTMAP_W));
+    let iy = i32(v * f32(HEIGHTMAP_H));
+    let x = u32((ix + i32(HEIGHTMAP_W)) % i32(HEIGHTMAP_W));
+    let y = u32(clamp(iy, 0, i32(HEIGHTMAP_H) - 1));
+    return u32(ocean_data[y * HEIGHTMAP_W + x]);
+}
+
+/// FBM matching CPU `TerrainNoise::fbm` (Fbm<Perlin>, frequency=50, octaves=6,
+/// lacunarity=2.0, persistence=0.5). Uses perm tables PERM_TERRAIN_FBM_START+i.
+fn terrain_fbm3d(p: vec3<f32>) -> f32 {
+    var point = p * 50.0f;
+    var result = 0.0f;
+    var att = 0.5f; // starts at persistence, not 1.0
+    for (var i = 0u; i < 6u; i++) {
+        result += perlin3d(point, PERM_TERRAIN_FBM_START + i) * att;
+        att *= 0.5f;
+        point *= 2.0f;
+    }
+    // scale_factor = 1.0 / (sum of 0.5^x for x in 1..=6) = 1.0 / 0.984375
+    return result * 1.0158730f;
+}
+
+/// RidgedMulti matching CPU `TerrainNoise::ridged` (RidgedMulti<Perlin>,
+/// frequency=35, octaves=4, lacunarity=2.2, attenuation=2.0, persistence=1.0).
+/// Uses perm tables PERM_TERRAIN_RIDGED_START+i.
+fn terrain_ridged3d(p: vec3<f32>) -> f32 {
+    var point = p * 35.0f;
+    var result = 0.0f;
+    var weight = 1.0f;
+    // persistence=1.0 → amplitude stays 1.0 every octave
+    for (var i = 0u; i < 4u; i++) {
+        var signal = perlin3d(point, PERM_TERRAIN_RIDGED_START + i);
+        signal = abs(signal);
+        signal = 1.0f - signal;
+        signal *= signal;
+        signal *= weight;
+        weight = clamp(signal * 0.5f, 0.0f, 1.0f); // / attenuation(2.0) = * 0.5
+        // signal *= amplitude (1.0^i = 1.0, no change needed)
+        result += signal;
+        point *= 2.2f;
+    }
+    // scale_factor = 2.0 / 1.6416015625 = 1.218322427
+    // output = result * scale_factor - 1.0  (shift to [-1, 1])
+    return result * 1.2183224f - 1.0f;
+}
+
 // Order-preserving float → u32 mapping for signed floats so that
 // `atomicMin` / `atomicMax` on the encoded value match float ordering.
 // Needed because surface offsets can be negative (e.g. ocean floor below
@@ -619,7 +707,26 @@ fn surface_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
     var sr_offset: f32;
     if noise_params.use_heightmap == 1u {
         // ll.x = lat, ll.y = lon (see lat_lon() return convention).
-        sr_offset = sample_heightmap(ll.x, ll.y);
+        let idw_elevation = sample_heightmap(ll.x, ll.y);
+        let roughness     = sample_roughness(ll.x, ll.y);
+        let is_ocean      = sample_ocean(ll.x, ll.y);
+
+        // Compute matching TerrainNoise at the exact column position (unit sphere).
+        // This avoids the ~100 m/pixel aliasing from baking noise into the heightmap.
+        let unit = normalize(world);
+        let fbm_val   = terrain_fbm3d(unit);
+        let ridge_val = terrain_ridged3d(unit);
+        let mix_r     = roughness * 0.6f;
+        let combined  = fbm_val * (1.0f - mix_r) + ridge_val * mix_r;
+        let noise_m   = combined * roughness * 2000.0f;
+
+        // Ocean-biome clamp: matches CPU sample_detailed_elevation() clamp logic.
+        // If IDW elevation < 0 or nearest cell is ocean biome, elevation ≤ -2 m.
+        var elevation = idw_elevation + noise_m;
+        if is_ocean == 1u || idw_elevation < 0.0f {
+            elevation = min(elevation, -2.0f);
+        }
+        sr_offset = elevation;
     } else {
         // sample_terrain excludes micro-detail, matching CPU sample_surface_radius()
         let combined = sample_terrain(ll.y, ll.x);

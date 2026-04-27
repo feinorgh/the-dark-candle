@@ -22,7 +22,9 @@ use std::sync::Arc;
 use bevy::math::DVec3;
 use bevy::prelude::Component;
 
-use crate::planet::detail::{TerrainNoise, sample_detailed_elevation};
+use crate::planet::detail::{
+    TerrainNoise, interpolate_elevation, sample_detailed_elevation, terrain_roughness,
+};
 use crate::planet::geology;
 use crate::planet::grid::{CellId, CellIndex};
 use crate::planet::{BiomeType, PlanetData, RockType};
@@ -188,6 +190,35 @@ impl PlanetaryTerrainSampler {
             sample_detailed_elevation(&self.planet_data, &self.detail_noise, unit_pos, cell);
         let surface_r = self.planet_config.mean_radius + elev_m;
         (surface_r, CellId(ci as u32))
+    }
+
+    /// Return `(idw_elevation_m, roughness, is_ocean_biome)` at a unit-sphere position.
+    ///
+    /// Provides the three raster components needed by the GPU heightmap bake:
+    /// - `idw_elevation_m`: IDW-interpolated tectonic elevation **without** procedural noise
+    /// - `roughness`: biome/boundary/volcanic noise roughness in \[0, 1\]
+    /// - `is_ocean_biome`: whether the nearest cell is an ocean or deep-ocean biome
+    ///
+    /// This separates the smooth IDW component (safe to bilinearly interpolate) from
+    /// the high-frequency TerrainNoise (which must be evaluated at the exact column
+    /// position to avoid aliasing).
+    pub fn idw_roughness_ocean_at(&self, unit_pos: DVec3) -> (f64, f64, bool) {
+        let cell = self
+            .cell_index
+            .nearest_cell(&self.planet_data.grid, unit_pos);
+        let ci = cell.index();
+        let idw = interpolate_elevation(&self.planet_data, unit_pos, cell);
+        let roughness = terrain_roughness(
+            self.planet_data.biome[ci],
+            idw,
+            self.planet_data.volcanic_activity[ci],
+            self.planet_data.boundary_type[ci],
+        );
+        let is_ocean = matches!(
+            self.planet_data.biome[ci],
+            BiomeType::Ocean | BiomeType::DeepOcean
+        );
+        (idw, roughness, is_ocean)
     }
 
     /// Return the dominant biome data for the cell nearest to `unit_pos`.

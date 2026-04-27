@@ -42,8 +42,11 @@ pub struct AgentCaptureConfig {
     pub settle_frames: u32,
     /// Screenshot or video.
     pub mode: CaptureMode,
-    /// For video: number of frames to record.
+    /// For video: number of screenshots to record.
     pub capture_frames: u32,
+    /// For interval video: capture one screenshot every N game frames.
+    /// 1 = every frame (dense video), N>1 = time-lapse (N frames apart).
+    pub capture_interval: u32,
     /// Output directory.
     pub output_dir: PathBuf,
     /// Video FPS for ffmpeg encoding.
@@ -56,6 +59,7 @@ impl Default for AgentCaptureConfig {
             settle_frames: 120,
             mode: CaptureMode::Screenshot,
             capture_frames: 120,
+            capture_interval: 1,
             output_dir: PathBuf::from("agent_captures"),
             fps: 30,
         }
@@ -140,25 +144,35 @@ fn agent_capture_tick(
         // ── Phase 2: Capturing ─────────────────────────────────────────────
         CapturePhase::Capturing => {
             let frame_idx = state.saved_paths.len();
-            let should_capture = match config.mode {
-                CaptureMode::Screenshot => frame_idx == 0,
-                CaptureMode::Video => frame_idx < config.capture_frames as usize,
+            let all_captured = match config.mode {
+                CaptureMode::Screenshot => frame_idx >= 1,
+                CaptureMode::Video => frame_idx >= config.capture_frames as usize,
             };
 
-            if should_capture {
-                let path = config.output_dir.join(format!("frame_{frame_idx:05}.png"));
-
-                commands
-                    .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-                    .observe(bevy::render::view::screenshot::save_to_disk(path.clone()));
-
-                info!("[AgentCapture] Triggered screenshot → {}", path.display());
-                state.saved_paths.push(path);
-            } else {
-                // All frames triggered — wait for GPU readback.
+            if all_captured {
+                // All screenshots triggered — wait for GPU readback.
                 state.phase = CapturePhase::Waiting {
                     frames_left: SAVE_GRACE_FRAMES,
                 };
+            } else {
+                let interval = config.capture_interval.max(1);
+                let on_interval = state.frame.is_multiple_of(interval);
+                let should_capture = on_interval
+                    && match config.mode {
+                        CaptureMode::Screenshot => frame_idx == 0,
+                        CaptureMode::Video => true,
+                    };
+
+                if should_capture {
+                    let path = config.output_dir.join(format!("frame_{frame_idx:05}.png"));
+
+                    commands
+                        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                        .observe(bevy::render::view::screenshot::save_to_disk(path.clone()));
+
+                    info!("[AgentCapture] Triggered screenshot → {}", path.display());
+                    state.saved_paths.push(path);
+                }
             }
         }
 
@@ -239,6 +253,11 @@ fn agent_capture_tick(
                 write_metadata(&config, &state);
                 info!("[AgentCapture] Capture complete. Exiting.");
                 app_exit.write(AppExit::Success);
+            } else if state.frame > 30 {
+                // Bevy AppExit hasn't been processed by the runner (common
+                // under headless/Xvfb setups). Force an immediate exit.
+                warn!("[AgentCapture] AppExit stalled — forcing process exit.");
+                std::process::exit(0);
             }
         }
     }

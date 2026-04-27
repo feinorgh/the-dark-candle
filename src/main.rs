@@ -118,6 +118,11 @@ struct Cli {
     #[arg(long, default_value_t = 120)]
     capture_frames: u32,
 
+    /// Capture one screenshot every N game frames (1 = every frame, 90 = ~3s
+    /// intervals at 30 fps). Lets you spread captures over a long run.
+    #[arg(long, default_value_t = 1)]
+    capture_interval: u32,
+
     /// Output directory for captures. Created if it does not exist.
     #[arg(long, default_value = "agent_captures")]
     capture_out: String,
@@ -152,6 +157,7 @@ fn main() {
             settle_frames: cli.settle,
             mode,
             capture_frames: cli.capture_frames,
+            capture_interval: cli.capture_interval,
             output_dir: std::path::PathBuf::from(&cli.capture_out),
             fps: cli.capture_fps,
         });

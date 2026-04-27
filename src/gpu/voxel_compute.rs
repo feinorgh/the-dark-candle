@@ -57,7 +57,14 @@ const PERM_CAVE_TUNNEL: usize = 28;
 const PERM_CAVE_TUBE_XZ: usize = 29;
 const PERM_CAVE_TUBE_XY: usize = 30;
 const PERM_CRYSTAL: usize = 31;
-const NUM_PERM_TABLES: usize = 32;
+const NUM_PERM_TABLES: usize = 42; // 32 noise + 6 terrain FBM + 4 terrain ridged
+
+/// First permutation table slot for TerrainNoise FBM octaves (6 slots: 32-37).
+const PERM_TERRAIN_FBM_START: usize = 32;
+/// First permutation table slot for TerrainNoise ridged octaves (4 slots: 38-41).
+/// Used only in the WGSL shader via the corresponding u32 constant.
+#[allow(dead_code)]
+const PERM_TERRAIN_RIDGED_START: usize = 38;
 
 // ─── Permutation table generation (matches noise crate exactly) ────────────
 
@@ -333,8 +340,12 @@ pub struct GpuVoxelCompute {
     densities_buffer: wgpu::Buffer,
     perm_tables_buffer: wgpu::Buffer,
     /// Pre-allocated 2048×1024 f32 storage buffer for the planetary heightmap.
-    /// All-zero until `set_heightmap()` is called.
+    /// All-zero until `set_heightmap_data()` is called.
     heightmap_buffer: wgpu::Buffer,
+    /// Pre-allocated 2048×1024 f32 storage buffer for biome noise roughness.
+    roughness_buffer: wgpu::Buffer,
+    /// Pre-allocated 2048×1024 f32 storage buffer for ocean biome flag.
+    ocean_buffer: wgpu::Buffer,
     // Staging buffers for CPU readback.
     materials_staging: wgpu::Buffer,
     densities_staging: wgpu::Buffer,
@@ -387,12 +398,18 @@ impl GpuVoxelCompute {
                 entries: &[bgl_uniform(0), bgl_uniform(1)],
             });
 
-        // Bind group 1: chunk descriptors + permutation tables + heightmap (read-only storage)
+        // Bind group 1: chunk descriptors + permutation tables + heightmap + roughness + ocean (read-only storage)
         let bgl_chunks = ctx
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("voxel_chunks_layout"),
-                entries: &[bgl_storage_ro(0), bgl_storage_ro(1), bgl_storage_ro(2)],
+                entries: &[
+                    bgl_storage_ro(0),
+                    bgl_storage_ro(1),
+                    bgl_storage_ro(2),
+                    bgl_storage_ro(3),
+                    bgl_storage_ro(4),
+                ],
             });
 
         // Bind group 2: surface pass outputs (surface_radii + chunk_info)
@@ -548,12 +565,24 @@ impl GpuVoxelCompute {
         ctx.queue
             .write_buffer(&perm_tables_buffer, 0, bytemuck::cast_slice(&perm_data));
 
-        // Heightmap buffer: 2048×1024 f32 = 8 MB, pre-allocated all-zero.
-        // Filled lazily by `set_heightmap()` when planetary data is ready.
+        // Heightmap, roughness and ocean buffers: 2048×1024 f32 each = 8 MB apiece.
+        // Pre-allocated all-zero. Filled lazily by `set_heightmap_data()` when planetary data is ready.
         use crate::planet::gpu_heightmap::{HEIGHTMAP_HEIGHT, HEIGHTMAP_WIDTH};
         let heightmap_size = (HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT) as u64 * 4;
         let heightmap_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("voxel_heightmap"),
+            size: heightmap_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let roughness_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voxel_roughness"),
+            size: heightmap_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ocean_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("voxel_ocean"),
             size: heightmap_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -577,6 +606,8 @@ impl GpuVoxelCompute {
             densities_buffer,
             perm_tables_buffer,
             heightmap_buffer,
+            roughness_buffer,
+            ocean_buffer,
             materials_staging,
             densities_staging,
             chunk_info_staging,
@@ -585,40 +616,90 @@ impl GpuVoxelCompute {
         }
     }
 
-    /// Upload a pre-baked planetary heightmap and activate GPU heightmap sampling.
+    /// Upload pre-baked planetary heightmap data and activate GPU heightmap sampling.
     ///
-    /// `data` must have length `HEIGHTMAP_WIDTH × HEIGHTMAP_HEIGHT` floats.
-    /// Each element is the surface elevation offset from `mean_radius` in metres.
+    /// - `elevation`: IDW-only elevation offset from `mean_radius` in metres (no TerrainNoise).
+    /// - `roughness`: biome noise roughness in [0, 1].
+    /// - `ocean_mask`: 1.0 for ocean/deep-ocean biome cells, 0.0 for land.
+    /// - `planet_data_seed`: the `PlanetData::config.seed` (u64) used by `TerrainNoise::new()`.
+    ///   Used to generate matching permutation tables for `terrain_fbm3d` / `terrain_ridged3d`
+    ///   in the shader.
     ///
-    /// This method is `&self` (not `&mut self`) so it can be called through an
-    /// `Arc<GpuVoxelCompute>` without exclusive ownership.  After this call,
-    /// Returns `true` once the planetary heightmap has been uploaded and
-    /// `generate_batch()` will use it.  Returns `false` while the bake task
-    /// is still running (heightmap not yet uploaded).  The main dispatch loop
-    /// must check this before sending a GPU batch — chunks generated without
-    /// a heightmap use FBM Perlin noise and produce wrong terrain for ocean
-    /// areas, causing phantom floating blocks above sea level.
-    pub fn is_heightmap_ready(&self) -> bool {
-        self.use_heightmap_flag.load(Ordering::Acquire) != 0
-    }
-
-    /// all subsequent `generate_batch()` calls will use the heightmap instead
-    /// of FBM Perlin noise for surface radius computation.
-    pub fn set_heightmap(&self, data: &[f32]) {
+    /// All three slices must have length `HEIGHTMAP_WIDTH × HEIGHTMAP_HEIGHT`.
+    ///
+    /// This method is `&self` so it can be called through an `Arc<GpuVoxelCompute>`.
+    /// After this call, `generate_batch()` will add TerrainNoise at the exact column
+    /// position, matching the CPU `PlanetaryTerrainSampler` path.
+    pub fn set_heightmap_data(
+        &self,
+        elevation: &[f32],
+        roughness: &[f32],
+        ocean_mask: &[f32],
+        planet_data_seed: u64,
+    ) {
         use crate::planet::gpu_heightmap::{HEIGHTMAP_HEIGHT, HEIGHTMAP_WIDTH};
         let expected = (HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT) as usize;
-        assert_eq!(
-            data.len(),
-            expected,
-            "heightmap data length {} != expected {expected}",
-            data.len()
+        for (name, data) in [
+            ("elevation", elevation),
+            ("roughness", roughness),
+            ("ocean_mask", ocean_mask),
+        ] {
+            assert_eq!(
+                data.len(),
+                expected,
+                "{name} data length {} != expected {expected}",
+                data.len()
+            );
+        }
+
+        // Build TerrainNoise perm tables at runtime so the GPU shader reproduces
+        // the exact same noise as `TerrainNoise::new(planet_data_seed)` on the CPU.
+        // FBM seed: s = (seed as u32).wrapping_add(7919), octave i seeds s+i.
+        // Ridged seed: s.wrapping_add(137), octave i seeds that base + i.
+        let s = (planet_data_seed as u32).wrapping_add(7919);
+        let mut extra_tables = vec![0u32; 10 * PERM_TABLE_SIZE];
+        for i in 0..6usize {
+            let table = generate_perm_table(s.wrapping_add(i as u32));
+            let base = i * PERM_TABLE_SIZE;
+            for (j, &v) in table.iter().enumerate() {
+                extra_tables[base + j] = v as u32;
+            }
+        }
+        let ridged_base = s.wrapping_add(137);
+        for i in 0..4usize {
+            let table = generate_perm_table(ridged_base.wrapping_add(i as u32));
+            let base = (6 + i) * PERM_TABLE_SIZE;
+            for (j, &v) in table.iter().enumerate() {
+                extra_tables[base + j] = v as u32;
+            }
+        }
+        // Write TerrainNoise tables into slots PERM_TERRAIN_FBM_START..PERM_TERRAIN_FBM_START+10.
+        let offset_bytes = (PERM_TERRAIN_FBM_START * PERM_TABLE_SIZE * 4) as u64;
+        self.ctx.queue.write_buffer(
+            &self.perm_tables_buffer,
+            offset_bytes,
+            bytemuck::cast_slice(&extra_tables),
         );
+
         self.ctx
             .queue
-            .write_buffer(&self.heightmap_buffer, 0, bytemuck::cast_slice(data));
-        // Memory ordering: Release ensures the buffer write is visible before
-        // any subsequent generate_batch() Acquire-reads the flag.
+            .write_buffer(&self.heightmap_buffer, 0, bytemuck::cast_slice(elevation));
+        self.ctx
+            .queue
+            .write_buffer(&self.roughness_buffer, 0, bytemuck::cast_slice(roughness));
+        self.ctx
+            .queue
+            .write_buffer(&self.ocean_buffer, 0, bytemuck::cast_slice(ocean_mask));
+
+        // Release ordering ensures buffer writes are visible before any subsequent
+        // generate_batch() Acquire-reads the flag.
         self.use_heightmap_flag.store(1, Ordering::Release);
+    }
+
+    /// Returns `true` once the planetary heightmap has been uploaded and
+    /// `generate_batch()` will use it.
+    pub fn is_heightmap_ready(&self) -> bool {
+        self.use_heightmap_flag.load(Ordering::Acquire) != 0
     }
 
     /// Run the full voxel generation pipeline for a batch of chunks.
@@ -719,6 +800,8 @@ impl GpuVoxelCompute {
                     bg_entry(0, &self.chunks_buffer),
                     bg_entry(1, &self.perm_tables_buffer),
                     bg_entry(2, &self.heightmap_buffer),
+                    bg_entry(3, &self.roughness_buffer),
+                    bg_entry(4, &self.ocean_buffer),
                 ],
             });
 
@@ -1150,6 +1233,175 @@ mod tests {
         for (i, td) in result.terrain_data.iter().enumerate() {
             assert_eq!(td.coord.u, i as i32);
         }
+    }
+
+    /// Validates that GPU terrain generation with a planetary heightmap matches the CPU
+    /// PlanetaryTerrainSampler path.
+    ///
+    /// This test bakes a real heightmap from a minimal planet, uploads it, then checks that
+    /// GPU and CPU produce consistent surface-layer classifications.  Regression test for
+    /// the floating-terrain bug where the GPU used FBM noise (ignoring ocean-biome clamp)
+    /// and produced terrain above sea level.
+    #[test]
+    fn gpu_heightmap_vs_cpu_surface_chunks() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        use crate::world::terrain::UnifiedTerrainGenerator;
+        use crate::world::v2::terrain_gen::generate_v2_voxels;
+
+        let mean_radius = 6_371_000.0_f64;
+        let height_scale = 8_848.0_f64;
+        let sea_level = mean_radius; // sea level == mean_radius for this planet preset
+        let seed = 42u32;
+
+        let config = NoiseConfig::default();
+        let Some(compute) = GpuVoxelCompute::try_new(&config, seed, mean_radius, height_scale)
+        else {
+            eprintln!("skipping GPU heightmap test: no adapter");
+            return;
+        };
+
+        // Build a minimal level-3 planet (~642 cells, fast) so we have real biome/elevation data.
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: seed as u64,
+            grid_level: 3,
+            ..Default::default()
+        };
+        let planet_data = std::sync::Arc::new(crate::planet::PlanetData::new(gen_cfg));
+
+        let planet_world_cfg = crate::world::planet::PlanetConfig {
+            mean_radius,
+            sea_level_radius: sea_level,
+            height_scale,
+            seed,
+            noise: Some(config.clone()),
+            ..Default::default()
+        };
+
+        let unified = std::sync::Arc::new(UnifiedTerrainGenerator::new(
+            planet_data.clone(),
+            planet_world_cfg.clone(),
+        ));
+
+        // Bake heightmap and upload to GPU.
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
+        let (elevation, roughness_buf, ocean_buf) = bake_elevation_roughness_ocean(&unified.0);
+        eprintln!(
+            "Heightmap: {} values, min={:.1}, max={:.1}",
+            elevation.len(),
+            elevation.iter().cloned().fold(f32::MAX, f32::min),
+            elevation.iter().cloned().fold(f32::MIN, f32::max),
+        );
+        compute.set_heightmap_data(
+            &elevation,
+            &roughness_buf,
+            &ocean_buf,
+            planet_data.config.seed,
+        );
+        assert!(
+            compute.is_heightmap_ready(),
+            "heightmap should be ready after set_heightmap_data"
+        );
+
+        let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
+
+        // Test several positions on PosX face: one near center, one near edge.
+        let half_fce = (fce / 2.0) as i32;
+        let test_uvs = [(half_fce, half_fce), (half_fce + 10, half_fce - 10)];
+
+        let mut found_mismatch = false;
+        for (u, v) in test_uvs {
+            let probe = CubeSphereCoord::new_with_lod(
+                crate::world::v2::cubed_sphere::CubeFace::PosX,
+                u,
+                v,
+                0,
+                0,
+            );
+            let dir = probe.unit_sphere_dir(fce);
+            let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
+            let surface_r = unified.sample_surface_radius_at(lat, lon);
+            let surface_layer = ((surface_r - mean_radius) / CHUNK_SIZE as f64).round() as i32;
+
+            eprintln!(
+                "  probe u={u} v={v}: lat={:.2}° lon={:.2}° surface_r={:.1} surface_layer={surface_layer}",
+                lat.to_degrees(),
+                lon.to_degrees(),
+                surface_r,
+            );
+
+            // Generate the surface-crossing chunk.
+            let coord = CubeSphereCoord::new_with_lod(
+                crate::world::v2::cubed_sphere::CubeFace::PosX,
+                u,
+                v,
+                surface_layer,
+                0,
+            );
+            let desc = chunk_desc_from_coord(
+                coord,
+                mean_radius,
+                fce,
+                sea_level,
+                planet_world_cfg.soil_depth,
+                planet_world_cfg.cave_threshold,
+                0,
+            );
+            let req = GpuChunkRequest { coord, desc };
+
+            let gpu_result = compute.generate_batch(&[req], planet_world_cfg.rotation_axis);
+            let gpu_td = &gpu_result.terrain_data[0];
+
+            let cpu_td = generate_v2_voxels(coord, mean_radius, fce, &unified);
+
+            let label = |v: &CachedVoxels| match v {
+                CachedVoxels::AllAir => "AllAir",
+                CachedVoxels::AllSolid(_) => "AllSolid",
+                CachedVoxels::Mixed(_) => "Mixed",
+            };
+            let gpu_label = label(&gpu_td.voxels);
+            let cpu_label = label(&cpu_td.voxels);
+            eprintln!("    GPU={gpu_label} CPU={cpu_label}");
+
+            if gpu_label != cpu_label {
+                eprintln!("    MISMATCH at u={u} v={v} layer={surface_layer}");
+                found_mismatch = true;
+            }
+
+            // Also check the layer one above: should be AllAir (sky above surface).
+            let sky_coord = CubeSphereCoord::new_with_lod(
+                crate::world::v2::cubed_sphere::CubeFace::PosX,
+                u,
+                v,
+                surface_layer + 4,
+                0,
+            );
+            let sky_desc = chunk_desc_from_coord(
+                sky_coord,
+                mean_radius,
+                fce,
+                sea_level,
+                planet_world_cfg.soil_depth,
+                planet_world_cfg.cave_threshold,
+                0,
+            );
+            let sky_req = GpuChunkRequest {
+                coord: sky_coord,
+                desc: sky_desc,
+            };
+            let sky_result = compute.generate_batch(&[sky_req], planet_world_cfg.rotation_axis);
+            let sky_gpu = label(&sky_result.terrain_data[0].voxels);
+            eprintln!("    sky (layer+4): GPU={sky_gpu}");
+            assert_eq!(
+                sky_gpu, "AllAir",
+                "GPU chunk at layer+4 above surface must be AllAir, not {sky_gpu} \
+                 (floating terrain bug!)"
+            );
+        }
+
+        assert!(
+            !found_mismatch,
+            "GPU and CPU classifications differed — heightmap is not matching CPU terrain"
+        );
     }
 
     /// Diagnostic test: compare GPU and CPU terrain for a surface-crossing chunk.
