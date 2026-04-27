@@ -592,6 +592,16 @@ impl GpuVoxelCompute {
     ///
     /// This method is `&self` (not `&mut self`) so it can be called through an
     /// `Arc<GpuVoxelCompute>` without exclusive ownership.  After this call,
+    /// Returns `true` once the planetary heightmap has been uploaded and
+    /// `generate_batch()` will use it.  Returns `false` while the bake task
+    /// is still running (heightmap not yet uploaded).  The main dispatch loop
+    /// must check this before sending a GPU batch — chunks generated without
+    /// a heightmap use FBM Perlin noise and produce wrong terrain for ocean
+    /// areas, causing phantom floating blocks above sea level.
+    pub fn is_heightmap_ready(&self) -> bool {
+        self.use_heightmap_flag.load(Ordering::Acquire) != 0
+    }
+
     /// all subsequent `generate_batch()` calls will use the heightmap instead
     /// of FBM Perlin noise for surface radius computation.
     pub fn set_heightmap(&self, data: &[f32]) {

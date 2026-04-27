@@ -647,9 +647,14 @@ pub fn v2_update_chunks(
     let dispatched_this_frame = dispatched.len();
     let gpu_in_flight_now = !gpu_tasks_q.is_empty();
 
-    if let Some(ref compute) = gpu_dispatcher.compute {
+    if let Some(ref compute) = gpu_dispatcher.compute
+        && compute.is_heightmap_ready()
+    {
         // Only dispatch a GPU batch if no previous batch is still in flight —
         // the pre-allocated staging buffers are not thread-safe.
+        // Also, we never dispatch before the planetary heightmap is ready: chunks
+        // generated with the FBM fallback produce wrong surface heights for ocean
+        // areas (no ocean-biome clamp), causing floating terrain above sea level.
         let gpu_in_flight = gpu_in_flight_now;
         if !dispatched.is_empty() && !gpu_in_flight {
             let compute = compute.clone();
