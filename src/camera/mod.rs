@@ -29,6 +29,7 @@ impl Plugin for CameraPlugin {
                     camera_move,
                     camera_gravity,
                     sync_camera_transform,
+                    toggle_flashlight,
                 )
                     .chain()
                     .after(cursor_grab)
@@ -55,7 +56,25 @@ pub struct FpsCamera {
     pub gravity_enabled: bool,
     /// Fly-mode speed multiplier (scroll wheel adjusts, default 1.0).
     pub fly_speed_multiplier: f32,
+    /// Whether the player flashlight is on (toggle with F key).
+    pub flashlight_enabled: bool,
 }
+
+/// Marker component for the player-attached spotlight (flashlight).
+#[derive(Component)]
+pub struct Flashlight;
+
+/// Luminous intensity of the flashlight in candela.
+/// ~1 000 lm spread over a ≈20° half-angle cone ≈ 5 000 cd.
+const FLASHLIGHT_INTENSITY: f32 = 5_000.0;
+/// Warm-white flashlight colour.
+const FLASHLIGHT_COLOR: Color = Color::srgb(1.0, 0.97, 0.90);
+/// Effective range before intensity falls to zero (m).
+const FLASHLIGHT_RANGE: f32 = 100.0;
+/// Inner (full-intensity) cone half-angle (rad) — about 8°.
+const FLASHLIGHT_INNER_ANGLE: f32 = 0.14;
+/// Outer (fade-to-zero) cone half-angle (rad) — about 20°.
+const FLASHLIGHT_OUTER_ANGLE: f32 = 0.35;
 
 /// Player eye height above the ground surface (m).
 /// Average adult eye height when standing: ~1.7 m.
@@ -86,6 +105,7 @@ impl Default for FpsCamera {
             grounded: false,
             gravity_enabled: true,
             fly_speed_multiplier: 1.0,
+            flashlight_enabled: false,
         }
     }
 }
@@ -295,45 +315,76 @@ fn spawn_camera(
     // altitude (it offsets the camera by (0, bottom_radius, 0) assuming a
     // flat world). We skip it and use CPU sky color via ClearColor instead.
     if planet.is_spherical() {
-        commands.spawn((
-            Camera3d::default(),
-            IsDefaultUiCamera,
-            Transform::from_translation(spawn_render)
-                .looking_at(spawn_render + look_target, up_hint),
-            Bloom::NATURAL,
-            DistanceFog {
-                color: Color::srgba(0.7, 0.78, 0.9, 1.0),
-                directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
-                directional_light_exponent: 30.0,
-                falloff: FogFalloff::from_visibility(500.0),
-            },
-            FpsCamera::default(),
-            WorldPosition::from_dvec3(spawn_world_pos),
-            Player,
-            Health::new(100.0),
-            FallTracker::default(),
-        ));
+        commands
+            .spawn((
+                Camera3d::default(),
+                IsDefaultUiCamera,
+                Transform::from_translation(spawn_render)
+                    .looking_at(spawn_render + look_target, up_hint),
+                Bloom::NATURAL,
+                DistanceFog {
+                    color: Color::srgba(0.7, 0.78, 0.9, 1.0),
+                    directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+                    directional_light_exponent: 30.0,
+                    falloff: FogFalloff::from_visibility(500.0),
+                },
+                FpsCamera::default(),
+                WorldPosition::from_dvec3(spawn_world_pos),
+                Player,
+                Health::new(100.0),
+                FallTracker::default(),
+            ))
+            .with_children(|parent| {
+                parent.spawn(flashlight_bundle());
+            });
     } else {
-        commands.spawn((
-            Camera3d::default(),
-            IsDefaultUiCamera,
-            Transform::from_translation(spawn_render)
-                .looking_at(spawn_render + look_target, up_hint),
-            Bloom::NATURAL,
-            atmosphere,
-            DistanceFog {
-                color: Color::srgba(0.7, 0.78, 0.9, 1.0),
-                directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
-                directional_light_exponent: 30.0,
-                falloff: FogFalloff::from_visibility(500.0),
-            },
-            FpsCamera::default(),
-            WorldPosition::from_dvec3(spawn_world_pos),
-            Player,
-            Health::new(100.0),
-            FallTracker::default(),
-        ));
+        commands
+            .spawn((
+                Camera3d::default(),
+                IsDefaultUiCamera,
+                Transform::from_translation(spawn_render)
+                    .looking_at(spawn_render + look_target, up_hint),
+                Bloom::NATURAL,
+                atmosphere,
+                DistanceFog {
+                    color: Color::srgba(0.7, 0.78, 0.9, 1.0),
+                    directional_light_color: Color::srgba(1.0, 0.95, 0.85, 0.5),
+                    directional_light_exponent: 30.0,
+                    falloff: FogFalloff::from_visibility(500.0),
+                },
+                FpsCamera::default(),
+                WorldPosition::from_dvec3(spawn_world_pos),
+                Player,
+                Health::new(100.0),
+                FallTracker::default(),
+            ))
+            .with_children(|parent| {
+                parent.spawn(flashlight_bundle());
+            });
     }
+}
+
+/// Build the flashlight `SpotLight` child entity bundle.
+///
+/// Starts hidden; enabled/disabled by [`toggle_flashlight`] with the F key.
+/// The light is positioned at the camera origin (eye position) and the default
+/// transform points it along local −Z, which is the camera's forward direction
+/// — no extra rotation is needed.
+fn flashlight_bundle() -> impl Bundle {
+    (
+        SpotLight {
+            intensity: FLASHLIGHT_INTENSITY,
+            color: FLASHLIGHT_COLOR,
+            range: FLASHLIGHT_RANGE,
+            inner_angle: FLASHLIGHT_INNER_ANGLE,
+            outer_angle: FLASHLIGHT_OUTER_ANGLE,
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::default(),
+        Visibility::Hidden,
+        Flashlight,
+    )
 }
 
 /// Grab cursor on left-click (while Playing). Skipped in agent capture mode.
@@ -663,6 +714,36 @@ fn sync_camera_transform(
     for (world_pos, mut transform) in &mut cam_q {
         transform.translation = world_pos.render_offset(&origin);
     }
+}
+
+/// Toggle the player flashlight on/off when F is pressed.
+///
+/// The flashlight is a [`SpotLight`] child of the camera entity, marked with
+/// [`Flashlight`].  Toggling sets its [`Visibility`] so the light is only
+/// active when the player wants it.  A log message confirms the current state.
+fn toggle_flashlight(
+    key: Res<ButtonInput<KeyCode>>,
+    mut cam_q: Query<&mut FpsCamera>,
+    mut light_q: Query<&mut Visibility, With<Flashlight>>,
+) {
+    if !key.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+    let Ok(mut cam) = cam_q.single_mut() else {
+        return;
+    };
+    cam.flashlight_enabled = !cam.flashlight_enabled;
+    for mut vis in &mut light_q {
+        *vis = if cam.flashlight_enabled {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    info!(
+        "Flashlight {}",
+        if cam.flashlight_enabled { "on" } else { "off" }
+    );
 }
 
 #[cfg(test)]
