@@ -20,6 +20,8 @@ use super::{BiomeType, BoundaryType, PlanetData};
 pub struct TerrainNoise {
     fbm: Fbm<Perlin>,
     ridged: RidgedMulti<Perlin>,
+    /// High-frequency FBM for sub-chunk detail, sampled in world-space metres.
+    local_fbm: Fbm<Perlin>,
 }
 
 impl TerrainNoise {
@@ -42,7 +44,20 @@ impl TerrainNoise {
             .set_frequency(35.0)
             .set_lacunarity(2.2);
 
-        Self { fbm, ridged }
+        // Local detail FBM sampled in world-space metres.
+        // Frequency 1.0 with 1/20 m coordinate scaling → 20 m base wavelength,
+        // octaves reach down to 20/2^4 ≈ 1.25 m — voxel-scale features.
+        let local_fbm = Fbm::<Perlin>::new(s.wrapping_add(31337))
+            .set_octaves(4)
+            .set_frequency(1.0)
+            .set_lacunarity(2.0)
+            .set_persistence(0.5);
+
+        Self {
+            fbm,
+            ridged,
+            local_fbm,
+        }
     }
 
     /// Sample combined noise at a unit-sphere position.
@@ -57,6 +72,25 @@ impl TerrainNoise {
         let mix = roughness * 0.6;
         let combined = fbm_val * (1.0 - mix) + ridge_val * mix;
         combined * roughness * 2000.0
+    }
+
+    /// Sample local high-frequency detail noise at a world-space position.
+    ///
+    /// `pos_world_m` is the 3-D world position in metres.
+    /// `roughness` in \[0, 1\] scales amplitude: flat ocean (0.08) → ±0.8 m;
+    /// alpine (0.70) → ±7 m.
+    ///
+    /// Only called from the voxel sampler path — NOT from map rendering — so
+    /// the extra per-column cost is paid only during chunk generation.
+    pub fn sample_local(&self, pos_world_m: DVec3, roughness: f64) -> f64 {
+        // Scale world metres so that frequency 1.0 → 20 m wavelength.
+        const SCALE: f64 = 1.0 / 20.0;
+        let p = [
+            pos_world_m.x * SCALE,
+            pos_world_m.y * SCALE,
+            pos_world_m.z * SCALE,
+        ];
+        self.local_fbm.get(p) * roughness * 10.0
     }
 }
 

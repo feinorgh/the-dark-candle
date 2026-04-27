@@ -9,10 +9,10 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::camera::FpsCamera;
 use crate::hud::Player;
+use crate::planet::detail::pos_to_lat_lon;
 use crate::planet::projections::{Projection, render_projection};
 use crate::planet::render::ColourMode;
 use crate::world::PlanetaryData;
-use crate::world::planet::PlanetConfig;
 
 use super::ui::{MapCoordText, MapImageNode, MapView, MapViewState, PlayerMarker};
 
@@ -31,7 +31,6 @@ pub struct GlobalMapCache {
 pub fn update_global_map(
     state: Res<MapViewState>,
     planetary: Option<Res<PlanetaryData>>,
-    planet_config: Option<Res<PlanetConfig>>,
     cam_q: Query<&crate::floating_origin::WorldPosition, (With<FpsCamera>, With<Player>)>,
     mut images: ResMut<Assets<Image>>,
     mut map_node_q: Query<(&mut ImageNode, &mut Node), (With<MapImageNode>, Without<PlayerMarker>)>,
@@ -105,8 +104,11 @@ pub fn update_global_map(
     };
 
     let player_pos = cam_wp.0;
-    let (lat, lon) = if let Some(ref config) = planet_config {
-        config.lat_lon(player_pos)
+    // Use the canonical detail convention (same as render_projection and teleport):
+    // lat_lon_to_pos / pos_to_lat_lon — NOT PlanetConfig::lat_lon which uses a
+    // different longitude sign that places the marker ~180° off on the map.
+    let (lat, lon) = if player_pos.length_squared() > 0.0 {
+        pos_to_lat_lon(player_pos.normalize())
     } else {
         (0.0, 0.0)
     };

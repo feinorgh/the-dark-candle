@@ -181,14 +181,39 @@ impl PlanetaryTerrainSampler {
     /// Return the surface radius (from planet center) at a unit-sphere position.
     ///
     /// Combines IDW interpolation from geodesic cells with fractal noise from
-    /// `TerrainNoise` (same path as `detail::sample_detailed_elevation`).
+    /// `TerrainNoise` (same path as `detail::sample_detailed_elevation`), plus a
+    /// high-frequency local detail layer that adds voxel-scale bumps (≤ 20 m
+    /// wavelength) to break up the otherwise flat chunk surfaces that arise from
+    /// the large-scale planetary noise being constant over a 32-metre chunk.
     pub fn surface_radius_at(&self, unit_pos: DVec3) -> (f64, CellId) {
         let cell = self
             .cell_index
             .nearest_cell(&self.planet_data.grid, unit_pos);
         let (elev_m, ci) =
             sample_detailed_elevation(&self.planet_data, &self.detail_noise, unit_pos, cell);
-        let surface_r = self.planet_config.mean_radius + elev_m;
+
+        // Local voxel-scale detail — only for non-ocean cells.
+        // Ocean cells already have their elevation clamped to ≤ −2 m by
+        // `sample_detailed_elevation`; adding positive noise here would
+        // re-raise them above sea level and produce phantom solid voxels.
+        let is_ocean = matches!(
+            self.planet_data.biome[ci],
+            crate::planet::BiomeType::Ocean | crate::planet::BiomeType::DeepOcean
+        );
+        let local_detail_m = if is_ocean {
+            0.0
+        } else {
+            let roughness = terrain_roughness(
+                self.planet_data.biome[ci],
+                elev_m,
+                self.planet_data.volcanic_activity[ci],
+                self.planet_data.boundary_type[ci],
+            );
+            let world_pos_m = unit_pos * self.planet_config.mean_radius;
+            self.detail_noise.sample_local(world_pos_m, roughness)
+        };
+
+        let surface_r = self.planet_config.mean_radius + elev_m + local_detail_m;
         (surface_r, CellId(ci as u32))
     }
 
