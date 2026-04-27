@@ -958,11 +958,12 @@ pub fn v2_collect_terrain(
             let dist = if let Some(cam) = cam_coord_for_mesh
                 && c.face == cam.face
             {
-                let scale = 1i32 << c.lod;
-                let du = c.u * scale - cam.u;
-                let dv = c.v * scale - cam.v;
-                let dl = c.layer - cam.layer;
-                du * du + dv * dv + dl * dl
+                let scale = 1i64 << c.lod;
+                let du = c.u as i64 * scale - cam.u as i64;
+                let dv = c.v as i64 * scale - cam.v as i64;
+                let dl = (c.layer - cam.layer) as i64;
+                // Clamp to i32 range so the priority key stays i32.
+                (du * du + dv * dv + dl * dl).min(i32::MAX as i64) as i32
             } else {
                 i32::MAX / 8
             };
