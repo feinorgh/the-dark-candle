@@ -33,7 +33,9 @@ pub struct OrbitalState {
 impl Default for OrbitalState {
     fn default() -> Self {
         Self {
-            rotation_angle: 0.0,
+            // Start at solar noon (π rad = 12:00) so the player spawns in daylight.
+            // rotation_angle 0 = midnight, π = noon.
+            rotation_angle: std::f64::consts::PI,
             orbital_angle: 0.0,
             time_scale: 72.0,
             year_in_days: 1.0,
@@ -249,7 +251,7 @@ mod tests {
     #[test]
     fn orbital_state_defaults() {
         let state = OrbitalState::default();
-        assert_eq!(state.rotation_angle, 0.0);
+        assert_eq!(state.rotation_angle, std::f64::consts::PI); // starts at noon
         assert_eq!(state.orbital_angle, 0.0);
         assert_eq!(state.time_scale, 72.0);
         assert_eq!(state.year_in_days, 1.0);

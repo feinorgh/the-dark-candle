@@ -30,6 +30,7 @@ impl Plugin for CameraPlugin {
                     camera_gravity,
                     sync_camera_transform,
                     toggle_flashlight,
+                    adjust_flashlight_intensity,
                 )
                     .chain()
                     .after(cursor_grab)
@@ -58,6 +59,8 @@ pub struct FpsCamera {
     pub fly_speed_multiplier: f32,
     /// Whether the player flashlight is on (toggle with F key).
     pub flashlight_enabled: bool,
+    /// Current flashlight intensity in candela. Adjusted with Ctrl+`+`/`-`.
+    pub flashlight_intensity: f32,
 }
 
 /// Marker component for the player-attached spotlight (flashlight).
@@ -106,6 +109,7 @@ impl Default for FpsCamera {
             gravity_enabled: true,
             fly_speed_multiplier: 1.0,
             flashlight_enabled: false,
+            flashlight_intensity: FLASHLIGHT_INTENSITY,
         }
     }
 }
@@ -754,6 +758,46 @@ fn toggle_flashlight(
         "Flashlight {}",
         if cam.flashlight_enabled { "on" } else { "off" }
     );
+}
+
+/// Adjust flashlight intensity with Ctrl + `+` / `-` (or Numpad equivalents).
+///
+/// Each press multiplies or divides intensity by √2 (~1.41×), giving smooth
+/// ≈1.5 dB steps.  Intensity is clamped to `[500, 500_000]` candela.
+/// The new value is logged so the user knows where they are.
+fn adjust_flashlight_intensity(
+    key: Res<ButtonInput<KeyCode>>,
+    mut cam_q: Query<&mut FpsCamera>,
+    mut light_q: Query<&mut SpotLight, With<Flashlight>>,
+) {
+    let ctrl = key.pressed(KeyCode::ControlLeft) || key.pressed(KeyCode::ControlRight);
+    if !ctrl {
+        return;
+    }
+
+    let brighter = key.just_pressed(KeyCode::NumpadAdd) || key.just_pressed(KeyCode::Equal);
+    let dimmer = key.just_pressed(KeyCode::NumpadSubtract) || key.just_pressed(KeyCode::Minus);
+
+    if !brighter && !dimmer {
+        return;
+    }
+
+    let Ok(mut cam) = cam_q.single_mut() else {
+        return;
+    };
+
+    let factor = if brighter {
+        2.0f32.sqrt()
+    } else {
+        1.0 / 2.0f32.sqrt()
+    };
+    cam.flashlight_intensity = (cam.flashlight_intensity * factor).clamp(500.0, 500_000.0);
+
+    for mut spot in &mut light_q {
+        spot.intensity = cam.flashlight_intensity;
+    }
+
+    info!("Flashlight intensity: {:.0} cd", cam.flashlight_intensity);
 }
 
 #[cfg(test)]
