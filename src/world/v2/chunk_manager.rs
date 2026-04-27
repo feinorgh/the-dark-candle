@@ -1156,6 +1156,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<GpuTerrainDispatcher>()
             .init_resource::<GpuHeightmapInjected>()
             .init_resource::<V2PipelineStats>()
+            .init_resource::<crate::world::v2::debug::ChunkDebugViz>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
@@ -1169,6 +1170,13 @@ impl Plugin for V2WorldPlugin {
                     .chain()
                     .run_if(resource_exists::<V2TerrainGen>)
                     .run_if(not(in_state(crate::game_state::GameState::WorldCreation))),
+            )
+            .add_systems(
+                Update,
+                (
+                    crate::world::v2::debug::toggle_chunk_debug_viz,
+                    crate::world::v2::debug::draw_chunk_debug_viz,
+                ),
             )
             .add_systems(
                 Update,
