@@ -29,13 +29,13 @@ pub struct NeedsFluidSeeding;
 pub fn seed_river_flow(
     mut commands: Commands,
     chunks: Query<(Entity, &Chunk, &ChunkCoord), With<NeedsFluidSeeding>>,
-    terrain_gen: Res<TerrainGeneratorRes>,
+    terrain_gen: Option<Res<TerrainGeneratorRes>>,
     mut fluid_state: ResMut<FluidState>,
 ) {
-    let flow_map = match terrain_gen.0.flow_map() {
+    let flow_map = match terrain_gen.as_ref().and_then(|tg| tg.0.flow_map()) {
         Some(fm) => fm,
         None => {
-            // No flow map (spherical mode or erosion disabled) — just remove markers
+            // No terrain gen or no flow map (spherical mode or erosion disabled) — just remove markers
             for (entity, _, _) in chunks.iter() {
                 commands.entity(entity).remove::<NeedsFluidSeeding>();
             }
@@ -93,10 +93,11 @@ fn seed_grid_velocity(
 /// z=0, z=max) where the FlowMap indicates inflow. If those cells have
 /// drained to Air, restore them as Liquid with the river velocity.
 pub fn inject_river_sources(
-    terrain_gen: Res<TerrainGeneratorRes>,
+    terrain_gen: Option<Res<TerrainGeneratorRes>>,
     mut fluid_state: ResMut<FluidState>,
 ) {
-    let flow_map = match terrain_gen.0.flow_map() {
+    let Some(tg) = terrain_gen else { return };
+    let flow_map = match tg.0.flow_map() {
         Some(fm) => fm,
         None => return,
     };

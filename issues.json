@@ -124,9 +124,10 @@
     "resolution": null,
     "notes": [
       "Code investigation confirmed: F3, F5, F9, F11 are all properly bound in diagnostics/mod.rs.",
-      "F12 screenshot has CONFIRMED duplicate function definitions \u2014 this is a real bug that needs fixing.",
+      "F12 duplicate: NOT a runtime conflict. planet/render.rs::screenshot_system is only registered via run_globe_viewer() in src/bin/worldgen.rs \u2014 a separate binary. DiagnosticsPlugin is NOT added to the worldgen app. The two functions never coexist in the same running app. It is pure code duplication (cosmetic quality issue), not a functional bug.",
       "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings \u2014 check compositor config.",
-      "Test with WINIT_UNIX_BACKEND=x11 to rule out Wayland-specific key capture."
+      "Test with WINIT_UNIX_BACKEND=x11 to rule out Wayland-specific key capture.",
+      "Remaining open concern: Wayland key capture. All F-key bindings in DiagnosticsPlugin look correct in code."
     ]
   },
   {
@@ -141,15 +142,16 @@
     "suspected_files": [
       "src/world/terrain.rs"
     ],
-    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() \u2014 logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
+    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() — logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "CRITICAL: Need user to provide backtrace from `RUST_BACKTRACE=1 cargo run --features bevy/dynamic_linking`.",
-      "terrain.rs:385 unwrap() is the most likely candidate \u2014 should be hardened regardless.",
+      "terrain.rs unwrap() (now line ~455): verified safe — env is always Some(...) in the use_advanced=true branch (set at line ~432). Not a crash candidate.",
+      "GPU 'Buffer is already mapped' race: mitigated. generate_batch() is dispatched from a single async task at a time — v2_update_chunks checks gpu_tasks_q and falls back to CPU if a GPU batch is already in flight. Each pipeline owns its own staging buffer. No concurrent staging buffer access.",
       "No other unsafe unwrap() patterns found in hot paths (Update/FixedUpdate systems).",
-      "Once backtrace is available, update this issue with the specific panic location.",
-      "Separate GPU-related crash: 'Buffer is already mapped' in wgpu - race condition in async readback. Not caused by noise mismatch fix. Occurs when multiple async compute tasks try to map the same staging buffer."
+      "Original suspected causes are now ruled out. Issue stays open pending a real backtrace — may have been fixed as a side effect of recent rendering overhaul or may not reproduce anymore.",
+      "Related: three_bouncing_balls test revealed two physics-adjacent bugs (now fixed): (1) amr_fluid injection systems required Res<TerrainGeneratorRes> unconditionally — changed to Option<Res<>> so they gracefully skip when no terrain is loaded; (2) PlanetConfig::default() uses Planetary mode with 32km radius, causing catastrophic gravity for entities near world origin — added TerrainMode::Flat for headless physics tests."
     ]
   },
   {
@@ -383,14 +385,15 @@
     "title": "Player falls through terrain geometry outside planet mode",
     "category": "physics",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "suspected_files": [
       "src/physics/collision.rs",
       "src/world/collision.rs",
       "src/world/chunk_manager.rs"
     ],
     "reproduction": "Start a game in a non-planet mode (e.g. flat/local terrain). The player entity falls through the terrain mesh instead of colliding with it.",
-    "description": " NOTE: flat/local terrain mode removed (2025 refactor). All terrain is now planetary. Re-evaluate whether this issue persists in planetary-only mode."
+    "description": "Flat/local terrain mode removed (2025 refactor). All terrain is now planetary.",
+    "resolution": "V2 pipeline uses analytical height-field collision in camera_gravity() via ground_height_from_terrain_gen() + WorldPosition, with sea-level clamping. resolve_collisions() in collision.rs is intentionally a no-op stub (V1 mesh collision removed). Verified: camera_gravity samples terrain surface radius analytically, preventing the player from going below ground regardless of loaded chunks."
   },
   {
     "id": "UI-001",

@@ -318,7 +318,8 @@ pub struct GravityPlugin;
 
 impl Plugin for GravityPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, apply_forces.in_set(GravitySet));
+        app.init_resource::<crate::floating_origin::RenderOrigin>()
+            .add_systems(FixedUpdate, apply_forces.in_set(GravitySet));
     }
 }
 

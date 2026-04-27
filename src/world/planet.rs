@@ -42,6 +42,9 @@ pub enum TerrainMode {
     /// Planet-data-driven spherical terrain (PlanetaryTerrainSampler).
     #[default]
     Planetary,
+    /// Flat world with constant -Y gravity. Used for sandbox tests and
+    /// headless physics simulations that don't need a spherical planet.
+    Flat,
 }
 
 /// Configuration for a spherical planet, loaded from RON.
@@ -394,9 +397,10 @@ impl PlanetConfig {
             .find(|l| radius >= l.inner_radius && radius < l.outer_radius)
     }
 
-    /// Whether the planet uses spherical mode.  Always `true` in planetary mode.
+    /// Whether the planet uses spherical mode.
+    /// Returns `false` for `Flat` mode, `true` for `Planetary` mode.
     pub fn is_spherical(&self) -> bool {
-        true
+        self.mode != TerrainMode::Flat
     }
 }
 
