@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 
 use crate::camera::FpsCamera;
-use crate::floating_origin::{RenderOrigin, RenderOriginShift, WorldPosition};
+use crate::floating_origin::{RenderOrigin, WorldPosition};
 use crate::gpu::voxel_compute::{
     GpuChunkRequest, GpuVoxelCompute, MAX_CHUNKS_PER_BATCH, chunk_desc_from_coord,
 };
@@ -1142,18 +1142,6 @@ pub fn v2_collect_meshes(
 
 // ── Plugin ────────────────────────────────────────────────────────────────
 
-/// When a `RenderOriginShift` occurs, update all V2 chunk Transforms.
-fn v2_apply_origin_shift(
-    shift: Option<Res<RenderOriginShift>>,
-    mut chunk_q: Query<&mut Transform, With<V2ChunkMarker>>,
-) {
-    let Some(shift) = shift else { return };
-    let delta = Vec3::new(shift.0.x as f32, shift.0.y as f32, shift.0.z as f32);
-    for mut transform in &mut chunk_q {
-        transform.translation -= delta;
-    }
-}
-
 /// Plugin for the V2 cubed-sphere rendering pipeline.
 pub struct V2WorldPlugin;
 
@@ -1185,10 +1173,6 @@ impl Plugin for V2WorldPlugin {
             .add_systems(
                 Update,
                 try_inject_gpu_heightmap.run_if(not(resource_equals(GpuHeightmapInjected(true)))),
-            )
-            .add_systems(
-                PostUpdate,
-                v2_apply_origin_shift.run_if(resource_exists::<RenderOriginShift>),
             );
     }
 }
