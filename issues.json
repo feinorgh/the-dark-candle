@@ -920,5 +920,97 @@
     ],
     "description": "The GPU compute shader for voxel generation implements FBM noise terrain (matching the old SphericalTerrainGenerator). After the planetary refactor, the CPU path uses PlanetaryTerrainSampler (IDW from tectonic PlanetData). The GPU and CPU terrain algorithms are now mismatched. GPU parity tests (gpu_vs_cpu_surface_chunk_comparison, gpu_vs_cpu_parity_earth_scale_surface_chunk) are marked #[ignore] until the GPU shader is updated.",
     "resolution": "GPU heightmap Phase 3 complete. Commit e48337a."
+  },
+  {
+    "id": "SKY-003",
+    "title": "Atmospheric sky gradient and sun disk not rendered \u2014 sky is a flat clear color",
+    "category": "rendering",
+    "severity": "high",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "The in-game sky displays as a single flat color (the Bevy ClearColor). There is no atmospheric gradient from horizon to zenith, no visible sun disk, and no twilight coloring. The atmosphere shader infrastructure exists (SKY-001 and SKY-002 were resolved) but the sky rendering is not connected to the main game renderer path.",
+    "reproduction": "Run the game and look at the sky. Sky is a uniform flat color at all times of day.",
+    "suspected_files": [
+      "src/lighting/mod.rs",
+      "src/lighting/sky.rs",
+      "src/gpu/renderer.rs"
+    ],
+    "suspected_cause": "The atmosphere/sky gradient shader exists but is either not spawned as a sky mesh entity in the main game path, or the shader parameters (sun direction, planet radius, atmosphere thickness) are not being fed from the live OrbitalState and PlanetConfig resources.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "SKY-001 (gray/colorless world) and SKY-002 (black sky in planet mode) were both resolved but addressed different root causes. SKY-003 is the remaining issue: no visible gradient or sun disk.",
+      "src/gpu/renderer.rs has a HeadlessRenderParams struct with enable_stars: bool field, suggesting sky/star rendering is partially implemented for the headless path but not the live game."
+    ]
+  },
+  {
+    "id": "SKY-004",
+    "title": "No stars visible at night \u2014 night sky is solid dark color",
+    "category": "rendering",
+    "severity": "medium",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "At night, the sky is a solid dark color with no stars. There is no procedural star field generated for the system. Stars should be visible when the sun is below the horizon, fading in at dusk and out at dawn.",
+    "reproduction": "Run the game and wait until night (or speed up time with time_scale). Night sky has no stars.",
+    "suspected_files": [
+      "src/lighting/mod.rs",
+      "src/lighting/sky.rs",
+      "src/planet/celestial.rs",
+      "src/gpu/renderer.rs"
+    ],
+    "suspected_cause": "No star field generation or rendering exists in the main game path. src/gpu/renderer.rs has an enable_stars: bool field on HeadlessRenderParams (currently false) that is not connected to the game renderer. A procedural star sphere driven by CelestialSystem data (or a seeded RNG from the system seed) needs to be implemented.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "Star positions should be consistent per system (driven by system seed or CelestialSystem data), not random each run.",
+      "Brightness should scale with sun elevation: fully visible at night, fading out around sunrise/sunset.",
+      "Could be rendered as a large inverted sphere with a star texture, or as point sprites, or as bright pixels in a sky shader."
+    ]
+  },
+  {
+    "id": "SKY-005",
+    "title": "Moons not rendered \u2014 Moon struct and moon_position() exist but no sky object is spawned",
+    "category": "rendering",
+    "severity": "low",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "If the planetary system has moons, they should appear as visible objects in the sky when lit by the sun. The Moon struct and moon_position() function exist in src/planet/celestial.rs but no sky entity or billboard is spawned for them.",
+    "reproduction": "Run the game with a system that has moons. No moon is visible in the sky.",
+    "suspected_files": [
+      "src/planet/celestial.rs",
+      "src/lighting/mod.rs"
+    ],
+    "suspected_cause": "Moon rendering was never implemented. moon_position() computes the correct position but the result is not used to spawn a billboard, sprite, or sky mesh entity.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "Lower priority than SKY-003 and SKY-004.",
+      "Moon brightness should depend on phase angle relative to sun (only lit side visible).",
+      "Should be blocked on SKY-003 being resolved first so the sky rendering pipeline is in place."
+    ]
+  },
+  {
+    "id": "RENDER-010",
+    "title": "Narrow chunk seams still visible at LOD transitions and cube-face boundaries",
+    "category": "rendering",
+    "severity": "medium",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "Thin gaps remain between adjacent chunks where vertices do not align exactly. You can see terrain below through the seam. These are distinct from the resolved RENDER-004 (grid-like lat/lon seams): those were same-LOD seams fixed by surface nets padding. The remaining seams occur specifically at LOD transition boundaries (LOD 0 chunk adjacent to LOD 1 chunk) and at cube-face boundaries where two faces of the cubed-sphere meet.",
+    "reproduction": "Look at terrain from above or at an angle, especially at medium distance where LOD transitions occur. Thin lines/gaps are visible between chunk edges.",
+    "suspected_files": [
+      "src/world/v2/surface_nets.rs",
+      "src/world/v2/chunk_manager.rs",
+      "src/world/v2/terrain_gen.rs"
+    ],
+    "suspected_cause": "Different LOD levels produce mesh vertices at slightly different world positions (LOD seam stitching not implemented). The tangent-frame projection may also introduce sub-millimeter float precision errors at chunk boundaries. Cross-face chunk boundaries have more complex wrapping that may not be fully handled.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "surface_nets.rs comments mention: '1-voxel approximation cracks remain only at chunk corners (where 4 chunks meet along an edge)' — but user reports seams are still visible more broadly.",
+      "Check if seams are specifically at LOD boundaries (LOD 0 adjacent to LOD 1) vs same-LOD seams.",
+      "Check if seams are only at cube face boundaries or also within a single face.",
+      "A skirt/overlap approach (extending mesh slightly beyond chunk boundary) is a common workaround for LOD seams in voxel engines."
+    ]
   }
 ]
