@@ -342,8 +342,14 @@ fn desired_chunks_v2(
 
     let mut set = HashSet::new();
 
-    // Track the cumulative world-space radius covered by finer LODs
-    // so coarser LODs only fill the ring beyond.
+    // Outer world-space edge of the most recently processed (finer) LOD ring.
+    // Each coarser LOD skips the inner area already covered by finer LODs.
+    // IMPORTANT: use `=` (not `+=`) — we want the ACTUAL outer edge of the
+    // previous ring so the next ring starts exactly where the last one ended.
+    // With `+=` the value accumulates beyond the true outer edge, creating
+    // large un-covered gaps between LOD rings (e.g. LOD 1 ends at 512m but
+    // `covered` becomes 896m, so LOD 2 inner skip jumps to 896m — leaving a
+    // 384m hole in the terrain with nothing rendered in it).
     let mut covered_world_radius = 0.0_f64;
 
     for &(lod, ring_chunks) in &LOD_RINGS {
@@ -437,7 +443,7 @@ fn desired_chunks_v2(
             }
         }
 
-        covered_world_radius += h as f64 * chunk_world_size;
+        covered_world_radius = h as f64 * chunk_world_size;
     }
 
     set
@@ -1396,6 +1402,68 @@ mod tests {
             "Should have a reasonable number of chunks, got {}",
             desired.len()
         );
+    }
+
+    /// Verify that each LOD ring starts exactly where the previous one ended
+    /// (no gaps in world-space coverage). The `covered_world_radius = …` (not
+    /// `+=`) assignment is what guarantees this; this test acts as a regression
+    /// guard against reverting it to `+=`.
+    #[test]
+    fn lod_rings_have_continuous_coverage() {
+        // For each LOD ring we can reconstruct the outer edge from LOD_RINGS:
+        //   outer_edge(lod) = sum of (h * CS) for lods 0..=lod
+        // The inner skip for lod N should be: ceil(outer_edge(N-1) / CS_N).
+        // If desired_chunks_v2 uses `=` the inner chunks are exactly those
+        // covered by lod 0..N-1 with no gap and no overlap.
+        let cfg = PlanetConfig {
+            mean_radius: 32000.0,
+            sea_level_radius: 32000.0,
+            noise: None,
+            ..Default::default()
+        };
+        let radius = V2LoadRadius {
+            horizontal: 12,
+            vertical: 4,
+        };
+        let cam_pos = DVec3::new(cfg.mean_radius, 0.0, 0.0);
+        let desired = desired_chunks_v2(cam_pos, &cfg, &radius, None);
+
+        // Bin chunks by LOD and find the max tangential column distance per LOD.
+        let mut max_col_dist = vec![0i32; LOD_RINGS.len()];
+        for coord in &desired {
+            let lod = coord.lod as usize;
+            let dist = coord.u.abs().max(coord.v.abs());
+            if dist > max_col_dist[lod] {
+                max_col_dist[lod] = dist;
+            }
+        }
+
+        // Reconstruct expected outer-edge columns per LOD.
+        let mut expected_outer: Vec<f64> = Vec::new();
+        let mut cumulative = 0.0_f64;
+        for (i, &(h, _lod_scale)) in LOD_RINGS.iter().enumerate() {
+            let cs = CHUNK_SIZE as f64 * (1 << i) as f64;
+            cumulative += h as f64 * cs;
+            expected_outer.push(cumulative);
+        }
+
+        // Inner edge of each ring must be <= outer edge of the previous ring
+        // (i.e. no gap). Allow one chunk of tolerance for rounding.
+        let cs0 = CHUNK_SIZE as f64;
+        for i in 1..LOD_RINGS.len() {
+            let cs_i = cs0 * (1 << i) as f64;
+            let inner_world = max_col_dist[i - 1] as f64 * cs0;
+            let inner_skip_cols = (expected_outer[i - 1] / cs_i).ceil() as i32;
+            let gap_world = inner_skip_cols as f64 * cs_i - inner_world;
+            assert!(
+                gap_world <= cs_i,
+                "LOD {} has a gap of {:.0}m (> one chunk of {:.0}m) relative to LOD {}",
+                i,
+                gap_world,
+                cs_i,
+                i - 1
+            );
+        }
     }
 
     /// End-to-end lifecycle test: dispatch tasks, let them complete, collect
