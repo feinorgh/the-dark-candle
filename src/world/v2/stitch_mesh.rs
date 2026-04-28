@@ -622,15 +622,14 @@ fn corner_quad_triangles(
 /// System: maintain corner-cap triangles at all three-way LOD seam junctions.
 ///
 /// Two adjacent pairwise stitches (dir_a and dir_b from the same fine chunk)
-/// leave a small quadrilateral hole at the corner.  This system fills it with
-/// two triangles sharing their edges with the endpoints of the two pairwise
-/// stitches.  Handles both the case where dir_a and dir_b lead to the SAME
-/// coarse chunk and the case where they lead to DIFFERENT coarse chunks.
+/// each bridge to a *different* coarse chunk, leaving a small quadrilateral
+/// hole at the corner.  This system fills that hole with two triangles that
+/// share their edges with the endpoints of the two pairwise stitches.
 ///
-/// Why both cases have a corner gap: the corner vertex of the fine mesh is
-/// classified to one face only (boundary_loop.rs `classify_vertex`).  The
-/// other chain ends one surface-nets vertex short of the corner, leaving a
-/// ~1-voxel gap that this system fills.
+/// The same-coarse case (coarse_a == coarse_b) is explicitly skipped: it
+/// arises when the fine chunk is interior to a single coarse chunk, where
+/// the coarse NegU/NegV faces are not adjacent to the fine PosU/PosV faces.
+/// Connecting them would produce ~32 m triangles covering other terrain.
 ///
 /// The four corner vertices are derived by re-running the same coarse clip as
 /// `v2_stitch_update` so that the cap exactly matches the already-emitted
@@ -721,6 +720,13 @@ pub fn v2_corner_stitch_update(
                         }
                     }
                 };
+
+            // Same coarse chunk on both sides means the fine chunk is interior to
+            // that coarse chunk — the coarse NegU and NegV faces are not adjacent to
+            // the fine PosU/PosV faces.  Bridging them produces huge (~32 m) triangles.
+            if coarse_a_coord == coarse_b_coord {
+                continue;
+            }
 
             let Some(coarse_a_entity) = chunk_map.get(&coarse_a_coord) else {
                 continue;
