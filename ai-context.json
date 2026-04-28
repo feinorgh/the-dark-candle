@@ -32,7 +32,7 @@
       {
         "name": "world",
         "path": "src/world/",
-        "responsibility": "Chunks, octree SVO, terrain generation (flat + spherical) with composable NoiseStack (FBM/ridged/selector/warp/micro-detail), continent/ocean masks, biome-terrain integration (slope/altitude-aware surface materials), depth-based geological strata & ore veins, multi-scale caves (caverns/tunnels/tubes), hydraulic erosion (droplet + grid), meshing stub (ChunkMesh/chunk_mesh_to_bevy_mesh for V2), D8 flow erosion, LOD, raycast, voxel access layer, planet config; V2 sub-module (src/world/v2/): CubeSphereCoord with ChunkDir enum + same_face_neighbor_at_lod/same_face_neighbors_at_lod_all helpers, ChunkBoundaryLoops component (boundary_loop.rs), cross-LOD invalidation in chunk_manager.rs Stage 1b; stitch_mesh.rs (Phase 2): V2StitchMap + v2_stitch_update generating bridging triangle fans between cross-LOD boundary loops"
+        "responsibility": "Chunks, octree SVO, terrain generation (flat + spherical) with composable NoiseStack (FBM/ridged/selector/warp/micro-detail), continent/ocean masks, biome-terrain integration (slope/altitude-aware surface materials), depth-based geological strata & ore veins, multi-scale caves (caverns/tunnels/tubes), hydraulic erosion (droplet + grid), meshing stub (ChunkMesh/chunk_mesh_to_bevy_mesh for V2), D8 flow erosion, LOD, raycast, voxel access layer, planet config; V2 sub-module (src/world/v2/): CubeSphereCoord with ChunkDir enum + same_face_neighbor_at_lod/same_face_neighbors_at_lod_all/cross_face_neighbor_at_lod helpers, ChunkBoundaryLoops component (boundary_loop.rs), cross-LOD invalidation in chunk_manager.rs Stage 1b; stitch_mesh.rs (Phase 2+3): V2StitchMap + v2_stitch_update generating bridging triangle fans between cross-LOD boundary loops — same-face and cross-face (Phase 3)"
       },
       {
         "name": "physics",
@@ -1715,6 +1715,17 @@
         "src/world/v2/chunk_manager.rs"
       ],
       "commit": "a7033bd"
+    },
+    {
+      "id": "RENDER-010-PHASE3",
+      "name": "RENDER-010 Phase 3: Cross-Face LOD Stitch Lookup",
+      "status": "complete",
+      "description": "Added CubeSphereCoord::cross_face_neighbor_at_lod() which maps a fine chunk's boundary direction across a cube-face edge to the representative coarse chunk on the adjacent face. Uses the existing cross_face_u/cross_face_v private tables for face-adjacency mapping + integer midpoint formula for LOD rescaling. Wired into v2_stitch_update as a fallback when same_face_neighbor_at_lod returns None. PosLayer/NegLayer return None (no cross-face radial). 6 new unit tests (+1643 total). Stitch mesh generation itself is unchanged — both same-face and cross-face stitches use the same triangle-fan path.",
+      "files": [
+        "src/world/v2/cubed_sphere.rs",
+        "src/world/v2/stitch_mesh.rs"
+      ],
+      "commit": "3b2319f"
     }
   ],
   "tech_debt": [
