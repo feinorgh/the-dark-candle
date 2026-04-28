@@ -1737,6 +1737,16 @@
         "src/world/v2/chunk_manager.rs",
         "src/world/v2/stitch_mesh.rs"
       ]
+    },
+    {
+      "id": "RENDER-010-PROXIMITY-FILTER",
+      "title": "LOD+1 pairwise stitch radial proximity filter",
+      "status": "complete",
+      "commit": "90fbf91",
+      "description": "Radial proximity filter added to v2_stitch_update pairwise loop. Rejects (fine_chain, coarse_chain) pairs whose mean planet-radii differ by more than CHUNK_SIZE \u00d7 2^coarse_lod metres. Eliminates spurious stitches between unrelated terrain hills at different elevations.",
+      "files": [
+        "src/world/v2/stitch_mesh.rs"
+      ]
     }
   ],
   "tech_debt": [
@@ -1799,7 +1809,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "674d290",
+    "generated_from_commit": "90fbf91",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
