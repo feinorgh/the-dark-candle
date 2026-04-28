@@ -544,6 +544,61 @@ impl CubeSphereCoord {
             }
         }
     }
+
+    /// Returns the representative cross-face neighbour at `target_lod` that lies
+    /// just across `self`'s `dir` boundary on the adjacent cube face.
+    ///
+    /// Used by the Phase-3 stitch-mesh system when
+    /// [`same_face_neighbor_at_lod`](Self::same_face_neighbor_at_lod) returns
+    /// `None` (i.e. the neighbour is on a different face).
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Compute the out-of-bounds position in the **source LOD** grid:
+    ///    - `PosU`: u = fce_src (one past +u edge)
+    ///    - `NegU`: u = −1 (one before −u edge)
+    ///    - `PosV` / `NegV`: analogous
+    /// 2. Map through the private `cross_face_u` / `cross_face_v` tables to get
+    ///    (`adj_face`, `adj_u_src`, `adj_v_src`) in the source LOD grid.
+    /// 3. Rescale to target LOD using the standard integer midpoint formula:
+    ///    `tgt = (2 * src + 1) * fce_tgt / (2 * fce_src)`.
+    ///
+    /// Returns `None` for `PosLayer`/`NegLayer` (no cross-face in the radial
+    /// direction) or when the rescaled coordinate is out of range.
+    pub fn cross_face_neighbor_at_lod(
+        &self,
+        dir: ChunkDir,
+        target_lod: u8,
+        mean_radius: f64,
+    ) -> Option<CubeSphereCoord> {
+        let fce_src = Self::face_chunks_per_edge_lod(mean_radius, self.lod) as i64;
+        let fce_tgt = Self::face_chunks_per_edge_lod(mean_radius, target_lod) as i64;
+        let fce_src_i = fce_src as i32;
+        let fce_tgt_i = fce_tgt as i32;
+
+        let (adj_face, adj_u_src, adj_v_src) = match dir {
+            // Radial directions have no cross-face mapping.
+            ChunkDir::PosLayer | ChunkDir::NegLayer => return None,
+            // Step one cell past the +u / −u boundary in source-LOD coords.
+            ChunkDir::PosU => cross_face_u(self.face, self.v, fce_src_i, fce_src_i),
+            ChunkDir::NegU => cross_face_u(self.face, self.v, -1, fce_src_i),
+            // Step one cell past the +v / −v boundary.
+            ChunkDir::PosV => cross_face_v(self.face, self.u, fce_src_i, fce_src_i),
+            ChunkDir::NegV => cross_face_v(self.face, self.u, -1, fce_src_i),
+        };
+
+        // Rescale (adj_u_src, adj_v_src) from source-LOD grid to target-LOD grid.
+        let adj_u_tgt = ((2 * adj_u_src as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+        let adj_v_tgt = ((2 * adj_v_src as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+
+        if adj_u_tgt < 0 || adj_u_tgt >= fce_tgt_i || adj_v_tgt < 0 || adj_v_tgt >= fce_tgt_i {
+            return None;
+        }
+
+        Some(CubeSphereCoord::new_with_lod(
+            adj_face, adj_u_tgt, adj_v_tgt, self.layer, target_lod,
+        ))
+    }
 }
 
 /// Convert a world-space position to the nearest `CubeSphereCoord`.
@@ -1123,5 +1178,144 @@ mod tests {
             total_fine_invalidations > 0,
             "No fine invalidations generated"
         );
+    }
+
+    // ── cross_face_neighbor_at_lod tests ─────────────────────────────────────
+
+    #[test]
+    fn cross_face_neighbor_pos_u_returns_adjacent_face() {
+        // PosZ face, at +u edge (u=fce-1). PosU should cross to PosX face.
+        // cross_face_u(PosZ, v, max, max) → (PosX, 0, v)
+        let small_r = 320.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, fce0 - 1, 5, 0, 0);
+        // same_face must return None for this coord
+        assert!(
+            coord
+                .same_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r)
+                .is_none(),
+            "PosU at max-u should be None from same_face"
+        );
+        let nb = coord.cross_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r);
+        assert!(nb.is_some(), "cross_face PosU should produce a neighbor");
+        let nb = nb.unwrap();
+        assert_eq!(
+            nb.face,
+            CubeFace::PosX,
+            "PosZ +PosU should cross to PosX, got {:?}",
+            nb.face
+        );
+        assert_eq!(nb.u, 0, "first cell on adjacent face should have u=0");
+        assert_eq!(nb.lod, 0);
+    }
+
+    #[test]
+    fn cross_face_neighbor_neg_u_returns_adjacent_face() {
+        // PosZ face, at −u edge (u=0). NegU should cross to NegX face.
+        // cross_face_u(PosZ, v, -1, max) → (NegX, last, v)
+        let small_r = 320.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 0, 7, 0, 0);
+        assert!(
+            coord
+                .same_face_neighbor_at_lod(ChunkDir::NegU, 0, small_r)
+                .is_none(),
+            "NegU at u=0 should be None from same_face"
+        );
+        let nb = coord
+            .cross_face_neighbor_at_lod(ChunkDir::NegU, 0, small_r)
+            .expect("cross_face NegU should produce a neighbor");
+        assert_eq!(
+            nb.face,
+            CubeFace::NegX,
+            "PosZ −NegU should cross to NegX, got {:?}",
+            nb.face
+        );
+        assert_eq!(nb.u, fce0 - 1, "last cell on adjacent face, got {}", nb.u);
+    }
+
+    #[test]
+    fn cross_face_neighbor_pos_v_returns_adjacent_face() {
+        // PosZ face, at +v edge (v=fce-1). PosV should cross to PosY face.
+        // cross_face_v(PosZ, u, max, max) → (PosY, u, 0)
+        let small_r = 320.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 6, fce0 - 1, 0, 0);
+        assert!(
+            coord
+                .same_face_neighbor_at_lod(ChunkDir::PosV, 0, small_r)
+                .is_none()
+        );
+        let nb = coord
+            .cross_face_neighbor_at_lod(ChunkDir::PosV, 0, small_r)
+            .expect("cross_face PosV should produce a neighbor");
+        assert_eq!(
+            nb.face,
+            CubeFace::PosY,
+            "PosZ +PosV → PosY, got {:?}",
+            nb.face
+        );
+        assert_eq!(nb.v, 0, "first cell on adjacent face, got {}", nb.v);
+    }
+
+    #[test]
+    fn cross_face_neighbor_neg_v_returns_adjacent_face() {
+        // PosZ face, at -v edge (v=0). NegV should cross to NegY face.
+        // cross_face_v(PosZ, u, -1, max) → (NegY, u, last)
+        let small_r = 320.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 8, 0, 0, 0);
+        assert!(
+            coord
+                .same_face_neighbor_at_lod(ChunkDir::NegV, 0, small_r)
+                .is_none()
+        );
+        let nb = coord
+            .cross_face_neighbor_at_lod(ChunkDir::NegV, 0, small_r)
+            .expect("cross_face NegV should produce a neighbor");
+        assert_eq!(
+            nb.face,
+            CubeFace::NegY,
+            "PosZ -NegV → NegY, got {:?}",
+            nb.face
+        );
+        assert_eq!(nb.v, fce0 - 1, "last cell on adjacent face, got {}", nb.v);
+    }
+
+    #[test]
+    fn cross_face_neighbor_radial_returns_none() {
+        let small_r = 320.0_f64;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 0, 0, 0, 0);
+        assert!(
+            coord
+                .cross_face_neighbor_at_lod(ChunkDir::PosLayer, 0, small_r)
+                .is_none(),
+            "PosLayer should always be None"
+        );
+        assert!(
+            coord
+                .cross_face_neighbor_at_lod(ChunkDir::NegLayer, 0, small_r)
+                .is_none(),
+            "NegLayer should always be None"
+        );
+    }
+
+    #[test]
+    fn cross_face_neighbor_coarse_lod_scales_correctly() {
+        // At LOD 0 edge, cross-face to LOD 1 → coordinate should be rescaled.
+        // R=320 → fce0=16, fce1=8. PosZ, u=fce0-1=15, v=7 (mid-face).
+        // cross_face_u(PosZ, 7, 16, 16) → (PosX, 0, 7)
+        // adj_u_tgt = (1 * 8) / (2*16) = 8/32 = 0
+        // adj_v_tgt = (15 * 8) / (2*16) = 120/32 = 3
+        let small_r = 320.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, fce0 - 1, 7, 0, 0);
+        let nb = coord
+            .cross_face_neighbor_at_lod(ChunkDir::PosU, 1, small_r)
+            .expect("cross-face LOD-1 neighbor should exist");
+        assert_eq!(nb.face, CubeFace::PosX);
+        assert_eq!(nb.lod, 1);
+        assert_eq!(nb.u, 0);
+        assert_eq!(nb.v, 3, "v should rescale from 7 (LOD0/16) to 3 (LOD1/8)");
     }
 }

@@ -1,9 +1,13 @@
-// Stitch mesh generation for RENDER-010 Phase 2 — same-face LOD seams.
+// Stitch mesh generation for RENDER-010 Phases 2+3 — same-face and cross-face LOD seams.
 //
 // When a fine chunk A (LOD l) and a coarse chunk B (LOD l+1) share a boundary,
 // the two surface-nets meshes do not align: vertices on A's seam edge are denser
 // and at slightly different world positions than those on B's seam edge.
 // This file bridges that gap with explicit triangulation.
+//
+// Phase 2 (same-face): B is on the same cube face as A.
+// Phase 3 (cross-face): B is on an adjacent cube face; the same triangulation
+//   algorithm applies since boundary loops are already in world space.
 //
 // ## Algorithm
 //
@@ -345,12 +349,18 @@ pub fn v2_stitch_update(
         };
 
         for (dir_idx, &dir) in ChunkDir::ALL.iter().enumerate() {
-            // Look up the single representative coarse neighbor
-            let Some(coarse_coord) =
-                fine_coord.same_face_neighbor_at_lod(dir, coarse_lod, mean_radius)
-            else {
-                continue; // off-face → Phase 3
-            };
+            // Look up the single representative coarse neighbor — same face first,
+            // cross-face fallback (Phase 3).
+            let coarse_coord =
+                match fine_coord.same_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
+                    Some(c) => c,
+                    None => {
+                        match fine_coord.cross_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
+                            Some(c) => c,
+                            None => continue, // PosLayer/NegLayer — no cross-face
+                        }
+                    }
+                };
 
             // Verify the coarse chunk is actually loaded at coarse_lod
             let Some(coarse_entity) = chunk_map.get(&coarse_coord) else {
