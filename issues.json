@@ -1012,5 +1012,22 @@
       "Check if seams are only at cube face boundaries or also within a single face.",
       "A skirt/overlap approach (extending mesh slightly beyond chunk boundary) is a common workaround for LOD seams in voxel engines."
     ]
+  },
+  {
+    "id": "CHUNK-001",
+    "title": "Overflow panic in mesh priority sort on teleport",
+    "category": "crash",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-04-28",
+    "description": "Teleporting long distances caused a 'attempt to add with overflow' panic in the async mesh-priority computation (chunk_manager.rs:970). The sort key was i32 but the sum of class_penalty (up to 30M) + lod_penalty + dist (clamped to i32::MAX ≈ 2.1B) exceeded i32::MAX.",
+    "reproduction": "Teleport to a distant coordinate (e.g. 70.8°S 125.0°E). Panic fires in Compute Task Pool thread during mesh scheduling.",
+    "suspected_files": [
+      "src/world/v2/chunk_manager.rs"
+    ],
+    "suspected_cause": "Priority key type i32 too narrow. dist was clamped to i32::MAX before being added to penalties, but the sum still overflowed.",
+    "related_commits": [],
+    "resolution": "Widened sort key and all penalty variables to i64. Removed the i32-range clamp on the distance squared term — i64 has ample headroom for planet-scale chunk coordinates. Fixed in next commit after 3649a77.",
+    "notes": []
   }
 ]

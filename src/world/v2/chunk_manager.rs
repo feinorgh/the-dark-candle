@@ -945,27 +945,26 @@ pub fn v2_collect_terrain(
     // and contributes to FPS drops while ~5000 chunks are queued.
     let base_fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
     let cam_coord_for_mesh = cam_world_pos.map(|p| world_pos_to_coord(p.0, mean_radius, base_fce));
-    let mut keyed_mesh: Vec<(i32, CubeSphereCoord)> = candidates
+    let mut keyed_mesh: Vec<(i64, CubeSphereCoord)> = candidates
         .into_iter()
         .map(|c| {
-            let class_penalty = match cache.get(&c) {
+            let class_penalty: i64 = match cache.get(&c) {
                 Some(CachedVoxels::Mixed(_)) => 0,
                 Some(CachedVoxels::AllSolid(_)) => 10_000_000,
                 Some(CachedVoxels::AllAir) => 20_000_000,
                 None => 30_000_000,
             };
-            let lod_penalty = (c.lod as i32) * 2_000_000;
-            let dist = if let Some(cam) = cam_coord_for_mesh
+            let lod_penalty: i64 = (c.lod as i64) * 2_000_000;
+            let dist: i64 = if let Some(cam) = cam_coord_for_mesh
                 && c.face == cam.face
             {
                 let scale = 1i64 << c.lod;
                 let du = c.u as i64 * scale - cam.u as i64;
                 let dv = c.v as i64 * scale - cam.v as i64;
                 let dl = (c.layer - cam.layer) as i64;
-                // Clamp to i32 range so the priority key stays i32.
-                (du * du + dv * dv + dl * dl).min(i32::MAX as i64) as i32
+                du * du + dv * dv + dl * dl
             } else {
-                i32::MAX / 8
+                i64::MAX / 8
             };
             (class_penalty + lod_penalty + dist, c)
         })
