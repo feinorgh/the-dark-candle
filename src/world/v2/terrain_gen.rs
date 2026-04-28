@@ -436,7 +436,10 @@ fn generate_boundary_slices(
             tgen,
         ));
     }
-    NeighborSlices { slices }
+    NeighborSlices {
+        slices,
+        cached: [false; 6],
+    }
 }
 
 /// Generate a single boundary slice for one direction via terrain resampling.

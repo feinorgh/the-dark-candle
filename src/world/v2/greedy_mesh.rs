@@ -20,12 +20,21 @@ use crate::world::voxel::{MaterialId, Voxel};
 /// For -X neighbor: the x=CS-1 layer (adjacent to our x=0). Etc.
 pub struct NeighborSlices {
     pub slices: [Option<Vec<Voxel>>; 6],
+    /// `cached[dir] == true` means `slices[dir]` was extracted bit-identically
+    /// from a same-face same-LOD neighbour's voxel array, so the boundary
+    /// produces no seam (both chunks compute identical vertex positions on
+    /// the shared edge). `false` means the slice was resampled or absent —
+    /// a possible seam source (cross-face boundary, missing neighbour, or
+    /// a different-LOD neighbour). The surface-nets mesher uses this to
+    /// decide whether to emit lateral skirts.
+    pub cached: [bool; 6],
 }
 
 impl NeighborSlices {
     pub fn empty() -> Self {
         Self {
             slices: [const { None }; 6],
+            cached: [false; 6],
         }
     }
 }

@@ -826,10 +826,11 @@ fn build_neighbor_slices(
 ) -> NeighborSlices {
     let max_uv = fce as i32;
     let mut slices: [Option<Vec<crate::world::voxel::Voxel>>; 6] = [const { None }; 6];
+    let mut cached = [false; 6];
 
     for (dir, slot) in slices.iter_mut().enumerate() {
         if let Some(neighbor_coord) = same_face_neighbor_for_dir(coord, dir, max_uv)
-            && let Some(cached) = cache.get(&neighbor_coord)
+            && let Some(cached_vox) = cache.get(&neighbor_coord)
         {
             // `slices[dir]` must contain the layer of the neighbor that is
             // directly adjacent to the current chunk's `dir` face. For +X
@@ -840,10 +841,15 @@ fn build_neighbor_slices(
             // (dir=0 → x=0, dir=1 → x=CS-1, dir=2 → y=0, dir=3 → y=CS-1,
             // dir=4 → z=0, dir=5 → z=CS-1), so we pass `dir` directly
             // rather than inverting it.
-            *slot = Some(extract_edge_slice(cached, dir));
+            *slot = Some(extract_edge_slice(cached_vox, dir));
+            cached[dir] = true;
             continue;
         }
-        // Fallback: resample terrain for this boundary
+        // Fallback: resample terrain for this boundary. The resampled slice
+        // is correct in world space but is NOT bit-identical to what the
+        // neighbour computed from its own voxel pass, so a seam can show
+        // here at sub-mm precision (cross-face boundary or missing /
+        // different-LOD neighbour). Skirts will mask the gap.
         *slot = Some(generate_single_boundary_slice(
             coord,
             dir,
@@ -853,7 +859,7 @@ fn build_neighbor_slices(
         ));
     }
 
-    NeighborSlices { slices }
+    NeighborSlices { slices, cached }
 }
 
 /// Collect completed terrain tasks, cache voxels, and dispatch mesh tasks.
