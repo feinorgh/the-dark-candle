@@ -14,11 +14,14 @@ pub mod refraction;
 pub mod scattering;
 pub mod shadows;
 pub mod sky;
+pub mod sky_dome;
 
 use bevy::pbr::DistanceFog;
+use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
 
 use crate::world::planet::PlanetConfig;
+use sky_dome::GameElapsedSeconds;
 
 /// Marker component for the sun DirectionalLight entity.
 #[derive(Component, Debug, Clone, Copy)]
@@ -136,11 +139,12 @@ struct PendingShadowUpdates {
     entities: Vec<Entity>,
 }
 
-/// System: advance the orbital state and sync TimeOfDay for backward compatibility.
+/// System: advance the orbital state, sync TimeOfDay, and accumulate game time.
 fn advance_time(
     time: Res<Time>,
     mut orbital_state: ResMut<orbital::OrbitalState>,
     mut tod: ResMut<TimeOfDay>,
+    mut elapsed: ResMut<GameElapsedSeconds>,
 ) {
     let real_dt = time.delta_secs_f64();
     let game_dt = real_dt * orbital_state.time_scale;
@@ -157,6 +161,9 @@ fn advance_time(
 
     // Sync TimeOfDay from rotation angle for backward compatibility.
     tod.0 = orbital::time_of_day_from_rotation(orbital_state.rotation_angle);
+
+    // Accumulate elapsed game-time for Keplerian moon orbit calculations.
+    elapsed.0 += game_dt;
 }
 
 /// Sun elevation angle (radians) from time of day.
@@ -324,52 +331,6 @@ fn update_fog(
     }
 }
 
-/// System: compute sky color from CPU Rayleigh scattering in spherical mode
-/// and set it as the ClearColor. In spherical mode the Bevy Atmosphere shader
-/// is not used because it assumes a flat world.
-fn update_spherical_sky(
-    planet: Res<PlanetConfig>,
-    sun_world: Res<SunWorldDirection>,
-    mut clear_color: ResMut<ClearColor>,
-    cam_q: Query<&crate::floating_origin::WorldPosition, With<crate::camera::FpsCamera>>,
-) {
-    if !planet.is_spherical() {
-        return;
-    }
-
-    let observer_up = cam_q
-        .iter()
-        .next()
-        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
-        .unwrap_or(bevy::math::DVec3::Y);
-
-    // Project the world sun direction into the observer's local tangent frame
-    // for the scattering model (which expects sun_dir relative to observer).
-    // Build tangent frame: up = observer_up, east & south from cross products.
-    let up = observer_up;
-    let arbitrary = if up.x.abs() < 0.9 {
-        bevy::math::DVec3::X
-    } else {
-        bevy::math::DVec3::Z
-    };
-    let east = up.cross(arbitrary).normalize();
-    let south = east.cross(up).normalize();
-
-    let wd = sun_world.0;
-    let local_sun = [wd.dot(east) as f32, wd.dot(up) as f32, wd.dot(south) as f32];
-
-    // Compute zenith sky color using our Rayleigh scattering model.
-    let zenith = [0.0_f32, 1.0, 0.0];
-    let hdr = sky::sky_color(zenith, local_sun);
-    let srgb = sky::tonemap_to_srgb(hdr);
-
-    clear_color.0 = Color::srgb(
-        srgb[0] as f32 / 255.0,
-        srgb[1] as f32 / 255.0,
-        srgb[2] as f32 / 255.0,
-    );
-}
-
 /// Spawn the sun DirectionalLight and set the initial global ambient.
 ///
 /// `AmbientLight` is NOT spawned on a separate entity: in Bevy 0.18,
@@ -509,7 +470,7 @@ pub struct LightingPlugin;
 
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
-        // Black clear color — the Atmosphere shader renders the sky over it.
+        // Black clear color — the sky dome material renders the sky over it.
         app.insert_resource(ClearColor(Color::BLACK));
 
         // Start at solar noon (rotation_angle = π) so the player always spawns
@@ -521,6 +482,9 @@ impl Plugin for LightingPlugin {
             ..Default::default()
         });
 
+        // Register the sky dome material type.
+        app.add_plugins(MaterialPlugin::<sky_dome::SkyMaterial>::default());
+
         app.init_resource::<TimeOfDay>()
             .init_resource::<DayNightConfig>()
             .init_resource::<SolarInsolation>()
@@ -529,7 +493,8 @@ impl Plugin for LightingPlugin {
             .init_resource::<ShadowConfig>()
             .init_resource::<LastShadowAngles>()
             .init_resource::<PendingShadowUpdates>()
-            .add_systems(Startup, spawn_lights)
+            .init_resource::<GameElapsedSeconds>()
+            .add_systems(Startup, (spawn_lights, sky_dome::spawn_sky_dome))
             .add_systems(
                 Update,
                 (
@@ -538,8 +503,10 @@ impl Plugin for LightingPlugin {
                     update_sun,
                     update_ambient,
                     update_fog.run_if(crate::diagnostics::debug_render::atmosphere_enabled),
-                    update_spherical_sky
+                    sky_dome::update_sky_material
                         .run_if(crate::diagnostics::debug_render::atmosphere_enabled),
+                    sky_dome::spawn_moon_billboards,
+                    sky_dome::update_moon_positions,
                     update_chunk_light_maps,
                     refraction::update_chunk_refraction_maps,
                     update_terrain_shadows,
@@ -549,6 +516,11 @@ impl Plugin for LightingPlugin {
                     // deferred commands, so they must run after chunk despawn
                     // commands have been flushed.
                     .after(crate::world::WorldSet::ChunkManagement),
+            )
+            .add_systems(
+                PostUpdate,
+                sky_dome::anchor_sky_dome_to_camera
+                    .after(bevy::transform::TransformSystems::Propagate),
             );
     }
 }

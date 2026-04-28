@@ -1,0 +1,325 @@
+// GPU sky dome: Rayleigh sky gradient, sun disk, and moon billboards.
+//
+// Architecture overview:
+//   * `SkyMaterial`   – Bevy custom `Material` backed by `sky_dome.wgsl`.
+//                       Uses `AlphaMode::Blend` so it bypasses the depth
+//                       prepass and renders in the Transparent3d phase, after
+//                       all opaque terrain/chunks have written depth.
+//   * `SkyDome`       – marker component for the sky sphere entity.
+//   * `MoonBillboard` – marker + per-moon metadata for each moon quad entity.
+//   * `GameElapsedSeconds` – accumulated game-time for Keplerian moon orbits.
+//
+// Systems added by `LightingPlugin`:
+//   Startup:    spawn_sky_dome
+//   Update:     update_sky_material, spawn_moon_billboards, update_moon_positions
+//   PostUpdate: anchor_sky_dome_to_camera
+
+use bevy::camera::visibility::NoFrustumCulling;
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{Material, MaterialPipelineKey};
+use bevy::prelude::*;
+use bevy::render::render_resource::{
+    AsBindGroup, CompareFunction, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+};
+use bevy::shader::ShaderRef;
+
+use crate::floating_origin::WorldPosition;
+use crate::lighting::SunWorldDirection;
+use crate::planet::celestial::moon_position;
+use crate::world::PlanetaryData;
+
+// ── SkyMaterial ───────────────────────────────────────────────────────────────
+
+/// Custom material for the atmospheric sky dome.
+///
+/// Two uniforms are uploaded each frame by `update_sky_material`:
+///   `sun_direction` – sun direction in the observer's local tangent frame.
+///   `observer_up`   – planet-up unit vector in render-space world coordinates.
+#[derive(Asset, bevy::reflect::TypePath, AsBindGroup, Debug, Clone)]
+pub struct SkyMaterial {
+    /// Sun direction in observer's local tangent frame (Y = zenith). xyz used.
+    #[uniform(0)]
+    pub sun_direction: Vec4,
+    /// Observer's planet-up direction in world (render) space. xyz used.
+    #[uniform(1)]
+    pub observer_up: Vec4,
+}
+
+impl Material for SkyMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/sky_dome.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "shaders/sky_dome.wgsl".into()
+    }
+
+    /// AlphaMode::Blend bypasses the depth prepass entirely, so the sky dome
+    /// sphere mesh never writes incorrect depth values during that phase.
+    /// The sky renders in the Transparent3d phase with z = 0.0 (infinity).
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Render both faces so the sphere is visible from inside.
+        descriptor.primitive.cull_mode = None;
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            // The sky writes no depth; terrain depth values must remain intact.
+            depth.depth_write_enabled = false;
+            // Reverse-Z: pass if incoming z (0.0 = sky-at-infinity) >= stored z.
+            depth.depth_compare = CompareFunction::GreaterEqual;
+        }
+        Ok(())
+    }
+}
+
+// ── Marker components ─────────────────────────────────────────────────────────
+
+/// Marker for the sky dome sphere entity.
+#[derive(Component, Debug)]
+pub struct SkyDome;
+
+/// Marker for a moon billboard quad entity.  Stores the moon index into
+/// `PlanetaryData.0.celestial.moons`.
+#[derive(Component, Debug)]
+pub struct MoonBillboard {
+    pub moon_index: usize,
+}
+
+// ── Resources ─────────────────────────────────────────────────────────────────
+
+/// Accumulated game-time since session start in seconds.
+///
+/// Incremented in `advance_time` by `real_dt × time_scale` each frame.
+/// Used to drive Keplerian moon orbital positions.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct GameElapsedSeconds(pub f64);
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/// Visual distance (render space, metres) at which moon billboards are placed.
+/// The actual distance is irrelevant for appearance; this value must be large
+/// enough to be behind terrain but small enough for f32 precision.
+const VISUAL_MOON_DIST: f32 = 50_000.0;
+
+// ── Systems ───────────────────────────────────────────────────────────────────
+
+/// Startup system: spawn the sky dome sphere.
+///
+/// The sphere uses a radius-1 UVSphere mesh scaled to 1e5 m via Transform.
+/// `NoFrustumCulling` ensures it is never accidentally culled (it surrounds the
+/// camera, but Bevy's frustum test uses the mesh AABB, not the camera position).
+pub fn spawn_sky_dome(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+) {
+    let mesh = meshes.add(Sphere::new(1.0).mesh().uv(32, 18));
+    let mat = materials.add(SkyMaterial {
+        sun_direction: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        observer_up: Vec4::new(0.0, 1.0, 0.0, 0.0),
+    });
+    commands.spawn((
+        SkyDome,
+        Mesh3d(mesh),
+        MeshMaterial3d(mat),
+        Transform::from_scale(Vec3::splat(1e5)),
+        NoFrustumCulling,
+    ));
+}
+
+/// PostUpdate system: keep the sky dome centred on the camera.
+///
+/// The floating-origin `rebase_origin` system (also in PostUpdate) shifts all
+/// non-camera entity Transforms when the camera moves beyond 512 m from the
+/// current render origin.  Running after that rebase, this system copies the
+/// camera's render-space translation to the sky dome so it always surrounds
+/// the camera regardless of how many rebase cycles have accumulated.
+pub fn anchor_sky_dome_to_camera(
+    cam_q: Query<&Transform, With<Camera>>,
+    mut dome_q: Query<&mut Transform, (With<SkyDome>, Without<Camera>)>,
+) {
+    let Ok(cam_tf) = cam_q.single() else {
+        return;
+    };
+    for mut dome_tf in &mut dome_q {
+        dome_tf.translation = cam_tf.translation;
+    }
+}
+
+/// Update system: upload current sun direction and observer-up to the material.
+///
+/// Sun direction is projected into the observer's local tangent frame (Y = up),
+/// matching the coordinate system expected by the Rayleigh scattering model in
+/// `sky_dome.wgsl`.
+pub fn update_sky_material(
+    sun_world: Res<SunWorldDirection>,
+    cam_q: Query<&WorldPosition, With<crate::camera::FpsCamera>>,
+    dome_q: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+) {
+    let Ok(handle) = dome_q.single() else {
+        return;
+    };
+    let Some(mat) = materials.get_mut(handle.0.id()) else {
+        return;
+    };
+
+    // Observer's planet-up: direction from planet centre to camera, normalised.
+    let observer_up = cam_q
+        .iter()
+        .next()
+        .map(|wp| wp.0.normalize_or(bevy::math::DVec3::Y))
+        .unwrap_or(bevy::math::DVec3::Y);
+
+    // Build the local tangent frame: up = planet-up, east and south from cross products.
+    let up = observer_up;
+    let arbitrary = if up.x.abs() < 0.9 {
+        bevy::math::DVec3::X
+    } else {
+        bevy::math::DVec3::Z
+    };
+    let east = up.cross(arbitrary).normalize();
+    let south = east.cross(up).normalize();
+
+    // Project the world-space sun direction into the local frame.
+    let wd = sun_world.0;
+    let local_sun = Vec3::new(wd.dot(east) as f32, wd.dot(up) as f32, wd.dot(south) as f32);
+    let up_f32 = Vec3::new(
+        observer_up.x as f32,
+        observer_up.y as f32,
+        observer_up.z as f32,
+    );
+
+    mat.sun_direction = local_sun.extend(0.0);
+    mat.observer_up = up_f32.extend(0.0);
+}
+
+/// Update system: spawn moon billboard quads once `PlanetaryData` is available.
+///
+/// Uses a `Local<bool>` guard so the spawn happens exactly once.
+pub fn spawn_moon_billboards(
+    mut spawned: Local<bool>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    planetary_data: Option<Res<PlanetaryData>>,
+) {
+    if *spawned {
+        return;
+    }
+    let Some(data) = planetary_data else {
+        return;
+    };
+    let moons = &data.0.celestial.moons;
+    if moons.is_empty() {
+        *spawned = true;
+        return;
+    }
+
+    for (i, moon) in moons.iter().enumerate() {
+        let mesh = meshes.add(Rectangle::new(2.0, 2.0));
+        let base = Color::srgb(
+            moon.surface_color[0],
+            moon.surface_color[1],
+            moon.surface_color[2],
+        );
+        // Unlit emissive so moon brightness is albedo-driven, not affected by
+        // the sun DirectionalLight shining on the billboard quad.
+        let mat = materials.add(StandardMaterial {
+            base_color: base,
+            emissive: LinearRgba::from(base) * moon.albedo,
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        commands.spawn((
+            MoonBillboard { moon_index: i },
+            Mesh3d(mesh),
+            MeshMaterial3d(mat),
+            Transform::default(),
+            NoFrustumCulling,
+        ));
+    }
+    *spawned = true;
+}
+
+/// Update system: reposition and orient moon billboard quads each frame.
+///
+/// Moon positions are computed from Keplerian orbital mechanics via
+/// `moon_position(moon, t)`.  Billboards are placed at `VISUAL_MOON_DIST` from
+/// the camera in the direction of the actual moon; their scale is set to match
+/// the correct apparent angular size.
+pub fn update_moon_positions(
+    elapsed: Res<GameElapsedSeconds>,
+    planetary_data: Option<Res<PlanetaryData>>,
+    cam_q: Query<(&Transform, &WorldPosition), With<crate::camera::FpsCamera>>,
+    mut moon_q: Query<
+        (&MoonBillboard, &mut Transform, &mut Visibility),
+        Without<crate::camera::FpsCamera>,
+    >,
+) {
+    let Some(data) = planetary_data else {
+        return;
+    };
+    let Ok((cam_render_tf, cam_world)) = cam_q.single() else {
+        return;
+    };
+
+    let cam_up = cam_world.0.normalize_or(bevy::math::DVec3::Y);
+
+    for (billboard, mut tf, mut vis) in &mut moon_q {
+        let Some(moon) = data.0.celestial.moons.get(billboard.moon_index) else {
+            continue;
+        };
+
+        // Moon position in planet-centred coordinates (Keplerian orbit).
+        let moon_planet_pos = moon_position(moon, elapsed.0);
+
+        // Direction from camera to moon (planet-scale f64 arithmetic).
+        let to_moon = moon_planet_pos - cam_world.0;
+        let distance_m = to_moon.length();
+        let moon_dir_d = to_moon.normalize_or(bevy::math::DVec3::Y);
+        let moon_dir = Vec3::new(
+            moon_dir_d.x as f32,
+            moon_dir_d.y as f32,
+            moon_dir_d.z as f32,
+        );
+
+        // Place billboard at visual distance in the direction of the moon.
+        let render_pos = cam_render_tf.translation + moon_dir * VISUAL_MOON_DIST;
+
+        // Apparent angular radius (rad) → visual billboard radius (m at VISUAL_MOON_DIST).
+        // apparent = moon.radius_m / distance_m; visual = apparent * VISUAL_MOON_DIST.
+        let visual_radius = (moon.radius_m as f32 / distance_m as f32) * VISUAL_MOON_DIST;
+
+        // Billboard orientation: make the quad face the camera.
+        // Transform::looking_at makes local −Z point toward target; placing the
+        // target at (render_pos + moon_dir) makes −Z point away from camera,
+        // so +Z (the rectangle's front face normal) faces the camera.
+        let up_hint = if moon_dir.abs().dot(Vec3::Y) > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        *tf = Transform::from_translation(render_pos)
+            .looking_at(render_pos + moon_dir, up_hint)
+            .with_scale(Vec3::splat(visual_radius));
+
+        // Hide moon when it is below the horizon.
+        let cam_up_f32 = Vec3::new(cam_up.x as f32, cam_up.y as f32, cam_up.z as f32);
+        *vis = if moon_dir.dot(cam_up_f32) > -0.1 {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}

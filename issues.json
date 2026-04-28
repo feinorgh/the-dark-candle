@@ -926,7 +926,7 @@
     "title": "Atmospheric sky gradient and sun disk not rendered \u2014 sky is a flat clear color",
     "category": "rendering",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-28",
     "description": "The in-game sky displays as a single flat color (the Bevy ClearColor). There is no atmospheric gradient from horizon to zenith, no visible sun disk, and no twilight coloring. The atmosphere shader infrastructure exists (SKY-001 and SKY-002 were resolved) but the sky rendering is not connected to the main game renderer path.",
     "reproduction": "Run the game and look at the sky. Sky is a uniform flat color at all times of day.",
@@ -937,7 +937,7 @@
     ],
     "suspected_cause": "The atmosphere/sky gradient shader exists but is either not spawned as a sky mesh entity in the main game path, or the shader parameters (sun direction, planet radius, atmosphere thickness) are not being fed from the live OrbitalState and PlanetConfig resources.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Implemented GPU sky dome: SkyMaterial (Bevy custom Material + WGSL Rayleigh scattering shader with sun disk) in src/lighting/sky_dome.rs and assets/shaders/sky_dome.wgsl. Sky dome sphere spawned at startup, anchored to camera each PostUpdate frame to handle floating origin. Uses AlphaMode::Blend to bypass depth prepass; reverse-Z z=0.0 trick ensures it renders at infinity. Old update_spherical_sky (flat ClearColor) removed.",
     "notes": [
       "SKY-001 (gray/colorless world) and SKY-002 (black sky in planet mode) were both resolved but addressed different root causes. SKY-003 is the remaining issue: no visible gradient or sun disk.",
       "src/gpu/renderer.rs has a HeadlessRenderParams struct with enable_stars: bool field, suggesting sky/star rendering is partially implemented for the headless path but not the live game."
@@ -972,7 +972,7 @@
     "title": "Moons not rendered \u2014 Moon struct and moon_position() exist but no sky object is spawned",
     "category": "rendering",
     "severity": "low",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-28",
     "description": "If the planetary system has moons, they should appear as visible objects in the sky when lit by the sun. The Moon struct and moon_position() function exist in src/planet/celestial.rs but no sky entity or billboard is spawned for them.",
     "reproduction": "Run the game with a system that has moons. No moon is visible in the sky.",
@@ -982,7 +982,7 @@
     ],
     "suspected_cause": "Moon rendering was never implemented. moon_position() computes the correct position but the result is not used to spawn a billboard, sprite, or sky mesh entity.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Implemented MoonBillboard quads in src/lighting/sky_dome.rs: spawn_moon_billboards (one-shot, spawns a Rectangle quad per moon using StandardMaterial unlit+emissive) and update_moon_positions (repositions each quad to VISUAL_MOON_DIST=50000m in the moon direction each frame, scales for correct apparent size, hides when below horizon). GameElapsedSeconds resource accumulates game-time for Keplerian orbit input.",
     "notes": [
       "Lower priority than SKY-003 and SKY-004.",
       "Moon brightness should depend on phase angle relative to sun (only lit side visible).",
