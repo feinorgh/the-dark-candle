@@ -377,3 +377,59 @@ chemistry runtime — can be implemented in any order relative to 9b/9c.
 Depends on: nothing (lighting system already exists).
 Unlocks: Phase 9 atmosphere (solar heating), visual atmosphere (sky color),
 diurnal gameplay cycles.
+
+---
+
+## Procedural Night Sky (SKY-004)
+
+The Rayleigh sky-dome shader is composited additively with a procedural
+**celestial cubemap** generated once per system seed in `src/sky/`:
+
+- **Stars** — sampled from the Kroupa initial mass function, with realistic
+  mass→luminosity→effective-temperature mapping. Distances are drawn from a
+  thin-disk + thick-disk + halo distribution, directions are biased toward
+  the host galaxy's plane, and apparent V-magnitudes are computed from
+  `M_V + 5·log₁₀(d/10pc)`. Blackbody temperature is converted to linear sRGB
+  via the CIE 1931 colour matching functions.
+- **Host galaxy** — *procedurally generated* (not the Milky Way). The
+  galactic plane normal, bulge direction, disk thickness, and bulge radius
+  are random per system. The cubemap baker samples a per-pixel disk
+  (`exp(-|sin b|/h)`) × Gaussian-bulge density modulated by a 3D fbm value
+  noise field for dust lanes; sampling from the normalised view direction
+  guarantees seam continuity across cubemap faces.
+- **Nebulae** — emission (Hα), reflection (blue scattering), dark
+  (channel-tinted multiplicative attenuator simulating extinction
+  reddening), and planetary (compact, [O III] cyan). Anisotropic Gaussian
+  splat with axial ratio + position angle.
+- **Galaxies** — isotropic with a zone-of-avoidance dip near the host
+  galactic plane. Anisotropic Gaussian splat; the catalogue stores redshift
+  for future Doppler-shifted EM-band re-bakes.
+
+The full pipeline bakes to a `1024² × 6` `Rgba16Float` texture cube on the
+first frame `PlanetaryData` is available, then sets a `StarCubemapHandle`
+resource that `update_sky_material` swaps into binding 4/5 of the sky-dome
+material.
+
+Each frame, `update_sky_material` uploads `R_y(-OrbitalState.rotation_angle)`
+as three row-major `vec4` rows so the shader can rotate world-view directions
+into the celestial frame:
+
+```wgsl
+let dir_celestial = vec3<f32>(
+    dot(rows[0].xyz, world_view),
+    dot(rows[1].xyz, world_view),
+    dot(rows[2].xyz, world_view),
+);
+let stars = textureSample(star_cubemap, star_sampler, dir_celestial).rgb;
+rgb += stars * sky_params.x * exp(-sky_params.y * (1.0 / max(local_view.y, 0.05) - 1.0));
+```
+
+`sky_params.x` is a global night-brightness multiplier and `sky_params.y`
+controls airmass extinction near the horizon. Stars naturally fade out
+during the day because the Rayleigh-scattered sky is much brighter than the
+star contribution; no explicit fade curve is needed.
+
+Each `Star`/`Nebula`/`Galaxy` retains its physical state (mass, T_eff,
+distance, redshift, surface brightness, spectrum peak, …) so the same
+catalogue can drive future telescopic / multi-band / long-exposure imaging
+modes — those are tracked as SKY-006 and SKY-007 in `issues.json`.

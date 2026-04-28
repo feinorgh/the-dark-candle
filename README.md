@@ -92,6 +92,7 @@ projections with GPU-accelerated terrain detail.
 
 ### 🌤️ Atmosphere & Weather
 - **GPU sky dome** — custom Bevy `Material` backed by a WGSL Rayleigh-scattering shader (`sky_dome.wgsl`): 16-sample view path + 8-sample light path per pixel, sun disk, correct twilight gradient from horizon to zenith; renders at clip-space infinity via reverse-Z trick and bypasses the depth prepass with `AlphaMode::Blend`
+- **Procedural night sky** — full celestial catalogue baked into a 1024² × 6 RGBA16F cubemap on system load (`src/sky/`): stars from a Kroupa IMF with blackbody colour, a procedural host-galaxy diffuse band (disk + bulge + 3D fbm dust lanes), nebulae (emission / reflection / dark / planetary, anisotropic Gaussian splat with channel-tinted dark-cloud attenuation), and remote galaxies with a zone-of-avoidance distribution. Composited additively over the Rayleigh sky, attenuated by airmass near the horizon, and rotated each frame by `R_y(-rotation_angle)` so the stars track planet rotation
 - **Moon billboards** — one unlit billboard quad spawned per moon, repositioned each frame from Keplerian orbital mechanics (`moon_position()`); scale matches true apparent angular size; hidden below horizon
 - **Distance fog** — time-of-day color adaptation (warm dawn → blue noon → dark night) via `update_fog()` system
 - **Day/night cycle** — orbital sun position with twilight transitions
@@ -243,6 +244,7 @@ The codebase is organised into focused ECS modules:
 | `bodies/` | Articulated skeleton FK/IK, tissue compound colliders, FABRIK IK, locomotion gaits, player embodiment, injury system |
 | `planet/` | Geodesic grid, tectonics (advection, deformation, rifting, suturing, slab-pull, volcanic hotspots), impacts, celestial, biomes, geology, rendering |
 | `lighting/` | Sun cycle, GPU sky dome (`SkyMaterial` + `sky_dome.wgsl` Rayleigh shader), moon billboards, light maps, volumetric clouds, distance fog, optics (Snell's law, Fresnel, TIR), chromatic dispersion, local Mie scattering, caustics |
+| `sky/` | Procedural celestial catalogue (stars, host-galaxy band, nebulae, remote galaxies) and HDR cubemap baker sampled by the sky-dome shader |
 | `weather/` | Particle emitters, wind advection, snow/rain accumulation |
 | `biology/` | Metabolism, body temperature, hydration, energy systems |
 | `behavior/` | Behaviour trees, AI decision-making |

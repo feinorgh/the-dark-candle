@@ -948,7 +948,7 @@
     "title": "No stars visible at night \u2014 night sky is solid dark color",
     "category": "rendering",
     "severity": "medium",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-28",
     "description": "At night, the sky is a solid dark color with no stars. There is no procedural star field generated for the system. Stars should be visible when the sun is below the horizon, fading in at dusk and out at dawn.",
     "reproduction": "Run the game and wait until night (or speed up time with time_scale). Night sky has no stars.",
@@ -959,12 +959,17 @@
       "src/gpu/renderer.rs"
     ],
     "suspected_cause": "No star field generation or rendering exists in the main game path. src/gpu/renderer.rs has an enable_stars: bool field on HeadlessRenderParams (currently false) that is not connected to the game renderer. A procedural star sphere driven by CelestialSystem data (or a seeded RNG from the system seed) needs to be implemented.",
-    "related_commits": [],
-    "resolution": null,
+    "related_commits": [
+      "92cb173",
+      "609909f",
+      "33f5589",
+      "06223ea"
+    ],
+    "resolution": "Implemented full procedural celestial catalogue in `src/sky/`: stars (Kroupa IMF, blackbody colours, galactic-plane bias), procedural host-galaxy diffuse band (disk + bulge + 3D value-noise dust lanes), nebulae (emission/reflection/dark/planetary with anisotropic Gaussian splatting and dark-cloud attenuation), and remote galaxies (zone-of-avoidance distribution). Catalogue baked into a 1024\u00b2 \u00d7 6 RGBA16F cubemap on first frame and sampled additively in `assets/shaders/sky_dome.wgsl` with airmass extinction and a body\u2192celestial rotation matrix uploaded each frame so the sky tracks `OrbitalState.rotation_angle`. Visually verified by user.",
     "notes": [
-      "Star positions should be consistent per system (driven by system seed or CelestialSystem data), not random each run.",
-      "Brightness should scale with sun elevation: fully visible at night, fading out around sunrise/sunset.",
-      "Could be rendered as a large inverted sphere with a star texture, or as point sprites, or as bright pixels in a sky shader."
+      "Star positions are consistent per system (driven by system seed XOR'd with SKY_SEED_SALT), not random each run.",
+      "Brightness scales naturally with sun elevation through atmospheric scattering: stars fade out during the day because the additive Rayleigh-scattered sky drowns them.",
+      "Implemented as an HDR cubemap sampled by the existing GPU sky-dome shader. Each celestial object stores enough physical state (mass, T_eff, distance, redshift, ...) to support future EM-band re-bakes and long-exposure photography modes \u2014 those are filed as separate follow-ups."
     ]
   },
   {
@@ -1029,5 +1034,50 @@
     "related_commits": [],
     "resolution": "Widened sort key and all penalty variables to i64. Removed the i32-range clamp on the distance squared term — i64 has ample headroom for planet-scale chunk coordinates. Fixed in next commit after 3649a77.",
     "notes": []
+  },
+  {
+    "id": "SKY-006",
+    "title": "Long-exposure / multi-band sky imaging not exposed",
+    "category": "rendering",
+    "severity": "low",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "The procedural celestial catalogue stores enough physical state per object (mass, effective temperature, distance, redshift, spectrum peak, surface brightness, ...) to support telescopic / scientific imaging modes \u2014 long-exposure star stacking, infrared / UV / radio re-bakes, redshift-corrected photometry. None of this is currently exposed: only the default V-band visible bake is sampled by the sky shader.",
+    "reproduction": "n/a \u2014 feature gap.",
+    "suspected_files": [
+      "src/sky/cubemap.rs",
+      "src/sky/spectrum.rs",
+      "src/sky/plugin.rs"
+    ],
+    "suspected_cause": "Out of scope for SKY-004; deferred so the cubemap baker and shader integration could ship first.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "Re-bake the catalogue with band-specific magnitude / colour mapping (use Star.temperature_k + a band filter response curve to compute band magnitudes from the stored bolometric luminosity).",
+      "Long-exposure mode would re-sample the same cubemap with a tonemap that boosts faint stars without saturating bright ones; needs a separate LDR target.",
+      "UI plumbing for switching modes is the larger piece of work, not the catalogue side."
+    ]
+  },
+  {
+    "id": "SKY-007",
+    "title": "Visual tuning of star / nebula brightness against day sky",
+    "category": "rendering",
+    "severity": "low",
+    "status": "open",
+    "reported": "2026-04-28",
+    "description": "Numeric constants (FLUX_AT_MAG_ZERO, RENDER_MAG_LIMIT, PSF_SIGMA_PX, HOST_GALAXY_*_PEAK, NEBULA_PEAK_AT_REF_MAG, sky_params.x night brightness, sky_params.y airmass extinction strength) were chosen analytically and may need iterative tuning once the sky is observed across full day/night cycles, multiple latitudes, and varying weather.",
+    "reproduction": "Play the game across a full day and observe star/galaxy/nebula visibility.",
+    "suspected_files": [
+      "src/sky/cubemap.rs",
+      "src/sky/host_galaxy.rs",
+      "src/sky/diffuse.rs",
+      "src/lighting/sky_dome.rs"
+    ],
+    "suspected_cause": "Tuning task; not a bug.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "Baseline visuals confirmed acceptable by the user after SKY-004 \u2014 file this as a follow-up rather than a blocker."
+    ]
   }
 ]
