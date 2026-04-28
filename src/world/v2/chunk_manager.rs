@@ -103,6 +103,16 @@ impl V2ChunkMap {
     pub fn loaded_count(&self) -> usize {
         self.loaded.len()
     }
+
+    /// Look up the entity for a loaded chunk coordinate.
+    pub fn get(&self, coord: &CubeSphereCoord) -> Option<Entity> {
+        self.loaded.get(coord).copied()
+    }
+
+    /// Iterate all loaded (coord, entity) pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&CubeSphereCoord, &Entity)> {
+        self.loaded.iter()
+    }
 }
 
 /// Tracks which CubeSphereCoords have a terrain task dispatched.
@@ -1217,6 +1227,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<GpuHeightmapInjected>()
             .init_resource::<V2PipelineStats>()
             .init_resource::<crate::world::v2::debug::ChunkDebugViz>()
+            .init_resource::<crate::world::v2::stitch_mesh::V2StitchMap>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
@@ -1225,6 +1236,7 @@ impl Plugin for V2WorldPlugin {
                     v2_collect_gpu_terrain,
                     v2_collect_terrain,
                     v2_collect_meshes,
+                    crate::world::v2::stitch_mesh::v2_stitch_update,
                     v2_diagnostics,
                 )
                     .chain()
