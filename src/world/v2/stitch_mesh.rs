@@ -295,6 +295,7 @@ pub fn v2_stitch_update(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
+    mut prev_stitch_count: Local<usize>,
 ) {
     let mean_radius = planet.mean_radius;
     let origin_pos = origin.0;
@@ -459,6 +460,15 @@ pub fn v2_stitch_update(
                 .stitches
                 .insert(real_key, (stitch_entity, *fine_entity, coarse_entity));
         }
+    }
+
+    let count = stitch_map.stitches.len();
+    if count != *prev_stitch_count {
+        info!(
+            "[StitchMesh] active stitches: {} (was {})",
+            count, *prev_stitch_count
+        );
+        *prev_stitch_count = count;
     }
 }
 
