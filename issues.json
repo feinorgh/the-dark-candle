@@ -1013,7 +1013,8 @@
       "a7033bd",
       "6df684a",
       "b623882",
-      "90fbf91"
+      "90fbf91",
+      "b9b79e2"
     ],
     "resolution": null,
     "notes": [
@@ -1028,7 +1029,8 @@
       "Phase 4 (commit 6df684a): corner-cap stitches implemented. V2CornerStitchMap resource + CornerStitchSeam component + v2_corner_stitch_update system. For each fine chunk, checks all 4 corner direction-pairs; re-clips coarse chains with the same extent calculation as v2_stitch_update (using clip_coarse_to_fine_extent helper) so corner endpoints exactly match adjacent stitch ribbon endpoints. Emits 2-triangle quad: (fine_corner_a, coarse_A, fine_corner_b) + (fine_corner_b, coarse_A, coarse_B). Corner stitches firing at ~30% of pairwise count (115 vs 390 at coastline). Visual verification pending user graphical session (daytime). +2 tests, 1650 total.",
       "Bug fix attempt (commit b623882) \u2014 REGRESSION, reverted in 9ca3107: Incorrectly removed the same-coarse corner skip guard. When coarse_A==coarse_B, the fine chunk is interior to that coarse chunk; bridging fine.PosU\u2194coarse.NegU spans ~32m creating giant triangle ribbons that cover other terrain (large black holes). Guard correctly skips these cases. Reverted in commit 9ca3107 with accurate comment explaining the geometry. Corner stitch count remains ~350 at level-7 coastline settle (guard restored).",
       "2026-07-14: Invalidation race fixed (RENDER-010-RACE). Same-LOD spurious stitch pass removed (was creating floating gray shapes). Remaining work: narrow LOD transition seams addressed by pairwise+corner stitch meshes (Phases 1-4 complete).",
-      "2026-04-28: Radial proximity filter added to LOD+1 pairwise stitch matching (commit 90fbf91). Two hills at different elevations with overlapping 1-D seam projections were being spuriously stitched, creating large inclined gray surfaces. Filter rejects pairs where mean planet-radius diverges by more than CHUNK_SIZE \u00d7 2^coarse_lod m (64 m at LOD 0\u21921). Flying gray shapes eliminated in verification capture."
+      "2026-04-28: Radial proximity filter added to LOD+1 pairwise stitch matching (commit 90fbf91). Two hills at different elevations with overlapping 1-D seam projections were being spuriously stitched, creating large inclined gray surfaces. Filter rejects pairs where mean planet-radius diverges by more than CHUNK_SIZE \u00d7 2^coarse_lod m (64 m at LOD 0\u21921). Flying gray shapes eliminated in verification capture.",
+      "2026-04-28 (commit b9b79e2): Per-vertex normals and colors now propagated through all stitch meshes (pairwise + corner cap). The large white/gray flat stitch mesh artefacts are completely eliminated \u2014 terrain is now uniformly green/brown. Fix 3 (coarse-chain axis for clipping in pairwise stitches) should reduce T-junction gaps. Remaining visible artefacts: thin dark crack lines at some LOD boundaries (much smaller than previous artefacts). Verification capture: agent_captures/20260428-220930-seam-fix-daylight/frame_00000.png"
     ]
   },
   {
