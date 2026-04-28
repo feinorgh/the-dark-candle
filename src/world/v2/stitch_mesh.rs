@@ -36,6 +36,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use crate::floating_origin::RenderOrigin;
+use crate::world::chunk::CHUNK_SIZE;
 use crate::world::planet::PlanetConfig;
 use crate::world::v2::boundary_loop::ChunkBoundaryLoops;
 use crate::world::v2::chunk_manager::{V2ChunkCoord, V2ChunkMap};
@@ -510,6 +511,23 @@ pub fn v2_stitch_update(
                     let clipped_coarse =
                         clip_loop_to_range(&coarse_chain.vertices, axis, t_min, t_max);
                     if clipped_coarse.len() < 2 {
+                        continue;
+                    }
+
+                    // Radial proximity guard: only stitch pairs from the same
+                    // terrain feature.  Two separate hills at very different
+                    // elevations can overlap on the 1-D seam axis without being
+                    // adjacent in 3-D.  Reject pairs whose mean planet-radius
+                    // differs by more than one coarse-chunk height (CHUNK_SIZE ×
+                    // 2^coarse_lod metres).  This keeps legitimate stitches
+                    // (same surface, minor LOD divergence) while eliminating
+                    // cross-hill pairs that produce large inclined surfaces.
+                    let mean_r_fine = fine_chain.vertices.iter().map(|v| v.length()).sum::<f64>()
+                        / fine_chain.vertices.len() as f64;
+                    let mean_r_coarse = clipped_coarse.iter().map(|v| v.length()).sum::<f64>()
+                        / clipped_coarse.len() as f64;
+                    let coarse_chunk_height = CHUNK_SIZE as f64 * (1u64 << coarse_coord.lod) as f64;
+                    if (mean_r_fine - mean_r_coarse).abs() > coarse_chunk_height {
                         continue;
                     }
 
