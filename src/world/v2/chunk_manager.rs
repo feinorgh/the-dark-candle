@@ -25,7 +25,7 @@ use crate::world::lod::MaterialColorMap;
 use crate::world::meshing::{ChunkMesh, ChunkMeshMarker, chunk_mesh_to_bevy_mesh};
 use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
-use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord, world_pos_to_coord};
+use crate::world::v2::cubed_sphere::{ChunkDir, CubeFace, CubeSphereCoord, world_pos_to_coord};
 use crate::world::v2::greedy_mesh::NeighborSlices;
 use crate::world::v2::surface_nets;
 use crate::world::v2::terrain_gen::{
@@ -903,10 +903,15 @@ pub fn v2_collect_terrain(
     // and removing it from `loaded` makes it a candidate for re-dispatch
     // in Stage 2 below, where it will mesh against the now-cached real
     // boundary data.
+    //
+    // We also invalidate cross-LOD same-face neighbours so that when a coarse
+    // chunk arrives the fine chunks bordering it (and vice-versa) are also
+    // re-meshed — necessary for the stitch-mesh system added in later phases.
     if !invalidation_queue.coords.is_empty() {
         // Take ownership of the queue so we can iterate it and clear it.
         let drained: Vec<CubeSphereCoord> = invalidation_queue.coords.drain(..).collect();
         for coord in drained {
+            // Same-LOD same-face neighbours (existing path).
             let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
             let max_uv = coord_fce as i32;
             for dir in 0..6 {
@@ -914,6 +919,22 @@ pub fn v2_collect_terrain(
                     && let Some(ent) = chunk_map.loaded.remove(&nc)
                 {
                     commands.entity(ent).despawn();
+                }
+            }
+
+            // Cross-LOD same-face neighbours: invalidate at every other LOD
+            // level defined by LOD_RINGS so that coarse↔fine boundaries are
+            // also re-meshed when a new chunk arrives.
+            for &(target_lod, _) in &LOD_RINGS {
+                if target_lod == coord.lod {
+                    continue;
+                }
+                for dir in ChunkDir::ALL {
+                    for nc in coord.same_face_neighbors_at_lod_all(dir, target_lod, mean_radius) {
+                        if let Some(ent) = chunk_map.loaded.remove(&nc) {
+                            commands.entity(ent).despawn();
+                        }
+                    }
                 }
             }
         }

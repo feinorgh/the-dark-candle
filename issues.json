@@ -142,16 +142,16 @@
     "suspected_files": [
       "src/world/terrain.rs"
     ],
-    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() — logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
+    "suspected_cause": "Possible causes: (1) terrain.rs:385 has a fragile unwrap() on env.as_ref() \u2014 logically safe but could panic if use_advanced flag gets out of sync, (2) Chunk loading/meshing may panic on edge cases (out-of-bounds voxel access), (3) Asset loading race conditions (accessing materials/textures before they're loaded), (4) Stack overflow from deep recursion in octree operations.",
     "related_commits": [],
     "resolution": null,
     "notes": [
       "CRITICAL: Need user to provide backtrace from `RUST_BACKTRACE=1 cargo run --features bevy/dynamic_linking`.",
-      "terrain.rs unwrap() (now line ~455): verified safe — env is always Some(...) in the use_advanced=true branch (set at line ~432). Not a crash candidate.",
-      "GPU 'Buffer is already mapped' race: mitigated. generate_batch() is dispatched from a single async task at a time — v2_update_chunks checks gpu_tasks_q and falls back to CPU if a GPU batch is already in flight. Each pipeline owns its own staging buffer. No concurrent staging buffer access.",
+      "terrain.rs unwrap() (now line ~455): verified safe \u2014 env is always Some(...) in the use_advanced=true branch (set at line ~432). Not a crash candidate.",
+      "GPU 'Buffer is already mapped' race: mitigated. generate_batch() is dispatched from a single async task at a time \u2014 v2_update_chunks checks gpu_tasks_q and falls back to CPU if a GPU batch is already in flight. Each pipeline owns its own staging buffer. No concurrent staging buffer access.",
       "No other unsafe unwrap() patterns found in hot paths (Update/FixedUpdate systems).",
-      "Original suspected causes are now ruled out. Issue stays open pending a real backtrace — may have been fixed as a side effect of recent rendering overhaul or may not reproduce anymore.",
-      "Related: three_bouncing_balls test revealed two physics-adjacent bugs (now fixed): (1) amr_fluid injection systems required Res<TerrainGeneratorRes> unconditionally — changed to Option<Res<>> so they gracefully skip when no terrain is loaded; (2) PlanetConfig::default() uses Planetary mode with 32km radius, causing catastrophic gravity for entities near world origin — added TerrainMode::Flat for headless physics tests."
+      "Original suspected causes are now ruled out. Issue stays open pending a real backtrace \u2014 may have been fixed as a side effect of recent rendering overhaul or may not reproduce anymore.",
+      "Related: three_bouncing_balls test revealed two physics-adjacent bugs (now fixed): (1) amr_fluid injection systems required Res<TerrainGeneratorRes> unconditionally \u2014 changed to Option<Res<>> so they gracefully skip when no terrain is loaded; (2) PlanetConfig::default() uses Planetary mode with 32km radius, causing catastrophic gravity for entities near world origin \u2014 added TerrainMode::Flat for headless physics tests."
     ]
   },
   {
@@ -1012,11 +1012,11 @@
     "related_commits": [],
     "resolution": null,
     "notes": [
-      "surface_nets.rs comments mention: '1-voxel approximation cracks remain only at chunk corners (where 4 chunks meet along an edge)' — but user reports seams are still visible more broadly.",
+      "surface_nets.rs comments mention: '1-voxel approximation cracks remain only at chunk corners (where 4 chunks meet along an edge)' \u2014 but user reports seams are still visible more broadly.",
       "Check if seams are specifically at LOD boundaries (LOD 0 adjacent to LOD 1) vs same-LOD seams.",
       "Check if seams are only at cube face boundaries or also within a single face.",
       "A skirt/overlap approach (extending mesh slightly beyond chunk boundary) is a common workaround for LOD seams in voxel engines.",
-      "First skirt attempt (commit 0ea9f53, reverted) added a 'cached' flag on NeighborSlices and emitted a downward-hanging skirt for non-cached lateral walls. The result visibly painted large grey curtains/blobs over the landscape — far worse than the original seams. Suspected causes (untested): NeighborSlices::empty() may be used on the hot mesh path causing skirts to emit everywhere; or the copied normals + double-sided emission make the skirt strongly visible from below; or boundary vertices used the wrong drop direction at certain face orientations. Future attempt should prefer fixing cross-face resample asymmetry at the source (cache the cross-face boundary slice with axis mapping) rather than adding skirts."
+      "First skirt attempt (commit 0ea9f53, reverted) added a 'cached' flag on NeighborSlices and emitted a downward-hanging skirt for non-cached lateral walls. The result visibly painted large grey curtains/blobs over the landscape \u2014 far worse than the original seams. Suspected causes (untested): NeighborSlices::empty() may be used on the hot mesh path causing skirts to emit everywhere; or the copied normals + double-sided emission make the skirt strongly visible from below; or boundary vertices used the wrong drop direction at certain face orientations. Future attempt should prefer fixing cross-face resample asymmetry at the source (cache the cross-face boundary slice with axis mapping) rather than adding skirts."
     ]
   },
   {
@@ -1026,14 +1026,14 @@
     "severity": "high",
     "status": "resolved",
     "reported": "2026-04-28",
-    "description": "Teleporting long distances caused a 'attempt to add with overflow' panic in the async mesh-priority computation (chunk_manager.rs:970). The sort key was i32 but the sum of class_penalty (up to 30M) + lod_penalty + dist (clamped to i32::MAX ≈ 2.1B) exceeded i32::MAX.",
-    "reproduction": "Teleport to a distant coordinate (e.g. 70.8°S 125.0°E). Panic fires in Compute Task Pool thread during mesh scheduling.",
+    "description": "Teleporting long distances caused a 'attempt to add with overflow' panic in the async mesh-priority computation (chunk_manager.rs:970). The sort key was i32 but the sum of class_penalty (up to 30M) + lod_penalty + dist (clamped to i32::MAX \u2248 2.1B) exceeded i32::MAX.",
+    "reproduction": "Teleport to a distant coordinate (e.g. 70.8\u00b0S 125.0\u00b0E). Panic fires in Compute Task Pool thread during mesh scheduling.",
     "suspected_files": [
       "src/world/v2/chunk_manager.rs"
     ],
     "suspected_cause": "Priority key type i32 too narrow. dist was clamped to i32::MAX before being added to penalties, but the sum still overflowed.",
     "related_commits": [],
-    "resolution": "Widened sort key and all penalty variables to i64. Removed the i32-range clamp on the distance squared term — i64 has ample headroom for planet-scale chunk coordinates. Fixed in next commit after 3649a77.",
+    "resolution": "Widened sort key and all penalty variables to i64. Removed the i32-range clamp on the distance squared term \u2014 i64 has ample headroom for planet-scale chunk coordinates. Fixed in next commit after 3649a77.",
     "notes": []
   },
   {
@@ -1099,6 +1099,26 @@
     "resolution": null,
     "notes": [
       "Baseline visuals confirmed acceptable by the user after SKY-004 \u2014 file this as a follow-up rather than a blocker."
+    ]
+  },
+  {
+    "id": "RENDER-010-RACE",
+    "title": "Stale boundary data after cross-LOD invalidation (in-flight mesh race)",
+    "category": "rendering",
+    "severity": "medium",
+    "status": "open",
+    "reported": "2026-07-14",
+    "description": "When chunk A is already pending a mesh task (dispatched using resampled-fallback boundary slices), and a new chunk B (A's LOD-adjacent neighbour) arrives in the voxel cache, Stage 1b invalidation removes A from chunk_map.loaded. However A's in-flight AsyncComputeTaskPool task can still complete and re-insert the mesh \u2014 producing a stale entity with boundary data that no longer reflects the current neighbourhood. The resulting seam may persist until the next full chunk refresh.",
+    "reproduction": "Fly quickly past an LOD transition boundary so that coarse chunks arrive in the cache shortly after fine chunks have begun meshing. Stale seams may linger for one or two frames before the refresh catches them.",
+    "suspected_files": [
+      "src/world/v2/chunk_manager.rs"
+    ],
+    "suspected_cause": "In-flight mesh tasks are tracked only by chunk coord, not by a generation counter. The invalidation in Stage 1b removes the entity from loaded but cannot cancel the in-flight task. Inserting a generation counter (or epoch) in the task payload and discarding results whose epoch differs from the current chunk epoch would fix this.",
+    "related_commits": [],
+    "notes": [
+      "Pre-existing issue; not introduced by Phase 0 of RENDER-010.",
+      "Low impact in practice because the camera moves slowly relative to LOD refresh rate.",
+      "Fix planned as part of Phase 0.5 or Phase 5 Polish once transition meshes are stable."
     ]
   }
 ]

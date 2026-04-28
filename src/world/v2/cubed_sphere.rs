@@ -94,6 +94,48 @@ impl CubeFace {
     }
 }
 
+/// The six face-directions of a chunk.
+///
+/// Used for LOD-aware neighbour lookups and boundary-loop classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChunkDir {
+    /// +u tangential direction (increasing u).
+    PosU,
+    /// −u tangential direction (decreasing u).
+    NegU,
+    /// +v tangential direction (increasing v).
+    PosV,
+    /// −v tangential direction (decreasing v).
+    NegV,
+    /// +layer radial direction (outward).
+    PosLayer,
+    /// −layer radial direction (inward).
+    NegLayer,
+}
+
+impl ChunkDir {
+    pub const ALL: [ChunkDir; 6] = [
+        ChunkDir::PosU,
+        ChunkDir::NegU,
+        ChunkDir::PosV,
+        ChunkDir::NegV,
+        ChunkDir::PosLayer,
+        ChunkDir::NegLayer,
+    ];
+
+    /// The direction opposite to `self`.
+    pub fn opposite(self) -> ChunkDir {
+        match self {
+            ChunkDir::PosU => ChunkDir::NegU,
+            ChunkDir::NegU => ChunkDir::PosU,
+            ChunkDir::PosV => ChunkDir::NegV,
+            ChunkDir::NegV => ChunkDir::PosV,
+            ChunkDir::PosLayer => ChunkDir::NegLayer,
+            ChunkDir::NegLayer => ChunkDir::PosLayer,
+        }
+    }
+}
+
 /// Chunk coordinate on the cubed sphere.
 ///
 /// - `face`: which of the 6 cube faces this chunk belongs to
@@ -336,6 +378,171 @@ impl CubeSphereCoord {
     /// The parent chunk at the next coarser LOD level.
     pub fn parent(&self) -> CubeSphereCoord {
         CubeSphereCoord::new_with_lod(self.face, self.u / 2, self.v / 2, self.layer, self.lod + 1)
+    }
+
+    /// Returns the single representative same-face neighbour at `target_lod` that
+    /// lies just across `self`'s `dir` boundary.
+    ///
+    /// Uses face-fractional arithmetic — not bit-shifting — because
+    /// [`face_chunks_per_edge_lod`] applies `ceil(base / 2^lod)`, which means
+    /// naïve right-shifts give wrong results for non-power-of-two base grids.
+    ///
+    /// For `PosLayer`/`NegLayer`, the u/v are remapped to the `target_lod` grid
+    /// using the cell midpoint so the returned coord is always in-bounds.
+    ///
+    /// Returns `None` when the representative point falls outside this face's
+    /// grid (i.e. the neighbour would be on a different cube face).
+    pub fn same_face_neighbor_at_lod(
+        &self,
+        dir: ChunkDir,
+        target_lod: u8,
+        mean_radius: f64,
+    ) -> Option<CubeSphereCoord> {
+        let fce_src = Self::face_chunks_per_edge_lod(mean_radius, self.lod) as i64;
+        let fce_tgt = Self::face_chunks_per_edge_lod(mean_radius, target_lod) as i64;
+        let fce_tgt_i = fce_tgt as i32;
+
+        // Integer midpoint remap: cell-centre at self.(u/v) mapped to target grid.
+        let u_mid = ((2 * self.u as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+        let v_mid = ((2 * self.v as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+
+        let (u_tgt, v_tgt, layer_tgt) = match dir {
+            // Radial: remap u/v to same world position, shift layer by 1.
+            ChunkDir::PosLayer => (u_mid, v_mid, self.layer + 1),
+            ChunkDir::NegLayer => (u_mid, v_mid, self.layer - 1),
+            // Tangential: advance one step in the boundary direction; use midpoint
+            // for the parallel axis.
+            ChunkDir::PosU => (
+                (((self.u as i64 + 1) * fce_tgt) / fce_src) as i32,
+                v_mid,
+                self.layer,
+            ),
+            ChunkDir::NegU => (
+                // div_euclid gives floor for negative numerators (u=0 case → -1).
+                ((self.u as i64 * fce_tgt - 1).div_euclid(fce_src)) as i32,
+                v_mid,
+                self.layer,
+            ),
+            ChunkDir::PosV => (
+                u_mid,
+                (((self.v as i64 + 1) * fce_tgt) / fce_src) as i32,
+                self.layer,
+            ),
+            ChunkDir::NegV => (
+                u_mid,
+                ((self.v as i64 * fce_tgt - 1).div_euclid(fce_src)) as i32,
+                self.layer,
+            ),
+        };
+
+        if u_tgt < 0 || u_tgt >= fce_tgt_i || v_tgt < 0 || v_tgt >= fce_tgt_i {
+            return None;
+        }
+        Some(CubeSphereCoord::new_with_lod(
+            self.face, u_tgt, v_tgt, layer_tgt, target_lod,
+        ))
+    }
+
+    /// Returns **all** same-face neighbours at `target_lod` that share a
+    /// boundary face with `self` in direction `dir`.
+    ///
+    /// Unlike [`same_face_neighbor_at_lod`] (which picks one representative),
+    /// this iterates the full tangential extent so that every fine chunk is
+    /// returned when going to a finer LOD, and the single coarse chunk is
+    /// returned when going to a coarser LOD.
+    ///
+    /// Returns an empty `Vec` when the neighbours are on a different face.
+    /// Used by the cross-LOD invalidation pass.
+    pub fn same_face_neighbors_at_lod_all(
+        &self,
+        dir: ChunkDir,
+        target_lod: u8,
+        mean_radius: f64,
+    ) -> Vec<CubeSphereCoord> {
+        let fce_src = Self::face_chunks_per_edge_lod(mean_radius, self.lod) as i64;
+        let fce_tgt = Self::face_chunks_per_edge_lod(mean_radius, target_lod) as i64;
+        let fce_tgt_i = fce_tgt as i32;
+
+        let u_mid = ((2 * self.u as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+        let v_mid = ((2 * self.v as i64 + 1) * fce_tgt / (2 * fce_src)) as i32;
+
+        // Compute the inclusive range of the parallel axis that overlaps self's
+        // extent.  For the boundary axis there is exactly one target-grid cell.
+        // `v_hi = ((v+1)*fce_tgt - 1) / fce_src` excludes chunks that start
+        // exactly at self's upper boundary (standard half-open-interval
+        // convention).
+        match dir {
+            ChunkDir::PosLayer => {
+                vec![CubeSphereCoord::new_with_lod(
+                    self.face,
+                    u_mid,
+                    v_mid,
+                    self.layer + 1,
+                    target_lod,
+                )]
+            }
+            ChunkDir::NegLayer => {
+                vec![CubeSphereCoord::new_with_lod(
+                    self.face,
+                    u_mid,
+                    v_mid,
+                    self.layer - 1,
+                    target_lod,
+                )]
+            }
+            ChunkDir::PosU => {
+                let u_tgt = (((self.u as i64 + 1) * fce_tgt) / fce_src) as i32;
+                if u_tgt < 0 || u_tgt >= fce_tgt_i {
+                    return vec![];
+                }
+                let v_lo = ((self.v as i64 * fce_tgt) / fce_src) as i32;
+                let v_hi = (((self.v as i64 + 1) * fce_tgt - 1) / fce_src) as i32;
+                (v_lo.max(0)..=v_hi.min(fce_tgt_i - 1))
+                    .map(|vt| {
+                        CubeSphereCoord::new_with_lod(self.face, u_tgt, vt, self.layer, target_lod)
+                    })
+                    .collect()
+            }
+            ChunkDir::NegU => {
+                let u_tgt = ((self.u as i64 * fce_tgt - 1).div_euclid(fce_src)) as i32;
+                if u_tgt < 0 || u_tgt >= fce_tgt_i {
+                    return vec![];
+                }
+                let v_lo = ((self.v as i64 * fce_tgt) / fce_src) as i32;
+                let v_hi = (((self.v as i64 + 1) * fce_tgt - 1) / fce_src) as i32;
+                (v_lo.max(0)..=v_hi.min(fce_tgt_i - 1))
+                    .map(|vt| {
+                        CubeSphereCoord::new_with_lod(self.face, u_tgt, vt, self.layer, target_lod)
+                    })
+                    .collect()
+            }
+            ChunkDir::PosV => {
+                let v_tgt = (((self.v as i64 + 1) * fce_tgt) / fce_src) as i32;
+                if v_tgt < 0 || v_tgt >= fce_tgt_i {
+                    return vec![];
+                }
+                let u_lo = ((self.u as i64 * fce_tgt) / fce_src) as i32;
+                let u_hi = (((self.u as i64 + 1) * fce_tgt - 1) / fce_src) as i32;
+                (u_lo.max(0)..=u_hi.min(fce_tgt_i - 1))
+                    .map(|ut| {
+                        CubeSphereCoord::new_with_lod(self.face, ut, v_tgt, self.layer, target_lod)
+                    })
+                    .collect()
+            }
+            ChunkDir::NegV => {
+                let v_tgt = ((self.v as i64 * fce_tgt - 1).div_euclid(fce_src)) as i32;
+                if v_tgt < 0 || v_tgt >= fce_tgt_i {
+                    return vec![];
+                }
+                let u_lo = ((self.u as i64 * fce_tgt) / fce_src) as i32;
+                let u_hi = (((self.u as i64 + 1) * fce_tgt - 1) / fce_src) as i32;
+                (u_lo.max(0)..=u_hi.min(fce_tgt_i - 1))
+                    .map(|ut| {
+                        CubeSphereCoord::new_with_lod(self.face, ut, v_tgt, self.layer, target_lod)
+                    })
+                    .collect()
+            }
+        }
     }
 }
 
@@ -736,6 +943,185 @@ mod tests {
         assert!(
             gap < 1.0,
             "Adjacent chunk edges should meet within 1m, got {gap:.3}m gap"
+        );
+    }
+
+    // ── same_face_neighbor_at_lod tests ──────────────────────────────────────
+
+    #[test]
+    fn same_lod_neighbor_matches_neighbors_api() {
+        // At the same LOD, same_face_neighbor_at_lod must return identical results
+        // to neighbors() for interior chunks.
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 500, 500, 0, 0);
+        let nbrs = coord.neighbors(TEST_FACE_CHUNKS_I);
+        let radius = TEST_RADIUS;
+
+        let check = |dir: ChunkDir, expected: CubeSphereCoord| {
+            let got = coord
+                .same_face_neighbor_at_lod(dir, 0, radius)
+                .expect("interior same-LOD neighbour should always be Some");
+            assert_eq!(
+                got, expected,
+                "direction {dir:?}: expected {expected:?}, got {got:?}"
+            );
+        };
+        check(ChunkDir::PosU, nbrs[0]);
+        check(ChunkDir::NegU, nbrs[1]);
+        check(ChunkDir::PosV, nbrs[2]);
+        check(ChunkDir::NegV, nbrs[3]);
+        check(ChunkDir::PosLayer, nbrs[4]);
+        check(ChunkDir::NegLayer, nbrs[5]);
+    }
+
+    #[test]
+    fn cross_lod_to_coarser_pos_u() {
+        // R=320 → fce0=16, fce1=8. Chunk (8,8) at LOD 0, PosU to LOD 1.
+        // u_tgt = (9*8)/16 = 4, v_mid = (17*8)/(2*16) = 136/32 = 4.
+        let small_r = 320.0_f64;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 8, 8, 0, 0);
+        let got = coord
+            .same_face_neighbor_at_lod(ChunkDir::PosU, 1, small_r)
+            .expect("interior coarse PosU should be Some");
+        assert_eq!(got.lod, 1);
+        assert_eq!(got.face, CubeFace::PosZ);
+        assert_eq!(got.u, 4, "u_tgt for coarser PosU: got {}", got.u);
+        assert_eq!(got.v, 4, "v_mid for coarser PosU: got {}", got.v);
+    }
+
+    #[test]
+    fn cross_lod_to_finer_pos_u() {
+        // R=320 → fce0=16, fce1=8. Chunk (4,4) at LOD 1, PosU to LOD 0.
+        // u_tgt = (5*16)/8 = 10, v_mid = (9*16)/(2*8) = 144/16 = 9.
+        let small_r = 320.0_f64;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 4, 4, 0, 1);
+        let got = coord
+            .same_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r)
+            .expect("interior finer PosU should be Some");
+        assert_eq!(got.lod, 0);
+        assert_eq!(got.u, 10);
+        assert_eq!(got.v, 9);
+    }
+
+    #[test]
+    fn cross_lod_neg_u_at_zero_returns_none() {
+        // u=0: NegU at any LOD must return None (cross-face boundary).
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 0, 500, 0, 0);
+        assert_eq!(
+            coord.same_face_neighbor_at_lod(ChunkDir::NegU, 0, TEST_RADIUS),
+            None
+        );
+        assert_eq!(
+            coord.same_face_neighbor_at_lod(ChunkDir::NegU, 1, TEST_RADIUS),
+            None
+        );
+    }
+
+    #[test]
+    fn cross_lod_pos_u_at_max_returns_none() {
+        // R=320, fce0=16. u=15 (fce0-1): PosU crosses face → None.
+        let small_r = 320.0_f64;
+        let fce0_i = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, fce0_i - 1, 8, 0, 0);
+        assert_eq!(
+            coord.same_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r),
+            None
+        );
+    }
+
+    #[test]
+    fn same_face_neighbors_all_same_lod_returns_one() {
+        // R=320, fce0=16. Interior chunk (8,8) — each tangential dir returns 1.
+        let small_r = 320.0_f64;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 8, 8, 0, 0);
+        for dir in ChunkDir::ALL {
+            let result = coord.same_face_neighbors_at_lod_all(dir, 0, small_r);
+            if matches!(
+                dir,
+                ChunkDir::PosU | ChunkDir::NegU | ChunkDir::PosV | ChunkDir::NegV
+            ) {
+                assert_eq!(
+                    result.len(),
+                    1,
+                    "interior same-LOD tangential should return 1 neighbour for {dir:?}, got {}",
+                    result.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn same_face_neighbors_all_to_finer_returns_multiple() {
+        // R=320, fce1=8→fce0=16. Coarse (4,4) LOD 1 → LOD 0 PosU spans 2 fine chunks.
+        // u_tgt=(5*16)/8=10. v_lo=(4*16)/8=8. v_hi=(5*16-1)/8=79/8=9.
+        let small_r = 320.0_f64;
+        let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 4, 4, 0, 1);
+        let pos_u = coord.same_face_neighbors_at_lod_all(ChunkDir::PosU, 0, small_r);
+        assert_eq!(
+            pos_u.len(),
+            2,
+            "coarse→fine PosU should return 2 fine chunks, got {}",
+            pos_u.len()
+        );
+        assert!(
+            pos_u.iter().all(|c| c.u == 10),
+            "all PosU fine chunks must have u=10"
+        );
+        assert_eq!(pos_u[0].v, 8);
+        assert_eq!(pos_u[1].v, 9);
+    }
+
+    #[test]
+    fn same_face_neighbors_all_cross_face_returns_empty() {
+        // R=320, fce0=16. At the face boundary PosU/NegU → empty.
+        let small_r = 320.0_f64;
+        let fce0_i = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let coord_max = CubeSphereCoord::new_with_lod(CubeFace::PosZ, fce0_i - 1, 8, 0, 0);
+        assert!(
+            coord_max
+                .same_face_neighbors_at_lod_all(ChunkDir::PosU, 0, small_r)
+                .is_empty(),
+            "PosU at max-u should return empty"
+        );
+        let coord_zero = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 0, 8, 0, 0);
+        assert!(
+            coord_zero
+                .same_face_neighbors_at_lod_all(ChunkDir::NegU, 0, small_r)
+                .is_empty(),
+            "NegU at u=0 should return empty"
+        );
+    }
+
+    #[test]
+    fn cross_lod_odd_fce_no_gaps_or_overlap() {
+        // Use a radius that produces a non-power-of-two fce to stress the
+        // ceil-based grid remapping.  R=320 → fce0=16, fce1=8 (both power-of-2
+        // but the ratio fce0/fce1 = 2.0 exactly, so this is a "clean" case).
+        // Use a slightly asymmetric R to get a genuinely non-halving fce:
+        // R=327 → fce0=ceil(π/2*327/32)=ceil(16.056)=17, fce1=ceil(17/2)=9.
+        let small_r = 327.0_f64;
+        let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
+        let fce1 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 1) as i32;
+
+        // For every LOD-1 chunk, sum the count of LOD-0 PosU neighbours.
+        // Total must equal fce1 * fce1 (the LOD-1 face fully covered).
+        let mut total_fine_invalidations = 0usize;
+        for u in 0..fce1 {
+            for v in 0..fce1 {
+                let c1 = CubeSphereCoord::new_with_lod(CubeFace::PosZ, u, v, 0, 1);
+                let all = c1.same_face_neighbors_at_lod_all(ChunkDir::PosU, 0, small_r);
+                // Each fine chunk must stay in-bounds.
+                for nc in &all {
+                    assert!(nc.u >= 0 && nc.u < fce0, "nc.u out of bounds: {}", nc.u);
+                    assert!(nc.v >= 0 && nc.v < fce0, "nc.v out of bounds: {}", nc.v);
+                }
+                total_fine_invalidations += all.len();
+            }
+        }
+        // Each LOD-0 column (u, all v) gets invalidated once per LOD-1 row that
+        // borders it; this is sanity-checked by confirming the count is non-zero.
+        assert!(
+            total_fine_invalidations > 0,
+            "No fine invalidations generated"
         );
     }
 }
