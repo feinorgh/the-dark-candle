@@ -13,7 +13,10 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::f64::consts::TAU;
 
-use super::catalogue::{CelestialCatalogue, HostGalaxy, SKY_SEED_SALT, SpectralClass, Star};
+use super::catalogue::{
+    CelestialCatalogue, Galaxy, GalaxyKind, HostGalaxy, Nebula, NebulaKind, SKY_SEED_SALT,
+    SpectralClass, Star,
+};
 use super::spectrum::{
     absolute_magnitude_from_luminosity, apparent_magnitude, blackbody_to_linear_rgb,
     mass_to_luminosity, mass_to_temperature,
@@ -56,11 +59,13 @@ pub fn generate_catalogue(system_seed: u64) -> CelestialCatalogue {
 
     let host_galaxy = generate_host_galaxy(&mut rng);
     let stars = generate_stars(&mut rng, &host_galaxy);
+    let nebulae = generate_nebulae(&mut rng, &host_galaxy);
+    let galaxies = generate_galaxies(&mut rng, &host_galaxy);
 
     CelestialCatalogue {
         stars,
-        nebulae: Vec::new(),
-        galaxies: Vec::new(),
+        nebulae,
+        galaxies,
         host_galaxy,
         generator_seed,
     }
@@ -250,6 +255,174 @@ fn random_unit_vector(rng: &mut SmallRng) -> DVec3 {
     let phi: f64 = rng.random_range(0.0_f64..TAU);
     let r = (1.0 - z * z).max(0.0).sqrt();
     DVec3::new(r * phi.cos(), r * phi.sin(), z)
+}
+
+// ─── Nebulae ─────────────────────────────────────────────────────────────────
+
+/// Total number of nebulae generated per system, before any visibility cut.
+/// Realistic: tens of catalogued bright nebulae per local galactic volume,
+/// fading rapidly with distance and extinction.
+const NEBULA_COUNT_MIN: usize = 18;
+const NEBULA_COUNT_MAX: usize = 36;
+
+/// Generate the nebula list, biased toward the galactic plane (where dust
+/// and ionised gas concentrate).
+fn generate_nebulae(rng: &mut SmallRng, hg: &HostGalaxy) -> Vec<Nebula> {
+    let n = rng.random_range(NEBULA_COUNT_MIN..=NEBULA_COUNT_MAX);
+    let mut out = Vec::with_capacity(n);
+
+    for _ in 0..n {
+        // 80 % concentrated near the galactic plane (the visible disk),
+        // 20 % isotropic (foreground / off-plane gas).
+        let direction = if rng.random_range(0.0_f32..1.0) < 0.80 {
+            sample_galactic_biased_direction(rng, hg)
+        } else {
+            random_unit_vector(rng)
+        };
+
+        // Lognormal-ish angular radius: most are < 1°, a few span several °.
+        // log10(r [rad]) sampled uniformly in [-3.0, -1.5] ⇒ 0.057° to 1.81°.
+        let log_r: f32 = rng.random_range(-3.0_f32..-1.5);
+        let angular_radius_rad = 10.0_f32.powf(log_r);
+
+        let axial_ratio: f32 = rng.random_range(0.35_f32..1.0);
+        let orientation_rad: f32 = rng.random_range(0.0_f32..std::f32::consts::TAU);
+
+        let kind_roll: f32 = rng.random_range(0.0_f32..1.0);
+        let kind = if kind_roll < 0.50 {
+            NebulaKind::Emission
+        } else if kind_roll < 0.75 {
+            NebulaKind::Reflection
+        } else if kind_roll < 0.90 {
+            NebulaKind::Dark
+        } else {
+            NebulaKind::Planetary
+        };
+
+        let (color_linear, spectrum_peak_nm, surface_brightness) = match kind {
+            NebulaKind::Emission => (
+                // Hα-dominated red glow with a faint blue [O III] component.
+                [1.00, 0.32, 0.42],
+                656.3, // Hα line
+                rng.random_range(20.0_f32..23.0),
+            ),
+            NebulaKind::Reflection => (
+                // Dust scattering the blue light of a nearby hot star.
+                [0.55, 0.70, 1.00],
+                450.0,
+                rng.random_range(21.0_f32..23.5),
+            ),
+            NebulaKind::Dark => (
+                // Sign convention: colour is what is *removed* from the
+                // background.  The baker treats `kind == Dark` as a
+                // multiplicative attenuator of in-band light; the colour
+                // here just biases which channel is most attenuated
+                // (typical interstellar extinction is bluer-attenuating).
+                [1.00, 0.85, 0.65],
+                550.0,
+                rng.random_range(24.0_f32..26.0),
+            ),
+            NebulaKind::Planetary => (
+                // Doubly-ionised oxygen [O III] cyan-green.
+                [0.45, 0.95, 0.85],
+                500.7,
+                rng.random_range(18.0_f32..21.0),
+            ),
+        };
+
+        out.push(Nebula {
+            direction,
+            angular_radius_rad,
+            axial_ratio,
+            orientation_rad,
+            kind,
+            spectrum_peak_nm,
+            surface_brightness,
+            color_linear,
+            texture_seed: rng.random::<u32>(),
+        });
+    }
+
+    out
+}
+
+// ─── Galaxies ────────────────────────────────────────────────────────────────
+
+const GALAXY_COUNT_MIN: usize = 80;
+const GALAXY_COUNT_MAX: usize = 160;
+
+/// Generate remote galaxies — distributed isotropically with a mild "zone
+/// of avoidance" suppression near the host-galaxy plane (the host's own
+/// dust extinguishes background galaxies seen along the disk).
+fn generate_galaxies(rng: &mut SmallRng, hg: &HostGalaxy) -> Vec<Galaxy> {
+    let plane_n = hg.plane_normal;
+    let n_target = rng.random_range(GALAXY_COUNT_MIN..=GALAXY_COUNT_MAX);
+    let mut out = Vec::with_capacity(n_target);
+
+    let mut attempts = 0usize;
+    while out.len() < n_target && attempts < n_target * 8 {
+        attempts += 1;
+        let dir = random_unit_vector(rng);
+
+        // Zone-of-avoidance: reject ~80 % of galaxies that fall close to
+        // the host plane (|sin b| < 0.10).  Real surveys see a similar
+        // ~10° band devoid of catalogued galaxies due to extinction.
+        let sin_b = dir.dot(plane_n).abs();
+        if sin_b < 0.10 && rng.random_range(0.0_f32..1.0) < 0.80 {
+            continue;
+        }
+
+        let angular_radius_rad: f32 = {
+            // Lognormal: most galaxies are tiny (arcsec to arcmin), a few are big.
+            let log_r: f32 = rng.random_range(-4.5_f32..-2.0);
+            10.0_f32.powf(log_r)
+        };
+        let axial_ratio: f32 = rng.random_range(0.20_f32..1.0);
+        let orientation_rad: f32 = rng.random_range(0.0_f32..std::f32::consts::TAU);
+
+        let kind_roll: f32 = rng.random_range(0.0_f32..1.0);
+        let kind = if kind_roll < 0.55 {
+            GalaxyKind::Spiral
+        } else if kind_roll < 0.80 {
+            GalaxyKind::Elliptical
+        } else if kind_roll < 0.92 {
+            GalaxyKind::Lenticular
+        } else {
+            GalaxyKind::Irregular
+        };
+
+        let color_linear = match kind {
+            GalaxyKind::Spiral => [0.85, 0.90, 1.00],
+            GalaxyKind::Elliptical => [1.00, 0.88, 0.70],
+            GalaxyKind::Lenticular => [1.00, 0.94, 0.82],
+            GalaxyKind::Irregular => [0.80, 0.92, 1.00],
+        };
+
+        // Apparent magnitude: brighter for larger objects, but mostly
+        // very dim.  Sample around 9..16 with a bias toward fainter.
+        let mag_base: f32 = rng.random_range(9.0_f32..16.0);
+        // Larger angular size correlates with closer / brighter galaxies.
+        let size_brightness_bonus = (-2.5 * (angular_radius_rad / 1.0e-3).log10()).clamp(-3.0, 0.0);
+        let apparent_magnitude_v = mag_base + size_brightness_bonus;
+
+        // Cosmological redshift: we don't simulate cosmology, but galaxies
+        // at typical extragalactic distances have z in [0.001, 0.05] for
+        // anything visually resolvable.
+        let redshift_z: f32 = rng.random_range(0.0005_f32..0.05);
+
+        out.push(Galaxy {
+            direction: dir,
+            angular_radius_rad,
+            axial_ratio,
+            orientation_rad,
+            kind,
+            redshift_z,
+            apparent_magnitude_v,
+            color_linear,
+        });
+    }
+
+    out
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

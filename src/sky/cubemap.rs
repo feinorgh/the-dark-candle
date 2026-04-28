@@ -30,6 +30,7 @@ use bevy::math::Vec3;
 use half::f16;
 
 use super::catalogue::{CelestialCatalogue, Star};
+use super::diffuse::{splat_additive_nebulae, splat_dark_nebulae, splat_galaxies};
 use super::host_galaxy::splat_host_galaxy;
 use super::spectrum::flux_from_magnitude;
 
@@ -171,6 +172,13 @@ pub fn bake_star_cubemap(
     // same accumulator before f16 packing so it shares airmass extinction
     // with the stars at sample time.
     splat_host_galaxy(&mut accum, size, &catalogue.host_galaxy);
+
+    // Discrete diffuse objects: emission/reflection/planetary nebulae,
+    // then remote galaxies, then dark nebulae as multiplicative
+    // attenuators (must run last so they silhouette everything behind).
+    splat_additive_nebulae(&mut accum, size, catalogue);
+    splat_galaxies(&mut accum, size, catalogue);
+    splat_dark_nebulae(&mut accum, size, catalogue);
 
     // Convert to f16.
     let face_pixels = accum.map(|face_f32| {

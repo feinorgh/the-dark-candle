@@ -13,6 +13,7 @@
 
 pub mod catalogue;
 pub mod cubemap;
+pub mod diffuse;
 pub mod generate;
 pub mod host_galaxy;
 pub mod plugin;
