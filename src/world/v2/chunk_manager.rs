@@ -25,6 +25,7 @@ use crate::world::lod::MaterialColorMap;
 use crate::world::meshing::{ChunkMesh, ChunkMeshMarker, chunk_mesh_to_bevy_mesh};
 use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
+use crate::world::v2::boundary_loop::{ChunkBoundaryLoops, extract_boundary_loops};
 use crate::world::v2::cubed_sphere::{ChunkDir, CubeFace, CubeSphereCoord, world_pos_to_coord};
 use crate::world::v2::greedy_mesh::NeighborSlices;
 use crate::world::v2::surface_nets;
@@ -263,6 +264,7 @@ pub struct V2MeshTask(pub Task<V2MeshResult>);
 pub struct V2MeshResult {
     pub coord: CubeSphereCoord,
     pub mesh: ChunkMesh,
+    pub boundary_loops: ChunkBoundaryLoops,
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────
@@ -1021,6 +1023,7 @@ pub fn v2_collect_terrain(
                         colors: Vec::new(),
                         indices: Vec::new(),
                     },
+                    boundary_loops: ChunkBoundaryLoops::default(),
                 }
             });
             commands.spawn(V2MeshTask(task));
@@ -1038,7 +1041,12 @@ pub fn v2_collect_terrain(
         let task = pool.spawn(async move {
             let voxels = cached_voxels_to_vec(&voxel_data);
             let mesh = surface_nets::surface_nets_mesh(&voxels, &neighbor_slices, &cmap);
-            V2MeshResult { coord, mesh }
+            let boundary_loops = extract_boundary_loops(&mesh, coord, mean_radius);
+            V2MeshResult {
+                coord,
+                mesh,
+                boundary_loops,
+            }
         });
 
         commands.spawn(V2MeshTask(task));
@@ -1161,6 +1169,7 @@ pub fn v2_collect_meshes(
                 .spawn((
                     V2ChunkMarker,
                     V2ChunkCoord(result.coord),
+                    result.boundary_loops,
                     Transform::from_translation(adjusted)
                         .with_rotation(rotation)
                         .with_scale(tangent_scale),
@@ -1178,6 +1187,7 @@ pub fn v2_collect_meshes(
                 V2ChunkMarker,
                 V2ChunkCoord(result.coord),
                 ChunkMeshMarker,
+                result.boundary_loops,
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(chunk_material.clone()),
                 Transform::from_translation(adjusted)
