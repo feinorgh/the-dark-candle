@@ -27,7 +27,7 @@ This game strictly adheres to Bevy's ECS model.
 | `social` | `src/social/` | Relationships, factions, reputation, group behaviors |
 | `entities` | `src/entities/` | Creature and item spawning, `Inventory` component (weight/volume-limited item stacks) |
 | `procgen` | `src/procgen/` | Procedural tree generation, biome integration |
-| `lighting` | `src/lighting/` | Sun cycle, light maps, sky scattering, volumetric effects, atmospheric sky (Bevy Atmosphere component), distance fog with time-of-day sync |
+| `lighting` | `src/lighting/` | Sun cycle, GPU sky dome (`sky_dome.rs` + `assets/shaders/sky_dome.wgsl`: custom `Material`, WGSL Rayleigh scattering, sun disk, reverse-Z infinity rendering, floating-origin anchor), moon billboards (`MoonBillboard`, Keplerian orbits via `GameElapsedSeconds`), light maps, volumetric clouds, terrain shadows, cloud shadows, distance fog with time-of-day sync |
 | `weather` | `src/weather/` | Cloud particles, wind upload, snow/rain accumulation |
 | `camera` | `src/camera/` | First-person camera, fly mode |
 | `data` | `src/data/` | RON asset loading, material/reaction registries |

@@ -112,7 +112,9 @@ transport produce realistic circulation patterns.
 - **Time-of-day.** Sun position orbits based on planet rotation. Dawn/dusk color
   temperature shifts. Night sky with ambient starlight. Moon phases (optional).
   `DirectionalLight` rotation, color, and illuminance update each frame from
-  solar angle.
+  solar angle. Moon billboard quads (`MoonBillboard`) placed at `VISUAL_MOON_DIST`
+  in the direction of each moon (Keplerian orbit via `GameElapsedSeconds`), scaled
+  to match true apparent angular size, hidden below horizon.
 
 ## Implementation Steps
 
@@ -156,10 +158,15 @@ transport produce realistic circulation patterns.
    terrain. Modulate `DirectionalLight` shadow intensity. Dense clouds →
    reduced direct illumination + increased ambient (diffuse scattering).
 
-9. **Atmospheric scattering shader** — sky dome / post-process pass implementing
-   Rayleigh + Mie scattering. Reads sun position, camera altitude, atmospheric
-   density profile. Blue sky overhead, red/orange at horizon during sunset,
-   thinner atmosphere at altitude.
+9. **Atmospheric scattering shader** ✅ — GPU sky dome implemented as a Bevy
+   custom `Material` (`SkyMaterial`, `src/lighting/sky_dome.rs`) backed by
+   `assets/shaders/sky_dome.wgsl`. 16-sample view path + 8-sample light path
+   per pixel; Rayleigh phase function; sun disk; local tangent-frame projection
+   so the gradient is correct at all latitudes. Renders at clip-space infinity
+   (reverse-Z `z = 0.0`); uses `AlphaMode::Blend` to bypass the depth prepass.
+   Sky dome sphere is kept centred on the camera each PostUpdate frame by
+   `anchor_sky_dome_to_camera` (runs after floating-origin rebase). Previous
+   flat-ClearColor fallback (`update_spherical_sky`) removed.
 
 10. **Fog system** — exponential height fog driven by humidity and temperature
     fields. Morning valley fog from cold air pooling. Visibility distance scales
@@ -204,6 +211,7 @@ All 10 implementation steps completed. Commits:
 - `src/lighting/scattering.rs` — Rayleigh + Mie CPU ray-marcher, sky LUT
 - `src/lighting/clouds.rs` — volumetric cloud ray-march (Beer-Lambert + Henyey-Greenstein)
 - `src/lighting/shadows.rs` — cloud shadow projection, exponential height fog
+- `src/lighting/sky_dome.rs` + `assets/shaders/sky_dome.wgsl` — in-game GPU sky dome: `SkyMaterial` (Bevy custom `Material`, `AlphaMode::Blend`, reverse-Z `z=0.0`), `SkyDome` / `MoonBillboard` markers, `GameElapsedSeconds` accumulator, 5 systems (spawn, anchor, update material, spawn moon billboards, update moon positions)
 - `src/gpu/` — headless wgpu compute shader renderer (`GpuRenderer`)
 
 **GPU renderer performance** (512×384 output, 30 fps video):
