@@ -576,6 +576,49 @@ const CORNER_PAIRS: [(ChunkDir, ChunkDir); 4] = [
     (ChunkDir::NegU, ChunkDir::NegV),
 ];
 
+/// Triangulate a corner quad into at most two non-degenerate triangles.
+///
+/// The quad has vertices `(p0, p1, p2, p3)` arranged so that the two
+/// triangles are `(p0, p1, p2)` and `(p2, p1, p3)`.  Each triangle's
+/// winding order is corrected against `outward` so normals face outward.
+/// Degenerate triangles (area² < 1e-10) are silently dropped.
+///
+/// Returns `(positions, normals, indices)` ready for `build_stitch_mesh`.
+fn corner_quad_triangles(
+    p0: [f32; 3],
+    p1: [f32; 3],
+    p2: [f32; 3],
+    p3: [f32; 3],
+    outward: Vec3,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut base = 0u32;
+
+    for &(a, b, c) in &[(p0, p1, p2), (p2, p1, p3)] {
+        let va = Vec3::from(a);
+        let vb = Vec3::from(b);
+        let vc = Vec3::from(c);
+        let area_cross = (vb - va).cross(vc - va);
+        if area_cross.length_squared() < 1e-10 {
+            continue;
+        }
+        let (b_out, c_out) = if area_cross.dot(outward) < 0.0 {
+            (c, b)
+        } else {
+            (b, c)
+        };
+        positions.push(a);
+        positions.push(b_out);
+        positions.push(c_out);
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
+        base += 3;
+    }
+
+    let normals = vec![outward.to_array(); positions.len()];
+    (positions, normals, indices)
+}
+
 /// System: maintain corner-cap triangles at all three-way LOD seam junctions.
 ///
 /// Two adjacent pairwise stitches (dir_a and dir_b from the same fine chunk)
@@ -815,37 +858,11 @@ pub fn v2_corner_stitch_update(
             let p3 = to_f32(coarse_b_pt);
 
             let outward_f32 = outward.as_vec3();
-
-            // Build triangles with winding verified against outward normal.
-            let mut positions: Vec<[f32; 3]> = Vec::new();
-            let mut indices: Vec<u32> = Vec::new();
-            let mut base = 0u32;
-
-            for &(a, b, c) in &[(p0, p1, p2), (p2, p1, p3)] {
-                let va = Vec3::from(a);
-                let vb = Vec3::from(b);
-                let vc = Vec3::from(c);
-                let area_cross = (vb - va).cross(vc - va);
-                if area_cross.length_squared() < 1e-10 {
-                    continue; // skip degenerate
-                }
-                let (b_out, c_out) = if area_cross.dot(outward_f32) < 0.0 {
-                    (c, b)
-                } else {
-                    (b, c)
-                };
-                positions.push(a);
-                positions.push(b_out);
-                positions.push(c_out);
-                indices.extend_from_slice(&[base, base + 1, base + 2]);
-                base += 3;
-            }
+            let (positions, normals, indices) = corner_quad_triangles(p0, p1, p2, p3, outward_f32);
 
             if indices.is_empty() {
                 continue;
             }
-
-            let normals = vec![outward_f32.to_array(); positions.len()];
             let mesh = build_stitch_mesh(positions, normals, indices);
             let mesh_handle = meshes.add(mesh);
 
@@ -1032,6 +1049,72 @@ mod tests {
                 p.x >= 1.0 - 1e-9 && p.x <= 3.0 + 1e-9,
                 "x={} outside fine extent",
                 p.x
+            );
+        }
+    }
+
+    // ── corner_quad_triangles tests ───────────────────────────────────────────
+
+    #[test]
+    fn corner_quad_two_triangles_for_non_degenerate_quad() {
+        // A flat square in the XY plane:
+        //  p0=(0,1,0)  p1=(0,0,0)
+        //  p2=(1,1,0)  p3=(1,0,0)
+        // outward = +Z
+        let p0 = [0.0f32, 1.0, 0.0];
+        let p1 = [0.0f32, 0.0, 0.0];
+        let p2 = [1.0f32, 1.0, 0.0];
+        let p3 = [1.0f32, 0.0, 0.0];
+        let (positions, normals, indices) = corner_quad_triangles(p0, p1, p2, p3, Vec3::Z);
+        assert_eq!(indices.len(), 6, "two triangles → 6 indices");
+        assert_eq!(positions.len(), 6);
+        assert_eq!(normals.len(), 6);
+        // All normals should face +Z
+        for n in &normals {
+            assert!(n[2] > 0.9, "normal should face +Z, got {:?}", n);
+        }
+        // No degenerate triangles (all triangles have non-zero area)
+        for tri in indices.chunks(3) {
+            let a = Vec3::from(positions[tri[0] as usize]);
+            let b = Vec3::from(positions[tri[1] as usize]);
+            let c = Vec3::from(positions[tri[2] as usize]);
+            let area2 = (b - a).cross(c - a).length_squared();
+            assert!(area2 > 1e-10, "degenerate triangle in corner quad output");
+        }
+    }
+
+    #[test]
+    fn corner_quad_skips_degenerate_triangle() {
+        // Make T2 degenerate by having p2 == p3 (coarse end == fine end).
+        let p0 = [0.0f32, 1.0, 0.0];
+        let p1 = [0.0f32, 0.0, 0.0];
+        let p2 = [1.0f32, 1.0, 0.0]; // == p3 → T2 degenerates
+        let p3 = [1.0f32, 1.0, 0.0];
+        let (_, _, indices) = corner_quad_triangles(p0, p1, p2, p3, Vec3::Z);
+        assert_eq!(
+            indices.len(),
+            3,
+            "only T1 should be emitted when T2 is degenerate"
+        );
+    }
+
+    #[test]
+    fn corner_quad_winding_flipped_to_match_outward() {
+        // T1 = (p0, p1, p2).  With outward=-Z the winding should be reversed.
+        let p0 = [0.0f32, 0.0, 0.0];
+        let p1 = [1.0f32, 0.0, 0.0];
+        let p2 = [0.0f32, 1.0, 0.0];
+        let p3 = [1.0f32, 1.0, 0.0];
+        let (positions, _, indices) = corner_quad_triangles(p0, p1, p2, p3, -Vec3::Z);
+        // With -Z outward, each emitted triangle should have area_cross pointing -Z
+        for tri in indices.chunks(3) {
+            let a = Vec3::from(positions[tri[0] as usize]);
+            let b = Vec3::from(positions[tri[1] as usize]);
+            let c = Vec3::from(positions[tri[2] as usize]);
+            let cross = (b - a).cross(c - a);
+            assert!(
+                cross.dot(-Vec3::Z) > 0.0,
+                "triangle normal should face outward (-Z) after winding correction"
             );
         }
     }
