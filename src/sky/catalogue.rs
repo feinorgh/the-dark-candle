@@ -1,4 +1,4 @@
-// Procedural celestial catalogue: stars, nebulae, galaxies, Milky Way.
+// Procedural celestial catalogue: stars, nebulae, galaxies, host galaxy.
 //
 // The catalogue lives in a "celestial inertial frame" with axes parallel to
 // the planet's body frame at `OrbitalState.rotation_angle = 0`.  It is
@@ -164,12 +164,12 @@ pub struct Galaxy {
     pub color_linear: [f32; 3],
 }
 
-/// Procedural Milky-Way model.
+/// Procedural host-galaxy model.
 ///
 /// The diffuse galactic glow is *not* splatted as discrete objects — it is
 /// sampled analytically inside the cubemap baker from these parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MilkyWay {
+pub struct HostGalaxy {
     /// Unit vector normal to the galactic plane (celestial frame).
     pub plane_normal: DVec3,
     /// Unit vector toward the galactic centre (line of sight to the bulge).
@@ -192,8 +192,8 @@ pub struct CelestialCatalogue {
     pub nebulae: Vec<Nebula>,
     /// Remote galaxies.
     pub galaxies: Vec<Galaxy>,
-    /// Procedural Milky-Way parameters (sampled in the baker).
-    pub milky_way: MilkyWay,
+    /// Procedural host-galaxy parameters (sampled in the baker).
+    pub host_galaxy: HostGalaxy,
     /// Seed used to generate this catalogue (= system_seed XOR sky salt).
     pub generator_seed: u64,
 }

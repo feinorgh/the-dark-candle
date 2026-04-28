@@ -62,7 +62,7 @@ fn generate_and_bake_once(
     info!(
         "Catalogue: {} stars, MW plane normal = {:?}",
         catalogue.stars.len(),
-        catalogue.milky_way.plane_normal
+        catalogue.host_galaxy.plane_normal
     );
 
     let cube = bake_star_cubemap(&catalogue, STAR_CUBEMAP_FACE_SIZE, RENDER_MAG_LIMIT);

@@ -2,7 +2,7 @@
 //
 // Reads only `(planet_pos_in_galaxy, system_seed)` and produces a
 // fully-deterministic `CelestialCatalogue` containing stars (this module),
-// nebulae, galaxies, and Milky-Way parameters (added in later phases).
+// nebulae, galaxies, and host-galaxy parameters (added in later phases).
 //
 // All distributions are seeded from the system seed XORed with
 // `SKY_SEED_SALT`, so the catalogue is reproducible alongside (but
@@ -13,7 +13,7 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::f64::consts::TAU;
 
-use super::catalogue::{CelestialCatalogue, MilkyWay, SKY_SEED_SALT, SpectralClass, Star};
+use super::catalogue::{CelestialCatalogue, HostGalaxy, SKY_SEED_SALT, SpectralClass, Star};
 use super::spectrum::{
     absolute_magnitude_from_luminosity, apparent_magnitude, blackbody_to_linear_rgb,
     mass_to_luminosity, mass_to_temperature,
@@ -47,29 +47,29 @@ const MAX_STELLAR_MASS_SOLAR: f32 = 60.0;
 /// the sky-specific generator XORs it with `SKY_SEED_SALT` so the catalogue
 /// is independent of other systems sharing the seed.
 ///
-/// In this phase only stars and the Milky-Way *parameters* are populated;
-/// `nebulae` and `galaxies` are empty `Vec`s, and the Milky-Way diffuse
-/// glow is sampled by the cubemap baker (later phase) from `MilkyWay`.
+/// In this phase only stars and the host-galaxy *parameters* are populated;
+/// `nebulae` and `galaxies` are empty `Vec`s, and the host-galaxy diffuse
+/// glow is sampled by the cubemap baker (later phase) from `HostGalaxy`.
 pub fn generate_catalogue(system_seed: u64) -> CelestialCatalogue {
     let generator_seed = system_seed ^ SKY_SEED_SALT;
     let mut rng = SmallRng::seed_from_u64(generator_seed);
 
-    let milky_way = generate_milky_way(&mut rng);
-    let stars = generate_stars(&mut rng, &milky_way);
+    let host_galaxy = generate_host_galaxy(&mut rng);
+    let stars = generate_stars(&mut rng, &host_galaxy);
 
     CelestialCatalogue {
         stars,
         nebulae: Vec::new(),
         galaxies: Vec::new(),
-        milky_way,
+        host_galaxy,
         generator_seed,
     }
 }
 
-// ─── Milky Way ───────────────────────────────────────────────────────────────
+// ─── host galaxy ───────────────────────────────────────────────────────────────
 
 /// Pick a random orientation and bulge direction for the host galaxy.
-fn generate_milky_way(rng: &mut SmallRng) -> MilkyWay {
+fn generate_host_galaxy(rng: &mut SmallRng) -> HostGalaxy {
     let plane_normal = random_unit_vector(rng);
 
     // Pick a bulge direction lying *in* the galactic plane (perpendicular to
@@ -77,7 +77,7 @@ fn generate_milky_way(rng: &mut SmallRng) -> MilkyWay {
     let raw = random_unit_vector(rng);
     let bulge_direction = (raw - plane_normal * raw.dot(plane_normal)).normalize();
 
-    MilkyWay {
+    HostGalaxy {
         plane_normal,
         bulge_direction,
         // Bulge spans ~25° at our line of sight; scale lightly per system.
@@ -99,7 +99,7 @@ fn generate_milky_way(rng: &mut SmallRng) -> MilkyWay {
 ///   3. Sample a distance from a thin/thick-disk + halo distribution.
 ///   4. Pick a celestial direction biased toward the galactic plane.
 ///   5. Compute apparent magnitude; reject if fainter than `FAINTEST_MAGNITUDE`.
-fn generate_stars(rng: &mut SmallRng, mw: &MilkyWay) -> Vec<Star> {
+fn generate_stars(rng: &mut SmallRng, mw: &HostGalaxy) -> Vec<Star> {
     let mut out = Vec::with_capacity(STAR_SAMPLE_COUNT / 8);
 
     for _ in 0..STAR_SAMPLE_COUNT {
@@ -192,7 +192,7 @@ fn sample_power_law(rng: &mut SmallRng, a: f64, b: f64, alpha: f64) -> f64 {
 /// thin-disk + thick-disk + halo cumulative model centred on the planet.
 ///
 /// Distances are drawn out to ~5 kpc; beyond that point sources blur into
-/// the Milky-Way diffuse component handled procedurally by the baker.
+/// the host-galaxy diffuse component handled procedurally by the baker.
 fn sample_stellar_distance(rng: &mut SmallRng) -> f32 {
     let u: f32 = rng.random_range(0.0..1.0);
     if u < 0.85 {
@@ -220,8 +220,8 @@ fn sample_stellar_distance(rng: &mut SmallRng) -> f32 {
 /// The galactic latitude `b` (angle above/below `mw.plane_normal`) is sampled
 /// from a Laplace-like density `exp(−|sin b|/h)` with `h = disk_thickness_rad`.
 /// Galactic longitude is uniform around the plane.  This produces the
-/// concentration of stars in a band that gives the Milky Way its visible shape.
-fn sample_galactic_biased_direction(rng: &mut SmallRng, mw: &MilkyWay) -> DVec3 {
+/// concentration of stars in a band that gives the host galaxy its visible shape.
+fn sample_galactic_biased_direction(rng: &mut SmallRng, mw: &HostGalaxy) -> DVec3 {
     let h = mw.disk_thickness_rad as f64;
     // Inverse-CDF sample of exp(−|x|/h) on x = sin(b) ∈ [−1, 1] gives
     // x = −h · sign(u−0.5) · ln(1 − 2|u−0.5| · (1 − e^(−1/h))).
@@ -316,8 +316,8 @@ mod tests {
         // Stars near the galactic plane (|sin b| < disk_thickness) should be
         // overrepresented compared to a uniform sphere.
         let cat = generate_catalogue(99);
-        let h = cat.milky_way.disk_thickness_rad as f64;
-        let pole = cat.milky_way.plane_normal;
+        let h = cat.host_galaxy.disk_thickness_rad as f64;
+        let pole = cat.host_galaxy.plane_normal;
         let near_plane = cat
             .stars
             .iter()

@@ -33,7 +33,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> sky_params: vec4<f32>;
 
 // HDR cubemap containing the procedural celestial catalogue (stars, plus
-// Milky Way, nebulae and remote galaxies in later phases).
+// host galaxy, nebulae and remote galaxies in later phases).
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var sky_star_cubemap: texture_cube<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var sky_star_sampler: sampler;
 

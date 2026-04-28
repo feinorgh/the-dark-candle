@@ -1,6 +1,6 @@
 // Sky / celestial catalogue subsystem.
 //
-// Generates a procedural star catalogue (stars, nebulae, galaxies, Milky Way)
+// Generates a procedural star catalogue (stars, nebulae, galaxies, host galaxy)
 // from the system seed and bakes it into an HDR cubemap that the GPU sky-dome
 // shader samples each frame.  See `docs/atmosphere-simulation.md` and the
 // SKY-004 plan for the design rationale.

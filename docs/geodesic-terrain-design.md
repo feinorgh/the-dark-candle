@@ -705,7 +705,9 @@ A procedural star field generated from the world seed:
 - Colour variation: blue-white (hot), yellow (sun-like), orange-red (cool)
 - Constellation patterns are unique per world — discoverable by players
 - Planets of the system visible as bright "wandering stars" that move against the background over game-weeks
-- Milky Way analogue: a brighter band across the sky (galaxy disk)
+- Host-galaxy band: a brighter strip across the sky (the disk of the
+  procedurally generated galaxy the system inhabits — orientation is
+  randomised per system, not anchored to our real Milky Way)
 
 The star field is a static skybox texture generated once. Planet/moon positions are updated each frame from orbital mechanics (cheap — just Kepler's equation).
 
