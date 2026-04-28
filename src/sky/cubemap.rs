@@ -30,6 +30,7 @@ use bevy::math::Vec3;
 use half::f16;
 
 use super::catalogue::{CelestialCatalogue, Star};
+use super::host_galaxy::splat_host_galaxy;
 use super::spectrum::flux_from_magnitude;
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
@@ -165,6 +166,11 @@ pub fn bake_star_cubemap(
         }
         splat_star(&mut accum, size, star);
     }
+
+    // Procedural diffuse band of the host galaxy.  Composited into the
+    // same accumulator before f16 packing so it shares airmass extinction
+    // with the stars at sample time.
+    splat_host_galaxy(&mut accum, size, &catalogue.host_galaxy);
 
     // Convert to f16.
     let face_pixels = accum.map(|face_f32| {
