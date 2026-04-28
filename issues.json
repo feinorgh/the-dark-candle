@@ -1036,6 +1036,26 @@
     "notes": []
   },
   {
+    "id": "ENTITIES-001",
+    "title": "Demo goblin enemy floats in the sky after teleport",
+    "category": "rendering",
+    "severity": "low",
+    "status": "resolved",
+    "reported": "2026-04-28",
+    "description": "After teleporting on a planetary world, a maroon Cuboid (the demo goblin enemy) appears floating high up in the sky. The goblin is spawned by `spawn_enemy_when_loaded` in `src/entities/mod.rs` at a hard-coded `Transform::from_xyz(3.0, 0.6, 0.0)` and has no `WorldPosition` component, so the floating-origin / teleport rebase does not move it. After the player's render origin shifts to a new planetary location, the goblin remains at its old render-space coordinates, which from the new vantage end up in the sky.",
+    "reproduction": "Run `cargo run --features bevy/dynamic_linking -- --planet`, open the map (M), teleport anywhere far from spawn, look up.",
+    "suspected_files": [
+      "src/entities/mod.rs",
+      "src/floating_origin.rs"
+    ],
+    "suspected_cause": "Demo enemy is a leftover from the early flat-world bring-up. It lacks `WorldPosition` so floating-origin rebasing ignores it; in planetary mode there is no meaningful local coordinate frame for it to sit in.",
+    "related_commits": [],
+    "resolution": "Gated the demo goblin spawn on `Option<Res<PlanetaryData>>`: when planetary mode is active the spawn is skipped entirely (the Local<bool> latch is still set so the system stops polling). Proper enemy spawning on planets should go through src/bodies/ + WorldPosition once that path is wired up.",
+    "notes": [
+      "Long-term, the demo goblin should be replaced by a proper articulated body (src/bodies/) anchored via WorldPosition so it survives floating-origin rebases."
+    ]
+  },
+  {
     "id": "SKY-006",
     "title": "Long-exposure / multi-band sky imaging not exposed",
     "category": "rendering",

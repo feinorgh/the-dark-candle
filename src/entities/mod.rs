@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::{EnemyData, GameAssets};
+use crate::world::PlanetaryData;
 
 pub mod inventory;
 
@@ -29,11 +30,21 @@ fn spawn_enemy_when_loaded(
     mut commands: Commands,
     game_assets: Res<GameAssets>,
     enemy_assets: Res<Assets<EnemyData>>,
+    planetary: Option<Res<PlanetaryData>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut has_spawned: Local<bool>,
 ) {
     if *has_spawned {
+        return;
+    }
+
+    // Skip the demo goblin in planetary mode: it has no `WorldPosition` and is
+    // not rebased by the floating-origin system, so after a teleport it
+    // appears stuck in mid-air at its original render-space coordinates
+    // (ENTITIES-001).
+    if planetary.is_some() {
+        *has_spawned = true;
         return;
     }
 
