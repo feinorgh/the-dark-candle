@@ -23,6 +23,20 @@
 // Used to build the local tangent frame in the fragment shader.
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> sky_observer_up: vec4<f32>;
 
+// Body→celestial rotation matrix, three rows packed as Vec4 (w unused).
+// Maps a render-space (body-frame) direction into the catalogue's celestial
+// inertial frame so stars rotate with the planet.
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> sky_body_to_celestial: array<vec4<f32>, 3>;
+
+// Sky tunables: x = night brightness multiplier, y = horizon-extinction
+// strength, z/w reserved for future use (long-exposure gain, EM band, …).
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> sky_params: vec4<f32>;
+
+// HDR cubemap containing the procedural celestial catalogue (stars, plus
+// Milky Way, nebulae and remote galaxies in later phases).
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var sky_star_cubemap: texture_cube<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var sky_star_sampler: sampler;
+
 // ── Vertex stage ──────────────────────────────────────────────────────────────
 
 struct SkyOut {
@@ -152,6 +166,32 @@ fn fragment(in: SkyOut) -> @location(0) vec4<f32> {
     let disk  = smoothstep(SUN_DISK_COS_OUTER, SUN_DISK_COS_INNER, cos_angle);
     // Warm white at the core, slightly orange at the limb.
     rgb += vec3<f32>(1.0, 0.9, 0.7) * (disk * SUN_DISK_INTENSITY);
+
+    // Star cubemap: rotate the world view-direction into the catalogue's
+    // celestial inertial frame, sample the baked HDR cubemap, and add it
+    // additively to the Rayleigh result.  During daytime Rayleigh dominates
+    // and stars are naturally drowned out; at night Rayleigh is dim and the
+    // stars become visible.
+    //
+    // The rotation is uploaded row-major; `dot(row_i, v)` gives the i-th
+    // component of `R · v`, which is what we want.
+    let dir_celestial = vec3<f32>(
+        dot(sky_body_to_celestial[0].xyz, world_view),
+        dot(sky_body_to_celestial[1].xyz, world_view),
+        dot(sky_body_to_celestial[2].xyz, world_view),
+    );
+    var stars = textureSample(sky_star_cubemap, sky_star_sampler, dir_celestial).rgb;
+
+    // Horizon airmass extinction: stars near the horizon dim with view angle.
+    // Approximate sec(z) = 1 / max(local_view.y, ε) and scale by the strength
+    // factor.  Above the horizon (local_view.y ≤ 0) we pin extinction to a
+    // small finite value so terrain-occluded stars don't go black instantly.
+    let cos_z = max(local_view.y, 0.05);
+    let airmass = 1.0 / cos_z;
+    let extinction = exp(-sky_params.y * (airmass - 1.0));
+    stars *= extinction;
+
+    rgb += stars * sky_params.x;
 
     // Output linear HDR — Bevy's tonemapping pass handles the rest.
     return vec4<f32>(rgb, 1.0);

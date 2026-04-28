@@ -294,6 +294,7 @@ fn main() {
         PersistencePlugin,
         WeatherPlugin,
         the_dark_candle::audio::AudioPlugin,
+        the_dark_candle::sky::SkyPlugin,
     ));
 
     // Resolve --spawn location now that the terrain generator exists.

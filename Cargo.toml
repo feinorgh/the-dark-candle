@@ -25,6 +25,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = "27.0"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }
+half = "2"
 
 # Linux: Wayland for the primary desktop target, X11 for Xvfb / CI.
 [target.'cfg(target_os = "linux")'.dependencies]

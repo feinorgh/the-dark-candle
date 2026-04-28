@@ -253,11 +253,13 @@ fn agent_capture_tick(
                 write_metadata(&config, &state);
                 info!("[AgentCapture] Capture complete. Exiting.");
                 app_exit.write(AppExit::Success);
-            } else if state.frame > 30 {
+            } else if state.frame > 60 {
                 // Bevy AppExit hasn't been processed by the runner (common
-                // under headless/Xvfb setups). Force an immediate exit.
-                warn!("[AgentCapture] AppExit stalled — forcing process exit.");
-                std::process::exit(0);
+                // under headless/Xvfb setups). Abort immediately without
+                // running destructors to avoid segfaults from wgpu teardown
+                // on partially-shut-down threads.
+                warn!("[AgentCapture] AppExit stalled — aborting process.");
+                std::process::abort();
             }
         }
     }

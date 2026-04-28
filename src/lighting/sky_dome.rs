@@ -32,9 +32,19 @@ use crate::world::PlanetaryData;
 
 /// Custom material for the atmospheric sky dome.
 ///
-/// Two uniforms are uploaded each frame by `update_sky_material`:
-///   `sun_direction` – sun direction in the observer's local tangent frame.
-///   `observer_up`   – planet-up unit vector in render-space world coordinates.
+/// Uniforms uploaded each frame by `update_sky_material`:
+///   `sun_direction`      – sun direction in the observer's local tangent frame.
+///   `observer_up`        – planet-up unit vector in render-space world coords.
+///   `body_to_celestial_*` – three rows of the body→celestial rotation matrix
+///                          packed as Vec4 (w unused; mat3 alignment in WGSL
+///                          is fragile, three Vec4s is the portable form).
+///   `sky_params`         – x = night_brightness multiplier, y = star
+///                          extinction strength, z/w reserved.
+///
+/// Texture bindings:
+///   `star_cubemap` (binding 4) + `star_sampler` (binding 5) — HDR cubemap of
+///   the procedural celestial catalogue, sampled along
+///   `body_to_celestial · world_view`.
 #[derive(Asset, bevy::reflect::TypePath, AsBindGroup, Debug, Clone)]
 pub struct SkyMaterial {
     /// Sun direction in observer's local tangent frame (Y = zenith). xyz used.
@@ -43,6 +53,16 @@ pub struct SkyMaterial {
     /// Observer's planet-up direction in world (render) space. xyz used.
     #[uniform(1)]
     pub observer_up: Vec4,
+    /// Rows of the body→celestial rotation matrix (mat3 packed as 3×Vec4).
+    #[uniform(2)]
+    pub body_to_celestial_rows: [Vec4; 3],
+    /// x = night brightness multiplier, y = horizon-extinction strength.
+    #[uniform(3)]
+    pub sky_params: Vec4,
+    /// Cubemap texture of the procedural celestial catalogue.
+    #[texture(4, dimension = "cube")]
+    #[sampler(5)]
+    pub star_cubemap: Handle<Image>,
 }
 
 impl Material for SkyMaterial {
@@ -119,11 +139,20 @@ pub fn spawn_sky_dome(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<SkyMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let mesh = meshes.add(Sphere::new(1.0).mesh().uv(32, 18));
+    let placeholder = images.add(black_cube_placeholder());
     let mat = materials.add(SkyMaterial {
         sun_direction: Vec4::new(0.0, 1.0, 0.0, 0.0),
         observer_up: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        body_to_celestial_rows: [
+            Vec4::new(1.0, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 1.0, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0, 0.0),
+        ],
+        sky_params: Vec4::new(1.0, 0.18, 0.0, 0.0),
+        star_cubemap: placeholder,
     });
     commands.spawn((
         SkyDome,
@@ -132,6 +161,35 @@ pub fn spawn_sky_dome(
         Transform::from_scale(Vec3::splat(1e5)),
         NoFrustumCulling,
     ));
+}
+
+/// 1×1×6 black cubemap used until the SkyPlugin baker produces the real
+/// catalogue cubemap.  Without a valid handle the AsBindGroup derive panics
+/// at first frame.
+fn black_cube_placeholder() -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    };
+    // 6 × 1px × RGBA16F = 6 × 1 × 8 = 48 bytes, all zero.
+    let bytes = vec![0u8; 48];
+    let mut image = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 6,
+        },
+        TextureDimension::D2,
+        bytes,
+        TextureFormat::Rgba16Float,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        label: Some("sky_star_cubemap_placeholder_view"),
+        dimension: Some(TextureViewDimension::Cube),
+        ..default()
+    });
+    image
 }
 
 /// PostUpdate system: keep the sky dome centred on the camera.
@@ -153,13 +211,23 @@ pub fn anchor_sky_dome_to_camera(
     }
 }
 
-/// Update system: upload current sun direction and observer-up to the material.
+/// Update system: upload current sun direction, observer-up, body→celestial
+/// rotation, and (lazily, once available) the baked star cubemap to the sky
+/// material.
 ///
-/// Sun direction is projected into the observer's local tangent frame (Y = up),
-/// matching the coordinate system expected by the Rayleigh scattering model in
-/// `sky_dome.wgsl`.
+/// Sun direction is projected into the observer's local tangent frame
+/// (Y = up), matching the coordinate system expected by the Rayleigh
+/// scattering model in `sky_dome.wgsl`.
+///
+/// `body_to_celestial = R_y(-rotation_angle)` is the inverse of the planet's
+/// hour-angle rotation, so a fixed celestial direction passed through the
+/// matrix appears to sweep across the sky as rotation_angle advances —
+/// reusing the *same* `OrbitalState.rotation_angle` as the sun calculation
+/// makes sun and stars co-rotate by construction.
 pub fn update_sky_material(
     sun_world: Res<SunWorldDirection>,
+    orbital: Res<crate::lighting::orbital::OrbitalState>,
+    star_cubemap: Option<Res<crate::sky::StarCubemapHandle>>,
     cam_q: Query<&WorldPosition, With<crate::camera::FpsCamera>>,
     dome_q: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
     mut materials: ResMut<Assets<SkyMaterial>>,
@@ -199,6 +267,24 @@ pub fn update_sky_material(
 
     mat.sun_direction = local_sun.extend(0.0);
     mat.observer_up = up_f32.extend(0.0);
+
+    // Body→celestial rotation: R_y(-rotation_angle) in the body frame.
+    // Stored row-major so each Vec4 in the shader is one row.
+    let theta = -orbital.rotation_angle as f32;
+    let (s, c) = theta.sin_cos();
+    mat.body_to_celestial_rows = [
+        Vec4::new(c, 0.0, s, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(-s, 0.0, c, 0.0),
+    ];
+
+    // Swap in the real cubemap as soon as the SkyPlugin baker has published
+    // it.  Idempotent: comparing handle ids avoids needless GPU rebinding.
+    if let Some(cube) = star_cubemap
+        && mat.star_cubemap.id() != cube.0.id()
+    {
+        mat.star_cubemap = cube.0.clone();
+    }
 }
 
 /// Update system: spawn moon billboard quads once `PlanetaryData` is available.

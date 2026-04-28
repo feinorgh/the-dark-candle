@@ -23,6 +23,7 @@ pub mod physics;
 pub mod planet;
 pub mod procgen;
 pub mod simulation;
+pub mod sky;
 pub mod social;
 pub mod weather;
 pub mod world;

@@ -4745,6 +4745,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "glob",
+ "half",
  "image",
  "noise",
  "pollster",
