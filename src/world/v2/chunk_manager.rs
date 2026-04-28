@@ -1228,6 +1228,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<V2PipelineStats>()
             .init_resource::<crate::world::v2::debug::ChunkDebugViz>()
             .init_resource::<crate::world::v2::stitch_mesh::V2StitchMap>()
+            .init_resource::<crate::world::v2::stitch_mesh::V2CornerStitchMap>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,
@@ -1237,6 +1238,7 @@ impl Plugin for V2WorldPlugin {
                     v2_collect_terrain,
                     v2_collect_meshes,
                     crate::world::v2::stitch_mesh::v2_stitch_update,
+                    crate::world::v2::stitch_mesh::v2_corner_stitch_update,
                     v2_diagnostics,
                 )
                     .chain()
