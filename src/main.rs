@@ -130,6 +130,27 @@ struct Cli {
     /// Video FPS for ffmpeg encoding (only used with `--capture video`).
     #[arg(long, default_value_t = 30)]
     capture_fps: u32,
+
+    /// Initial camera yaw offset in degrees for agent capture.
+    /// 0 = default look direction (roughly "east" in the spawn tangent frame).
+    /// 180 = face the opposite direction, which often puts the sun in view.
+    /// Has no effect outside of `--agent` mode.
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+    initial_yaw_deg: f32,
+
+    /// Initial camera pitch offset in degrees for agent capture.
+    /// Negative = look down, positive = look up.
+    /// Use --initial-pitch-deg=-45 for an overhead-ish terrain view.
+    /// Has no effect outside of `--agent` mode.
+    #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+    initial_pitch_deg: f32,
+
+    /// Adjust the orbital rotation angle so solar noon falls at the spawn
+    /// longitude, ensuring the terrain is fully lit for captures.  Without
+    /// this, most spawn locations are in darkness because the default
+    /// rotation places noon at lon=0°E.  Has no effect outside `--agent` mode.
+    #[arg(long, default_value_t = false)]
+    force_daylight: bool,
 }
 
 /// CLI enum for capture mode selection.
@@ -160,6 +181,9 @@ fn main() {
             capture_interval: cli.capture_interval,
             output_dir: std::path::PathBuf::from(&cli.capture_out),
             fps: cli.capture_fps,
+            initial_yaw_deg: cli.initial_yaw_deg,
+            initial_pitch_deg: cli.initial_pitch_deg,
+            force_daylight: cli.force_daylight,
         });
         app.add_plugins(AgentCapturePlugin);
     }

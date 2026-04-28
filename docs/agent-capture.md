@@ -34,6 +34,8 @@ cargo run --features bevy/dynamic_linking -- \
 | `--capture-frames <n>` | 120 | Frames to record (video mode only). |
 | `--capture-out <dir>` | `agent_captures` | Output directory. Created if absent. |
 | `--capture-fps <n>` | 30 | Target FPS for ffmpeg encoding (video mode only). |
+| `--initial-yaw-deg <deg>` | 0.0 | Rotate the camera's initial look direction by this many degrees around the surface normal. Use `180` to face the opposite direction (often puts the sun in front of the camera). |
+| `--initial-pitch-deg <deg>` | 0.0 | Tilt the camera up (positive) or down (negative). `-45` gives a useful overhead terrain view. |
 
 ### Spawn modes (used with `--spawn`)
 

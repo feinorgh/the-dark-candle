@@ -461,62 +461,88 @@ pub fn v2_stitch_update(
                 continue;
             }
 
-            // Phase 2: take the longest chain from each side
-            let fine_chain = fine_chains.iter().max_by_key(|l| l.vertices.len()).unwrap();
-            let coarse_chain = coarse_chains
+            // Compute projection axis from the longest overall chain on either side.
+            let reference_chain = fine_chains
                 .iter()
+                .chain(coarse_chains.iter())
                 .max_by_key(|l| l.vertices.len())
                 .unwrap();
-
-            if fine_chain.vertices.len() < 2 || coarse_chain.vertices.len() < 2 {
-                continue;
-            }
-
-            // Compute outward direction at the seam
-            let seam_world: DVec3 = fine_chain
+            let ref_mid = reference_chain
                 .vertices
                 .iter()
-                .chain(coarse_chain.vertices.iter())
-                .fold(DVec3::ZERO, |acc, &p| acc + p)
-                / (fine_chain.vertices.len() + coarse_chain.vertices.len()) as f64;
-            let outward_hint = seam_world.normalize();
-
-            // Projection axis from coarse chain
-            let axis_raw =
-                coarse_chain.vertices.last().unwrap() - coarse_chain.vertices.first().unwrap();
+                .fold(DVec3::ZERO, |a, &p| a + p)
+                / reference_chain.vertices.len() as f64;
+            let outward_hint_global = ref_mid.normalize();
+            let axis_raw = *reference_chain.vertices.last().unwrap()
+                - *reference_chain.vertices.first().unwrap();
             let axis = if axis_raw.length_squared() > 1e-10 {
                 axis_raw.normalize()
             } else {
-                let arb = if outward_hint.x.abs() < 0.9 {
+                let arb = if outward_hint_global.x.abs() < 0.9 {
                     DVec3::X
                 } else {
                     DVec3::Y
                 };
-                outward_hint.cross(arb).normalize()
+                outward_hint_global.cross(arb).normalize()
             };
 
-            // Clip coarse loop to fine loop's tangential extent
-            let proj_f: Vec<f64> = fine_chain.vertices.iter().map(|p| p.dot(axis)).collect();
-            let t_min = proj_f.iter().cloned().fold(f64::INFINITY, f64::min);
-            let t_max = proj_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            // Stitch all (fine_chain, coarse_chain) pairs that have projected
+            // overlap. Each pair is clipped independently and gets its own
+            // per-pair outward_hint for reliable winding correction.
+            let mut all_positions: Vec<[f32; 3]> = Vec::new();
+            let mut all_normals: Vec<[f32; 3]> = Vec::new();
+            let mut all_indices: Vec<u32> = Vec::new();
 
-            let clipped_coarse = clip_loop_to_range(&coarse_chain.vertices, axis, t_min, t_max);
-            if clipped_coarse.len() < 2 {
+            for fine_chain in fine_chains {
+                if fine_chain.vertices.len() < 2 {
+                    continue;
+                }
+                let proj_f: Vec<f64> = fine_chain.vertices.iter().map(|p| p.dot(axis)).collect();
+                let t_min = proj_f.iter().cloned().fold(f64::INFINITY, f64::min);
+                let t_max = proj_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+                for coarse_chain in coarse_chains {
+                    if coarse_chain.vertices.len() < 2 {
+                        continue;
+                    }
+                    // Clip coarse chain to fine chain's tangential extent.
+                    // Returns < 2 points when the chains don't overlap → skip.
+                    let clipped_coarse =
+                        clip_loop_to_range(&coarse_chain.vertices, axis, t_min, t_max);
+                    if clipped_coarse.len() < 2 {
+                        continue;
+                    }
+
+                    let pair_n = fine_chain.vertices.len() + clipped_coarse.len();
+                    let outward_hint = (fine_chain
+                        .vertices
+                        .iter()
+                        .chain(clipped_coarse.iter())
+                        .fold(DVec3::ZERO, |a, &p| a + p)
+                        / pair_n as f64)
+                        .normalize();
+
+                    let (pos, nrm, idx) = stitch_triangulate(
+                        &fine_chain.vertices,
+                        &clipped_coarse,
+                        origin_pos,
+                        outward_hint,
+                    );
+
+                    if !idx.is_empty() {
+                        let base = all_positions.len() as u32;
+                        all_positions.extend(pos);
+                        all_normals.extend(nrm);
+                        all_indices.extend(idx.into_iter().map(|i| i + base));
+                    }
+                }
+            }
+
+            if all_indices.is_empty() {
                 continue;
             }
 
-            let (positions, normals, indices) = stitch_triangulate(
-                &fine_chain.vertices,
-                &clipped_coarse,
-                origin_pos,
-                outward_hint,
-            );
-
-            if indices.is_empty() {
-                continue;
-            }
-
-            let mesh = build_stitch_mesh(positions, normals, indices);
+            let mesh = build_stitch_mesh(all_positions, all_normals, all_indices);
             let mesh_handle = meshes.add(mesh);
 
             let stitch_entity = commands

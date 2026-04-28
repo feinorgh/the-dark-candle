@@ -51,6 +51,20 @@ pub struct AgentCaptureConfig {
     pub output_dir: PathBuf,
     /// Video FPS for ffmpeg encoding.
     pub fps: u32,
+    /// Initial camera yaw offset in degrees, applied at spawn by rotating the
+    /// default look direction around the surface normal.  0° = default (faces
+    /// along the tangent toward what happens to be "east" on the spawn face).
+    /// 180° flips the camera to face the opposite direction (useful for getting
+    /// the sun in front of the camera in agent captures).
+    pub initial_yaw_deg: f32,
+    /// Initial camera pitch offset in degrees.  Negative = look down, positive =
+    /// look up.  Applied after yaw.  −45° is a useful overhead-ish terrain view.
+    pub initial_pitch_deg: f32,
+    /// If true, advance the orbital rotation angle to solar noon at the spawn
+    /// longitude so the terrain is fully lit for captures.  Without this the
+    /// default rotation places solar noon at lon=0°, which leaves most spawn
+    /// locations in darkness.
+    pub force_daylight: bool,
 }
 
 impl Default for AgentCaptureConfig {
@@ -62,6 +76,9 @@ impl Default for AgentCaptureConfig {
             capture_interval: 1,
             output_dir: PathBuf::from("agent_captures"),
             fps: 30,
+            initial_yaw_deg: 0.0,
+            initial_pitch_deg: 0.0,
+            force_daylight: false,
         }
     }
 }
@@ -289,6 +306,9 @@ fn write_metadata(config: &AgentCaptureConfig, state: &AgentCaptureState) {
   "spawn_lat_deg": {lat},
   "spawn_lon_deg": {lon},
   "settle_frames": {settle},
+  "initial_yaw_deg": {yaw},
+  "initial_pitch_deg": {pitch},
+  "force_daylight": {force_daylight},
   "captured_at_unix": {now},
   "files": [{files}]
 }}
@@ -296,6 +316,9 @@ fn write_metadata(config: &AgentCaptureConfig, state: &AgentCaptureState) {
         lat = state.spawn_lat_deg,
         lon = state.spawn_lon_deg,
         settle = config.settle_frames,
+        yaw = config.initial_yaw_deg,
+        pitch = config.initial_pitch_deg,
+        force_daylight = config.force_daylight,
         files = files_json.join(", "),
     );
 

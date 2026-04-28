@@ -213,13 +213,16 @@ pub fn find_coastline(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_camera(
     mut commands: Commands,
     terrain_gen: Option<Res<TerrainGeneratorRes>>,
     planet: Res<PlanetConfig>,
     spawn_loc: Option<Res<SpawnLocation>>,
+    agent: Option<Res<crate::diagnostics::agent_capture::AgentCaptureConfig>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
     mut render_origin: ResMut<RenderOrigin>,
+    mut orbital: ResMut<crate::lighting::orbital::OrbitalState>,
 ) {
     // Pick a spawn position on the terrain surface.
     //
@@ -280,12 +283,51 @@ fn spawn_camera(
                 dir_f64,
             );
             let spawn = dir_f64 * spawn_r;
+            // If the agent requests daylight, advance the orbital rotation so
+            // solar noon falls at the spawn longitude.  Formula: for noon at
+            // lon (radians), rotation_angle = π + lon.  This ensures the sun
+            // is overhead at the spawn location regardless of its default value.
+            if let Some(ref ag) = agent
+                && ag.force_daylight
+            {
+                orbital.rotation_angle = std::f64::consts::PI + lon;
+                info!(
+                    "[AgentCapture] force_daylight: rotation_angle set to {:.3} rad \
+                         (solar noon at lon={:.1}°)",
+                    orbital.rotation_angle,
+                    lon.to_degrees()
+                );
+            }
             // Look tangent to the surface (slightly ahead along the equator direction).
             let dir = Vec3::new(dir_f64.x as f32, dir_f64.y as f32, dir_f64.z as f32);
-            let look_offset = Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
+            let mut look_offset = Vec3::new(-dir.y, dir.x, 0.0).normalize() * 10.0;
+            // Apply agent initial_yaw_deg / initial_pitch_deg if set.
+            // Yaw rotates around the surface normal; pitch rotates around the
+            // right axis (perpendicular to both surface normal and look direction).
+            // IMPORTANT: also rotate the up_hint by the pitch so that
+            // `looking_at` is not given a near-degenerate configuration when
+            // pitching steeply (forward ≈ ±up_hint makes the cross-product
+            // near-zero and produces a garbage camera frame).
+            let mut up_hint = dir;
+            if let Some(ref ag) = agent {
+                if ag.initial_yaw_deg != 0.0 {
+                    look_offset =
+                        Quat::from_axis_angle(dir, ag.initial_yaw_deg.to_radians()) * look_offset;
+                }
+                if ag.initial_pitch_deg != 0.0 {
+                    let right = dir.cross(look_offset.normalize()).normalize();
+                    // Positive angle around (dir × look) pitches the nose DOWN;
+                    // negate so that positive initial_pitch_deg means "look up"
+                    // and negative means "look down" (the intuitive convention).
+                    let pitch_quat =
+                        Quat::from_axis_angle(right, -ag.initial_pitch_deg.to_radians());
+                    look_offset = pitch_quat * look_offset;
+                    up_hint = pitch_quat * up_hint;
+                }
+            }
             // Use local surface normal as the up hint so the initial frame is
             // consistent with the spherical camera_look rotation.
-            (spawn, look_offset, dir)
+            (spawn, look_offset, up_hint)
         } else {
             let spawn_x = 0.0_f64;
             let spawn_z = 0.0_f64;

@@ -131,6 +131,10 @@ impl V2PendingTerrain {
 #[derive(Resource, Default)]
 pub struct V2PendingMeshes {
     pending: HashSet<CubeSphereCoord>,
+    /// Coords whose in-flight mesh task was invalidated after dispatch.
+    /// When the task completes, its result is discarded instead of installed,
+    /// and the coord becomes a candidate for a fresh re-dispatch.
+    stale: HashSet<CubeSphereCoord>,
 }
 
 impl V2PendingMeshes {
@@ -927,10 +931,16 @@ pub fn v2_collect_terrain(
             let coord_fce = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, coord.lod);
             let max_uv = coord_fce as i32;
             for dir in 0..6 {
-                if let Some(nc) = same_face_neighbor_for_dir(coord, dir, max_uv)
-                    && let Some(ent) = chunk_map.loaded.remove(&nc)
-                {
-                    commands.entity(ent).despawn();
+                if let Some(nc) = same_face_neighbor_for_dir(coord, dir, max_uv) {
+                    if let Some(ent) = chunk_map.loaded.remove(&nc) {
+                        commands.entity(ent).despawn();
+                    }
+                    // If a mesh task is already in-flight for this neighbour,
+                    // mark it stale so the result is discarded when it
+                    // completes rather than installing an out-of-date mesh.
+                    if pending_meshes.pending.contains(&nc) {
+                        pending_meshes.stale.insert(nc);
+                    }
                 }
             }
 
@@ -945,6 +955,9 @@ pub fn v2_collect_terrain(
                     for nc in coord.same_face_neighbors_at_lod_all(dir, target_lod, mean_radius) {
                         if let Some(ent) = chunk_map.loaded.remove(&nc) {
                             commands.entity(ent).despawn();
+                        }
+                        if pending_meshes.pending.contains(&nc) {
+                            pending_meshes.stale.insert(nc);
                         }
                     }
                 }
@@ -1038,6 +1051,7 @@ pub fn v2_collect_terrain(
             });
             commands.spawn(V2MeshTask(task));
             pending_meshes.pending.insert(coord);
+            pending_meshes.stale.remove(&coord);
             continue;
         }
 
@@ -1061,6 +1075,7 @@ pub fn v2_collect_terrain(
 
         commands.spawn(V2MeshTask(task));
         pending_meshes.pending.insert(coord);
+        pending_meshes.stale.remove(&coord);
     }
 }
 
@@ -1136,6 +1151,13 @@ pub fn v2_collect_meshes(
 
         commands.entity(task_entity).despawn();
         pending_meshes.pending.remove(&result.coord);
+
+        // If this chunk was invalidated while the task was in-flight, the
+        // neighbor data it used is stale.  Discard the result; the chunk
+        // will be re-dispatched with fresh neighbor slices on the next frame.
+        if pending_meshes.stale.remove(&result.coord) {
+            continue;
+        }
 
         // DEBUG: log world position of first few meshed chunks vs render origin
         if !debug_logged && !result.mesh.is_empty() {
