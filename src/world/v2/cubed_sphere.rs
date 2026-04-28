@@ -570,7 +570,7 @@ impl CubeSphereCoord {
         dir: ChunkDir,
         target_lod: u8,
         mean_radius: f64,
-    ) -> Option<CubeSphereCoord> {
+    ) -> Option<(CubeSphereCoord, ChunkDir)> {
         let fce_src = Self::face_chunks_per_edge_lod(mean_radius, self.lod) as i64;
         let fce_tgt = Self::face_chunks_per_edge_lod(mean_radius, target_lod) as i64;
         let fce_src_i = fce_src as i32;
@@ -595,8 +595,10 @@ impl CubeSphereCoord {
             return None;
         }
 
-        Some(CubeSphereCoord::new_with_lod(
-            adj_face, adj_u_tgt, adj_v_tgt, self.layer, target_lod,
+        let incoming_dir = cross_face_incoming_dir(self.face, dir);
+        Some((
+            CubeSphereCoord::new_with_lod(adj_face, adj_u_tgt, adj_v_tgt, self.layer, target_lod),
+            incoming_dir,
         ))
     }
 }
@@ -694,6 +696,43 @@ fn cross_face_v(face: CubeFace, u: i32, v_oob: i32, max: i32) -> (CubeFace, i32,
             CubeFace::PosZ => (CubeFace::NegY, u, last),
             CubeFace::NegZ => (CubeFace::NegY, last - u, 0),
         }
+    }
+}
+
+/// Returns the incoming [`ChunkDir`] on the adjacent face when stepping off
+/// `source_face` in `step_dir`.
+///
+/// Used by the stitch-mesh system to pick the correct boundary-loop slot on
+/// the coarse chunk.  For same-face neighbours the incoming direction is
+/// simply `step_dir.opposite()`.  For cross-face neighbours the cube-face
+/// axis mapping can transpose or reflect the axes, so this function derives
+/// the correct slot from a mid-face probe through `cross_face_u`/`cross_face_v`.
+///
+/// The probe uses a representative coordinate `MAX/2` (never 0 or `last`)
+/// to avoid coincidental boundary hits on the non-constrained axis.
+pub(crate) fn cross_face_incoming_dir(source_face: CubeFace, step_dir: ChunkDir) -> ChunkDir {
+    const MAX: i32 = 100;
+    const LAST: i32 = MAX - 1;
+    const MID: i32 = MAX / 2;
+
+    let (_, adj_u, adj_v) = match step_dir {
+        ChunkDir::PosU => cross_face_u(source_face, MID, MAX, MAX),
+        ChunkDir::NegU => cross_face_u(source_face, MID, -1, MAX),
+        ChunkDir::PosV => cross_face_v(source_face, MID, MAX, MAX),
+        ChunkDir::NegV => cross_face_v(source_face, MID, -1, MAX),
+        // Radial directions have no cross-face mapping; fall back to opposite.
+        ChunkDir::PosLayer | ChunkDir::NegLayer => return step_dir.opposite(),
+    };
+
+    if adj_u == 0 {
+        ChunkDir::NegU
+    } else if adj_u == LAST {
+        ChunkDir::PosU
+    } else if adj_v == 0 {
+        ChunkDir::PosV
+    } else {
+        debug_assert_eq!(adj_v, LAST, "cross_face probe must land on a face boundary");
+        ChunkDir::NegV
     }
 }
 
@@ -1196,9 +1235,12 @@ mod tests {
                 .is_none(),
             "PosU at max-u should be None from same_face"
         );
-        let nb = coord.cross_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r);
-        assert!(nb.is_some(), "cross_face PosU should produce a neighbor");
-        let nb = nb.unwrap();
+        let result = coord.cross_face_neighbor_at_lod(ChunkDir::PosU, 0, small_r);
+        assert!(
+            result.is_some(),
+            "cross_face PosU should produce a neighbor"
+        );
+        let (nb, incoming) = result.unwrap();
         assert_eq!(
             nb.face,
             CubeFace::PosX,
@@ -1207,6 +1249,8 @@ mod tests {
         );
         assert_eq!(nb.u, 0, "first cell on adjacent face should have u=0");
         assert_eq!(nb.lod, 0);
+        // PosZ +PosU: cross_face_u(PosZ, _, max, max) → (PosX, 0, v) → NegU
+        assert_eq!(incoming, ChunkDir::NegU, "incoming dir should be NegU");
     }
 
     #[test]
@@ -1222,7 +1266,7 @@ mod tests {
                 .is_none(),
             "NegU at u=0 should be None from same_face"
         );
-        let nb = coord
+        let (nb, incoming) = coord
             .cross_face_neighbor_at_lod(ChunkDir::NegU, 0, small_r)
             .expect("cross_face NegU should produce a neighbor");
         assert_eq!(
@@ -1232,6 +1276,8 @@ mod tests {
             nb.face
         );
         assert_eq!(nb.u, fce0 - 1, "last cell on adjacent face, got {}", nb.u);
+        // PosZ NegU: cross_face_u(PosZ, _, -1, max) → (NegX, last, v) → PosU
+        assert_eq!(incoming, ChunkDir::PosU, "incoming dir should be PosU");
     }
 
     #[test]
@@ -1246,7 +1292,7 @@ mod tests {
                 .same_face_neighbor_at_lod(ChunkDir::PosV, 0, small_r)
                 .is_none()
         );
-        let nb = coord
+        let (nb, incoming) = coord
             .cross_face_neighbor_at_lod(ChunkDir::PosV, 0, small_r)
             .expect("cross_face PosV should produce a neighbor");
         assert_eq!(
@@ -1256,6 +1302,8 @@ mod tests {
             nb.face
         );
         assert_eq!(nb.v, 0, "first cell on adjacent face, got {}", nb.v);
+        // PosZ PosV: cross_face_v(PosZ, _, max, max) → (PosY, u, 0) → PosV
+        assert_eq!(incoming, ChunkDir::PosV, "incoming dir should be PosV");
     }
 
     #[test]
@@ -1270,7 +1318,7 @@ mod tests {
                 .same_face_neighbor_at_lod(ChunkDir::NegV, 0, small_r)
                 .is_none()
         );
-        let nb = coord
+        let (nb, incoming) = coord
             .cross_face_neighbor_at_lod(ChunkDir::NegV, 0, small_r)
             .expect("cross_face NegV should produce a neighbor");
         assert_eq!(
@@ -1280,6 +1328,8 @@ mod tests {
             nb.face
         );
         assert_eq!(nb.v, fce0 - 1, "last cell on adjacent face, got {}", nb.v);
+        // PosZ NegV: cross_face_v(PosZ, _, -1, max) → (NegY, u, last) → NegV
+        assert_eq!(incoming, ChunkDir::NegV, "incoming dir should be NegV");
     }
 
     #[test]
@@ -1310,12 +1360,120 @@ mod tests {
         let small_r = 320.0_f64;
         let fce0 = CubeSphereCoord::face_chunks_per_edge_lod(small_r, 0) as i32;
         let coord = CubeSphereCoord::new_with_lod(CubeFace::PosZ, fce0 - 1, 7, 0, 0);
-        let nb = coord
+        let (nb, incoming) = coord
             .cross_face_neighbor_at_lod(ChunkDir::PosU, 1, small_r)
             .expect("cross-face LOD-1 neighbor should exist");
         assert_eq!(nb.face, CubeFace::PosX);
         assert_eq!(nb.lod, 1);
         assert_eq!(nb.u, 0);
         assert_eq!(nb.v, 3, "v should rescale from 7 (LOD0/16) to 3 (LOD1/8)");
+        assert_eq!(incoming, ChunkDir::NegU);
+    }
+
+    // ── cross_face_incoming_dir tests ────────────────────────────────────────
+
+    #[test]
+    fn cross_face_incoming_dir_equatorial_u_steps() {
+        // Equatorial faces stepping U: should map to the opposite U direction.
+        use super::cross_face_incoming_dir;
+        for face in [
+            CubeFace::PosX,
+            CubeFace::NegX,
+            CubeFace::PosZ,
+            CubeFace::NegZ,
+        ] {
+            assert_eq!(
+                cross_face_incoming_dir(face, ChunkDir::PosU),
+                ChunkDir::NegU,
+                "{face:?} PosU"
+            );
+            assert_eq!(
+                cross_face_incoming_dir(face, ChunkDir::NegU),
+                ChunkDir::PosU,
+                "{face:?} NegU"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_face_incoming_dir_polar_always_same_v() {
+        // PosY → always NegV for any step direction.
+        // NegY → always PosV for any step direction.
+        use super::cross_face_incoming_dir;
+        for step in [
+            ChunkDir::PosU,
+            ChunkDir::NegU,
+            ChunkDir::PosV,
+            ChunkDir::NegV,
+        ] {
+            assert_eq!(
+                cross_face_incoming_dir(CubeFace::PosY, step),
+                ChunkDir::NegV,
+                "PosY {step:?}"
+            );
+            assert_eq!(
+                cross_face_incoming_dir(CubeFace::NegY, step),
+                ChunkDir::PosV,
+                "NegY {step:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_face_incoming_dir_transposed_v_steps() {
+        // PosX/NegX stepping in V: land on PosY/NegY's U boundary (transposed).
+        use super::cross_face_incoming_dir;
+        // PosX PosV → cross_face_v(PosX, MID, MAX, MAX) → (PosY, last, last-MID) → PosU
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::PosX, ChunkDir::PosV),
+            ChunkDir::PosU
+        );
+        // PosX NegV → cross_face_v(PosX, MID, -1, MAX) → (NegY, last, MID) → PosU
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::PosX, ChunkDir::NegV),
+            ChunkDir::PosU
+        );
+        // NegX PosV → cross_face_v(NegX, MID, MAX, MAX) → (PosY, 0, MID) → NegU
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::NegX, ChunkDir::PosV),
+            ChunkDir::NegU
+        );
+        // NegX NegV → cross_face_v(NegX, MID, -1, MAX) → (NegY, 0, last-MID) → NegU
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::NegX, ChunkDir::NegV),
+            ChunkDir::NegU
+        );
+    }
+
+    #[test]
+    fn cross_face_incoming_dir_posz_v_steps_preserved() {
+        // PosZ stepping in V: preserved (not reflected).
+        use super::cross_face_incoming_dir;
+        // PosZ PosV → cross_face_v(PosZ, MID, MAX, MAX) → (PosY, MID, 0) → PosV
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::PosZ, ChunkDir::PosV),
+            ChunkDir::PosV
+        );
+        // PosZ NegV → cross_face_v(PosZ, MID, -1, MAX) → (NegY, MID, last) → NegV
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::PosZ, ChunkDir::NegV),
+            ChunkDir::NegV
+        );
+    }
+
+    #[test]
+    fn cross_face_incoming_dir_negz_v_steps_reflected() {
+        // NegZ stepping in V: reflected (PosV→NegV, NegV→PosV).
+        use super::cross_face_incoming_dir;
+        // NegZ PosV → cross_face_v(NegZ, MID, MAX, MAX) → (PosY, last-MID, last) → NegV
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::NegZ, ChunkDir::PosV),
+            ChunkDir::NegV
+        );
+        // NegZ NegV → cross_face_v(NegZ, MID, -1, MAX) → (NegY, last-MID, 0) → PosV
+        assert_eq!(
+            cross_face_incoming_dir(CubeFace::NegZ, ChunkDir::NegV),
+            ChunkDir::PosV
+        );
     }
 }

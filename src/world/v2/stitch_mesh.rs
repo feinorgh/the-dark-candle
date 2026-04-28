@@ -351,12 +351,12 @@ pub fn v2_stitch_update(
         for (dir_idx, &dir) in ChunkDir::ALL.iter().enumerate() {
             // Look up the single representative coarse neighbor — same face first,
             // cross-face fallback (Phase 3).
-            let coarse_coord =
+            let (coarse_coord, coarse_incoming_dir) =
                 match fine_coord.same_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
-                    Some(c) => c,
+                    Some(c) => (c, dir.opposite()),
                     None => {
                         match fine_coord.cross_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
-                            Some(c) => c,
+                            Some((c, incoming)) => (c, incoming),
                             None => continue, // PosLayer/NegLayer — no cross-face
                         }
                     }
@@ -385,7 +385,7 @@ pub fn v2_stitch_update(
                 continue;
             };
 
-            let opposite_idx = dir.opposite().all_index();
+            let opposite_idx = coarse_incoming_dir.all_index();
             let fine_chains = &fine_loops.loops[dir_idx];
             let coarse_chains = &coarse_loops.loops[opposite_idx];
 
