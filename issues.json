@@ -1010,7 +1010,7 @@
     ],
     "suspected_cause": "Different LOD levels produce mesh vertices at slightly different world positions (LOD seam stitching not implemented). The tangent-frame projection may also introduce sub-millimeter float precision errors at chunk boundaries. Cross-face chunk boundaries have more complex wrapping that may not be fully handled.",
     "related_commits": [
-      "PENDING"
+      "0ea9f53"
     ],
     "resolution": "Added a 'cached' flag to NeighborSlices, set to true only when the boundary slice was extracted bit-identically from a same-face same-LOD cached neighbour. surface_nets_mesh now emits a downward-hanging skirt (SKIRT_DEPTH = 2.0 chunk-local units) off each lateral wall (\u00b1X, \u00b1Z) whose neighbour is NOT cached (cross-face, missing, or different-LOD). Skirt vertices are a separate pool with copied (not accumulated) shading normals, so they blend invisibly with the surface and become visible only when a real seam crack would otherwise show through. Skirts are gated on 'used' boundary vertices to avoid floating curtains off orphan vertices (e.g. ceiling-avoidance cells). Same-face same-LOD seams remain unaffected because their boundary data is already bit-identical.",
     "notes": [
