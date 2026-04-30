@@ -182,4 +182,50 @@ mod proptests {
             );
         }
     }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 32,
+            failure_persistence: Some(Box::new(
+                proptest::test_runner::FileFailurePersistence::Direct(
+                    "tests/cases/stress/proptest-regressions/random_teleport_sequence.txt"
+                ),
+            )),
+            ..ProptestConfig::default()
+        })]
+        #[test]
+        fn random_teleport_sequence(
+            sequence in proptest::collection::vec(
+                (
+                    -89.99f64..=89.99f64,
+                    -180.0f64..=180.0f64,
+                    prop_oneof![
+                        Just(0.0_f64),
+                        Just(50_000.0_f64),
+                        Just(-100.0_f64),
+                    ],
+                ),
+                1..=16,
+            ),
+        ) {
+            let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+            app.tick_n(30);
+
+            for (lat, lon, alt) in &sequence {
+                app.teleport(*lat, *lon, *alt);
+                app.tick_n(8);
+            }
+
+            let failures = app.assert_invariants(
+                InvariantSet::PANICS
+                    | InvariantSet::FINITE
+                    | InvariantSet::NO_OVERFLOW
+                    | InvariantSet::CHUNK_CACHE,
+            );
+            prop_assert!(
+                failures.is_empty(),
+                "sequence={sequence:?}: failures = {failures:?}"
+            );
+        }
+    }
 }
