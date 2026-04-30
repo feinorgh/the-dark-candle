@@ -242,6 +242,46 @@ For each `divergent` audit row:
 
 **Production bake helper:** `crate::planet::gpu_heightmap::bake_elevation_roughness_ocean(&PlanetaryTerrainSampler) -> (Vec<f32>, Vec<f32>, Vec<f32>)` is a free `pub fn`. Runtime call site: `src/world/v2/chunk_manager.rs:try_inject_gpu_heightmap` (line 1424). Tests will call `bake_elevation_roughness_ocean` directly; **no test-only wrapper is needed**.
 
-## Appendix B — Final outcome (populated in Phase 4)
+## Appendix B — Final outcome
 
-*To be filled in at the end of Phase 4.*
+Phase 1 audited 13 rows against the GPU and CPU planetary-noise paths. Of these:
+
+- **11 matches** — already in parity at the start, regression-protected by new tests.
+- **1 divergent + fixed** — cave-tube Perlin sampling: GPU was using `perlin3d` with y=0, CPU uses `perlin2d`. Fixed in commit `84c1ee0`.
+- **1 stale-doc** — `tech_debt` "FBM noise terrain" entry, removed in Task 18.
+- **1 deferred (out of scope)** — Earth-scale f32 coordinate-precision divergence in noise inputs (GPUPARITY-002). At Earth scale (~6.37e6 m) the f32 multiply `world_xyz * 0.10` accumulates a fractional error past ore/crystal noise thresholds, producing ~504 mismatches per chunk at dl=-3. Resolution requires either f64 emulation in WGSL or a coordinate-recentring scheme; both exceed parity scope.
+
+### Divergences fixed in Phase 3
+
+| Audit row | Description | Fix commit |
+|---|---|---|
+| 8 (caves) | GPU `is_cave_gpu` was sampling `perlin3d` with y=0 for the XZ/XY tube checks; CPU uses true 2D Perlin via `perlin2d`. | `84c1ee0` |
+
+### New tests added in Phase 2
+
+| Test name | Purpose |
+|---|---|
+| `gpu_vs_cpu_surface_chunk_small_planet_face_center` | small-planet face-centre, ±3 layers |
+| `gpu_vs_cpu_parity_earth_scale_face_center` | Earth-scale face-centre, ±3 layers (#[ignore], GPUPARITY-002) |
+| `gpu_vs_cpu_parity_small_planet_probe_matrix` | small-planet poles + antimeridian |
+| `gpu_vs_cpu_parity_earth_scale_probe_matrix` | Earth-scale poles + antimeridian (#[ignore], GPUPARITY-002) |
+| `gpu_vs_cpu_parity_biome_driven` | coastline / deep ocean / mountain probes |
+| `bake_is_deterministic_for_fixed_seed` | bake determinism |
+| `bake_differs_for_different_seeds` | seed sensitivity |
+| `set_heightmap_data_rejects_wrong_size` | upload validation |
+| `gpu_lod0_full_face_classification_matches_cpu_sample` | coarse full-face sweep |
+| `from_world_dir_round_trip_neg_x` | cubed-sphere coord round-trip (−X face) |
+| `from_world_dir_round_trip_pos_x` | cubed-sphere coord round-trip (+X face) |
+| `from_world_dir_round_trip_neg_y` | cubed-sphere coord round-trip (−Y face) |
+| `from_world_dir_round_trip_pos_y` | cubed-sphere coord round-trip (+Y face) |
+| `from_world_dir_round_trip_neg_z` | cubed-sphere coord round-trip (−Z face) |
+| `from_world_dir_round_trip_pos_z` | cubed-sphere coord round-trip (+Z face) |
+| `gpu_voxel_strata_material_matches_cpu_at_deep_voxel` | per-voxel cave/strata regression |
+
+### Residual divergences (deferred)
+
+| Row | Description | Issue |
+|---|---|---|
+| Earth-scale ore/crystal noise threshold | f32 vs f64 noise input precision at ~6.37e6 m world coords | `GPUPARITY-002` |
+
+Parity is verified at LOD 0 only. LOD>0 GPU generation parity is out of scope.
