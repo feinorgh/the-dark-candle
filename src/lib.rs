@@ -25,5 +25,7 @@ pub mod procgen;
 pub mod simulation;
 pub mod sky;
 pub mod social;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod weather;
 pub mod world;
