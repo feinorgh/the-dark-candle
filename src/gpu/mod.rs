@@ -7,6 +7,7 @@
 
 mod context;
 pub mod noise_compute;
+pub mod parity;
 pub mod particles;
 mod renderer;
 pub mod terrain_projection;
