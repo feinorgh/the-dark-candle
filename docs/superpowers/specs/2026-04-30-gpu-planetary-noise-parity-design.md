@@ -1,9 +1,19 @@
 # GPU Planetary-Noise Parity — Design
 
-**Date:** 2026-04-30
-**Status:** Draft (awaiting user review)
-**Related issues:** `GPU-PARITY-001` (issues.json — currently marked `resolved`, but stale tech-debt + ignored tests + stale TODOs remain).
+**Date:** 2026-04-30  
+**Status:** Phase 3 in progress — Iteration 1 fix committed  
+**Related issues:** `GPU-PARITY-001` (issues.json — stale tech-debt + ignored tests + stale TODOs remain), `GPUPARITY-001` (cave tube 3D/2D mismatch — **RESOLVED**), `GPUPARITY-002` (Earth-scale f32 precision — open), `GPUPARITY-003` (strata n≈0 residual — open).  
 **Related commits:** `e48337a` (Phase 3 GPU heightmap), `b58d5ca` (heightmap split into IDW/roughness/ocean), `fed1ca0` (skip GPU until heightmap ready), `aac0783` (Phase 3 doc update).
+
+### Iteration 1 (2026-07-16) — Cave Tube 3D→2D Fix
+
+**Finding:** Audit row 8 (strata/ores/caves/crystals) was incorrectly marked "matches". The cave tube noise calls in `is_cave_gpu` used `perlin3d` with a zeroed coordinate instead of `perlin2d`, producing ~645 material mismatches per small-planet Mixed chunk (issue GPUPARITY-001).
+
+**Fix:** Changed `is_cave_gpu` lines 600–601 from `perlin3d(vec3<f32>(wx*0.025, 0.0, wz*0.025), ...)` to `perlin2d(wx*0.025, wz*0.025, ...)` for both tube noise evaluations.
+
+**Result:** Small-planet parity test `gpu_vs_cpu_surface_chunk_small_planet_face_center` now passes (645→4 mismatches at dl=−3). Residual 4 mismatches are strata f32/f64 sign divergence at n≈0 (GPUPARITY-003, within §3 tolerance).
+
+**Remaining gap:** Earth-scale test `gpu_vs_cpu_parity_earth_scale_face_center` still fails with 504 mismatches (GPUPARITY-002 — f32 coordinate scaling precision at 6.37M meter radius, pre-existing).
 
 ---
 
@@ -188,7 +198,7 @@ For each `divergent` audit row:
 | 5 | Surface radius pipeline — IDW→roughness FBM→ocean clamp order | `src/gpu/shaders/voxel_gen.wgsl:708-728` | `src/world/planetary_sampler.rs:188-218`; `src/planet/detail.rs:174-201` | matches | no | yes | IDW + (fbm/ridge mix × roughness × 2000m). Ocean clamp `min(-2.0)` if `is_ocean \|\| idw<0`. Order identical both sides. |
 | 6 | Surface density — sign convention and iso-value | `src/gpu/shaders/voxel_gen.wgsl:672-674` | `src/world/terrain.rs:41-43` | matches | no | yes | `clamp(0.5 + depth*0.5, 0.0, 1.0)`. Iso=0.5 → depth=0 (surface). Positive=solid. Identical f32 cast. |
 | 7 | `material_at_radius` — depth bins, soil, sea-level | `src/gpu/shaders/voxel_gen.wgsl:624-670` | `src/world/terrain.rs:754-849` | matches | no | yes | Functionally equivalent: GPU passes `r_offset` (from mean_radius) for f32-cancellation guard; depth `= surface_r − r` identical on both sides. |
-| 8 | Strata/ores/caves/crystals — perm slots, freq, thresholds | `src/gpu/shaders/voxel_gen.wgsl:555-622` (PERM_STRATA=22, ORE_{COAL,COPPER,IRON,GOLD}=23-26, CAVE_{CAVERN,TUNNEL,TUBE_XZ,TUBE_XY}=27-30, CRYSTAL=31) | `src/world/terrain.rs:85-235` | matches | no | yes | Strata: freq 0.02, depths 20/60. Ores: coal 5-30m/-0.15, copper 15-50m/-0.20, iron 30-80m/-0.25, gold 50+m/-0.35. Caves: cavern 0.01/×0.5, tunnel 0.04/×1.2, tubes 0.025/×0.85 AND. Crystals: 40+m, 0.10/-0.30. |
+| 8 | Strata/ores/caves/crystals — perm slots, freq, thresholds | `src/gpu/shaders/voxel_gen.wgsl:555-622` (PERM_STRATA=22, ORE_{COAL,COPPER,IRON,GOLD}=23-26, CAVE_{CAVERN,TUNNEL,TUBE_XZ,TUBE_XY}=27-30, CRYSTAL=31) | `src/world/terrain.rs:85-235` | **fixed** (was divergent) | no | yes | Strata, ores, cavern, tunnel: all match. **Tube bug (GPUPARITY-001, fixed 2026-07-16):** GPU was calling `perlin3d(wx*0.025, 0.0, wz*0.025)` but CPU calls `perlin2d([wx*0.025, wz*0.025])` — completely different algorithms. Fixed to use `perlin2d`. Residual: f32/f64 strata sign divergence at n≈0 (GPUPARITY-003, ≤4/chunk, within tolerance). Earth-scale: f32 coordinate scaling for ores/crystals (GPUPARITY-002, 504/chunk, pre-existing, not fixed). |
 | 9 | Cube-face frame & lat/lon | `src/gpu/shaders/voxel_gen.wgsl:395-414,698,700` | `src/world/v2/cubed_sphere.rs:230-305`; `src/planet/detail.rs:281-294` | matches | no | yes | GPU \`quat_rotate\` applies face-aligned quaternion to local→world. \`lat_lon\` uses Y-up: \`asin(dir.y)\`, \`atan2(dir.x,dir.z)\`. CPU \`world_transform_scaled\` builds identical rotation. Comment at wgsl:401-405 explicitly cites CPU convention match. |
 | 10 | sortable_encode / sortable_decode | `src/gpu/shaders/voxel_gen.wgsl:534-551` | n/a (GPU-only logic) | matches | no | no | Neg: \`~bits\`; non-neg: \`bits \| 0x80000000\`. Verified monotonic: -1.0→0x407FFFFF < -0.0→0x7FFFFFFF < +0.0→0x80000000 < +1.0→0xBF800000. No CPU counterpart (atomicMin/Max surface-pass). |
 | 11 | Classify-pass thresholds | `src/gpu/shaders/voxel_gen.wgsl:824-857` | `src/world/v2/terrain_gen.rs:189-219` | divergent | yes | yes | GPU `classify_pass` hard-codes `MAT_STONE` for AllSolid; CPU emits `AllSolid(actual_material)`. Uniform basalt/granite chunks misclassified as stone. AllSolid bypasses CPU downgrade (`voxel_compute.rs:941`). |

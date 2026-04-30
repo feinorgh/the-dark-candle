@@ -1136,5 +1136,69 @@
     ],
     "resolution": "Fixed in commit 6ad8e2b. Added V2PendingMeshes::stale: HashSet<CubeSphereCoord>. At invalidation time, if the chunk's task is in-flight (in pending), it is marked stale. At dispatch time, the stale flag is cleared. In v2_collect_meshes, stale results are discarded and the chunk is not inserted into loaded \u2014 it immediately becomes a candidate for re-dispatch with accurate neighbour boundary data.",
     "related_commit": "6ad8e2b"
+  },
+  {
+    "id": "GPUPARITY-001",
+    "title": "GPU cave tube detection used perlin3d instead of perlin2d, causing ~600 material mismatches per Mixed chunk",
+    "category": "gpu",
+    "severity": "high",
+    "status": "resolved",
+    "reported": "2026-07-16",
+    "description": "In is_cave_gpu (voxel_gen.wgsl), the XZ and XY tube noise calls used perlin3d(wx*0.025, 0.0, wz*0.025) and perlin3d(wx*0.025, wy*0.025, 0.0) respectively. The CPU path calls noise::Perlin::get([x*0.025, z*0.025]) which is a 2D Perlin evaluation. These are algorithmically different: 2D Perlin uses a 2-level permutation hash and 2D gradient table, while 3D Perlin with a zero third coordinate uses a 3-level hash and 3D gradient table (with noise_floor(0.0)=-1 causing further divergence). The noise values differed by up to ~0.46, causing ~645 material mismatches per small-planet Mixed chunk.",
+    "reproduction": "Run `cargo test --lib gpu_vs_cpu_surface_chunk_small_planet_face_center` before fix — dl=-3 shows 645 mismatches.",
+    "suspected_files": [
+      "src/gpu/shaders/voxel_gen.wgsl"
+    ],
+    "suspected_cause": "Copy-paste or refactor error when implementing the multi-scale cave system: 2D Perlin tube calls were written as 3D with a zeroed third coordinate instead of calling the correct perlin2d function.",
+    "related_commits": [],
+    "resolution": "Fixed by changing lines 600-601 of voxel_gen.wgsl from perlin3d(vec3<f32>(wx*0.025, 0.0, wz*0.025), ...) to perlin2d(wx*0.025, wz*0.025, ...) for both tube noise calls. Reduces dl=-3 Mixed chunk mismatches from 645 to 4 (all attributed StrataBoundary f32/f64 residuals). Small planet parity test now passes.",
+    "notes": [
+      "Diagnosed in Task 16 Iteration 1 of gpu-planetary-noise-parity plan.",
+      "perlin2d(x, z, table_idx) is a generic 2D Perlin — treating first arg as x and second as z is fine since both are just independent noise axes.",
+      "noise_floor(0.0) = -1 in WGSL (uses x <= 0.0 condition) while noise crate fast_floor(0.0) = 0 — this asymmetry further amplified the divergence when y=0.0 was passed to perlin3d."
+    ]
+  },
+  {
+    "id": "GPUPARITY-002",
+    "title": "f32 coordinate scaling precision causes ore/crystal material mismatches at Earth scale (~504 per chunk)",
+    "category": "gpu",
+    "severity": "medium",
+    "status": "open",
+    "reported": "2026-07-16",
+    "description": "At Earth-scale planet coordinates (~6.37e6 m), multiplying world coordinates by noise scale factors (0.04, 0.05, 0.08, 0.10) in f32 produces different values than the same multiplication in f64. Example: 6370015.5 * 0.10f32 = 637001.5625 while 6370015.5 * 0.10f64 ≈ 637001.55. This fractional difference in the Perlin input causes different noise values near ore/crystal thresholds, producing ~504 QUARTZ_CRYSTAL/GOLD_ORE vs GRANITE material mismatches per dl=-3 Mixed chunk. Not present at small-planet scale (32000m) where f32 step size (~0.002m) is too small to affect thresholds.",
+    "reproduction": "Run `cargo test --lib gpu_vs_cpu_parity_earth_scale_face_center` — dl=-3 shows 504 mismatches.",
+    "suspected_files": [
+      "src/gpu/shaders/voxel_gen.wgsl",
+      "src/world/terrain.rs"
+    ],
+    "suspected_cause": "Inherent f32/f64 precision gap. GPU shaders use f32 arithmetic; CPU noise crate uses f64 arithmetic. At large world coordinates the multiplication error accumulates past noise thresholds. The CPU uses f32-precision world coordinates cast to f64 before noise calls, but the CPU's f64 * 0.10 still differs from GPU's f32 * 0.10f32.",
+    "resolution": "",
+    "notes": [
+      "Cannot be fixed without f64 emulation in WGSL (two-f32 doubles or emulated f64 mul).",
+      "A pragmatic workaround: adjust the CPU noise calls to pre-multiply in f32 and cast, matching GPU precision. But the noise crate's internal f64 interpolation would still differ.",
+      "Alternative: use a wider threshold band (e.g. ±epsilon guard zone) for ore/crystal checks on both CPU and GPU so neither fires in the ambiguous zone.",
+      "Pre-existing issue — gpu_vs_cpu_parity_earth_scale_face_center was already failing before Task 16."
+    ]
+  },
+  {
+    "id": "GPUPARITY-003",
+    "title": "Residual strata f32/f64 sign divergence at n≈0 produces up to 4 material mismatches per chunk",
+    "category": "gpu",
+    "severity": "low",
+    "status": "open",
+    "reported": "2026-07-16",
+    "description": "The strata_material functions compare noise value n against 0.0 to choose GRANITE vs BASALT. At voxels near n=0 (e.g. n=-2.61e-6 CPU vs n=+1.87e-6 GPU), f32/f64 arithmetic disagrees on the sign, producing a wrong material. With MAX_MISMATCHES_ALLOWED=4, this is within tolerance. After fixing GPUPARITY-001, these 4 residual mismatches are the only ones remaining for small-planet Mixed chunks.",
+    "reproduction": "Run `cargo test --lib gpu_vs_cpu_surface_chunk_small_planet_face_center` after GPUPARITY-001 fix — dl=-3 shows 4 mismatches (all GRANITE/BASALT pairs at depth ~14.6m).",
+    "suspected_files": [
+      "src/gpu/shaders/voxel_gen.wgsl",
+      "src/world/terrain.rs"
+    ],
+    "suspected_cause": "strata_material uses perlin3d (f32) on GPU and noise::Perlin::get (f64) on CPU. At world position (31907.5, 14.6, -13.3), the strata noise evaluates to ~2e-6 in magnitude — within rounding distance of 0 for both f32 and f64. The sign flips between precisions.",
+    "resolution": "",
+    "notes": [
+      "Within tolerance (≤4 per chunk). Parity contract §3 allows these as SurfaceIso/StrataBoundary attributed mismatches.",
+      "Cannot be fixed without f64 GPU shaders.",
+      "A guard band around n=0 could reduce these but would change terrain generation semantics."
+    ]
   }
 ]

@@ -1809,7 +1809,7 @@
   },
   "meta": {
     "generated_date": "2026-04-17",
-    "generated_from_commit": "018a1ca",
+    "generated_from_commit": "d960d59",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
@@ -1821,7 +1821,7 @@
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled \u2014 basic latitude/altitude/proximity model only"
     ],
-    "last_updated": "2026-04-29",
+    "last_updated": "2026-07-16",
     "notes": [
       "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
@@ -1848,7 +1848,8 @@
       "Flight mode altitude HUD: F3 overlay shows height above terrain surface in meters/km when gravity is off (G key).",
       "SKY-004 resolved: full procedural celestial catalogue (src/sky/) with stars, procedural host-galaxy diffuse band, nebulae (emission/reflection/dark/planetary) and remote galaxies, baked into 1024\u00b2 \u00d7 6 RGBA16F cubemap and additively composited with airmass extinction by the existing GPU sky-dome shader. Stars track planet rotation via body\u2192celestial rotation matrix.",
       "RENDER-010 Phase 5 complete: all six phases of explicit LOD-transition stitch mesh system implemented (Phases 0-4 + post-plan fixes). Stitch meshes bridge fine/coarse boundary loops at LOD seams using pairwise ribbons + corner-cap quads.",
-      "RENDER-010 visual quality fixes (b9b79e2 / 018a1ca): stitch meshes now propagate per-vertex normals and colors from source ChunkMesh (previously all-white flat-shaded). T-junction axis consistency fixed: coarse chain axis used in both pairwise and corner stitches. BoundaryLoop struct extended with normals: Vec<[f32;3]> and colors: Vec<[f32;4]>. New helpers: clip_chain_with_attributes, clip_coarse_to_fine_extent_with_attrs, nearest_chain_endpoint_idx."
+      "RENDER-010 visual quality fixes (b9b79e2 / 018a1ca): stitch meshes now propagate per-vertex normals and colors from source ChunkMesh (previously all-white flat-shaded). T-junction axis consistency fixed: coarse chain axis used in both pairwise and corner stitches. BoundaryLoop struct extended with normals: Vec<[f32;3]> and colors: Vec<[f32;4]>. New helpers: clip_chain_with_attributes, clip_coarse_to_fine_extent_with_attrs, nearest_chain_endpoint_idx.",
+      "GPU parity Task 16 Iter 1: Fixed cave tube 3D/2D perlin mismatch in voxel_gen.wgsl. GPU is_cave_gpu now correctly calls perlin2d() for tube noise (was calling perlin3d with zeroed third coord). Small planet parity test passes (645\u21924 mismatches at dl=-3). Earth-scale parity still fails (504 mismatches, f32 coordinate scaling precision issue, see GPUPARITY-002). New issues: GPUPARITY-001 (resolved), GPUPARITY-002 (open, f32 earth-scale), GPUPARITY-003 (open, strata n\u22480 residual)."
     ],
     "known_issues_file": "issues.json",
     "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other), 39 V2 chunk tests, 21 GPU tests, 1681 total (lib + integration)"

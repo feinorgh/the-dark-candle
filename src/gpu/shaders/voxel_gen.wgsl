@@ -597,8 +597,13 @@ fn is_cave_gpu(cave_threshold: f32, wx: f32, wy: f32, wz: f32) -> bool {
     if tunnel < cave_threshold * 1.2 {
         return true;
     }
-    let t_xz = perlin3d(vec3<f32>(wx * 0.025, 0.0, wz * 0.025), PERM_CAVE_TUBE_XZ);
-    let t_xy = perlin3d(vec3<f32>(wx * 0.025, wy * 0.025, 0.0), PERM_CAVE_TUBE_XY);
+    // Tube networks use 2D Perlin (XZ plane and XY plane respectively),
+    // matching the CPU's `perlin.get([x, z])` / `perlin.get([x, y])` calls.
+    // Previously these incorrectly used perlin3d with a zero third coordinate,
+    // which produces completely different values (different hash chain depth and
+    // different gradient table) — fix: use perlin2d.
+    let t_xz = perlin2d(wx * 0.025, wz * 0.025, PERM_CAVE_TUBE_XZ);
+    let t_xy = perlin2d(wx * 0.025, wy * 0.025, PERM_CAVE_TUBE_XY);
     if t_xz < cave_threshold * 0.85 && t_xy < cave_threshold * 0.85 {
         return true;
     }
