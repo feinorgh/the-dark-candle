@@ -921,7 +921,7 @@
     "description": "The GPU compute shader for voxel generation implements FBM noise terrain (matching the old SphericalTerrainGenerator). After the planetary refactor, the CPU path uses PlanetaryTerrainSampler (IDW from tectonic PlanetData). The GPU and CPU terrain algorithms are now mismatched. GPU parity tests (gpu_vs_cpu_surface_chunk_comparison, gpu_vs_cpu_parity_earth_scale_surface_chunk) are marked #[ignore] until the GPU shader is updated.",
     "resolution": "GPU heightmap Phase 3 complete. Commit e48337a.",
     "notes": [
-      "2026-07-16: Audit (spec Appendix A) + parametric parity test suite confirms GPU pipeline matches CPU PlanetaryTerrainSampler within §3 tolerance at small-planet scale (face-centre/poles/antimeridian/full-face sweep, ±3 layer probes). Cave-tube perlin2d divergence fixed in commit 84c1ee0. Earth-scale parity deferred under GPUPARITY-002 (f32 precision). Stale FBM-era TODOs removed."
+      "2026-04-30: Audit (spec Appendix A) + parametric parity test suite confirms GPU pipeline matches CPU PlanetaryTerrainSampler within §3 tolerance at small-planet scale (face-centre/poles/antimeridian/full-face sweep, ±3 layer probes). Cave-tube perlin2d divergence fixed in commit 84c1ee0. Earth-scale parity deferred under GPUPARITY-002 (f32 precision). Stale FBM-era TODOs removed."
     ]
   },
   {
@@ -1146,7 +1146,7 @@
     "category": "gpu",
     "severity": "high",
     "status": "resolved",
-    "reported": "2026-07-16",
+    "reported": "2026-04-30",
     "description": "In is_cave_gpu (voxel_gen.wgsl), the XZ and XY tube noise calls used perlin3d(wx*0.025, 0.0, wz*0.025) and perlin3d(wx*0.025, wy*0.025, 0.0) respectively. The CPU path calls noise::Perlin::get([x*0.025, z*0.025]) which is a 2D Perlin evaluation. These are algorithmically different: 2D Perlin uses a 2-level permutation hash and 2D gradient table, while 3D Perlin with a zero third coordinate uses a 3-level hash and 3D gradient table (with noise_floor(0.0)=-1 causing further divergence). The noise values differed by up to ~0.46, causing ~645 material mismatches per small-planet Mixed chunk.",
     "reproduction": "Run `cargo test --lib gpu_vs_cpu_surface_chunk_small_planet_face_center` before fix — dl=-3 shows 645 mismatches.",
     "suspected_files": [
@@ -1167,7 +1167,7 @@
     "category": "gpu",
     "severity": "medium",
     "status": "open",
-    "reported": "2026-07-16",
+    "reported": "2026-04-30",
     "description": "At Earth-scale planet coordinates (~6.37e6 m), multiplying world coordinates by noise scale factors (0.04, 0.05, 0.08, 0.10) in f32 produces different values than the same multiplication in f64. Example: 6370015.5 * 0.10f32 = 637001.5625 while 6370015.5 * 0.10f64 ≈ 637001.55. This fractional difference in the Perlin input causes different noise values near ore/crystal thresholds, producing ~504 QUARTZ_CRYSTAL/GOLD_ORE vs GRANITE material mismatches per dl=-3 Mixed chunk. Not present at small-planet scale (32000m) where f32 step size (~0.002m) is too small to affect thresholds.",
     "reproduction": "Run `cargo test --lib gpu_vs_cpu_parity_earth_scale_face_center` — dl=-3 shows 504 mismatches.",
     "suspected_files": [
@@ -1189,7 +1189,7 @@
     "category": "gpu",
     "severity": "low",
     "status": "open",
-    "reported": "2026-07-16",
+    "reported": "2026-04-30",
     "description": "The strata_material functions compare noise value n against 0.0 to choose GRANITE vs BASALT. At voxels near n=0 (e.g. n=-2.61e-6 CPU vs n=+1.87e-6 GPU), f32/f64 arithmetic disagrees on the sign, producing a wrong material. With MAX_MISMATCHES_ALLOWED=4, this is within tolerance. After fixing GPUPARITY-001, these 4 residual mismatches are the only ones remaining for small-planet Mixed chunks.",
     "reproduction": "Run `cargo test --lib gpu_vs_cpu_surface_chunk_small_planet_face_center` after GPUPARITY-001 fix — dl=-3 shows 4 mismatches (all GRANITE/BASALT pairs at depth ~14.6m).",
     "suspected_files": [
