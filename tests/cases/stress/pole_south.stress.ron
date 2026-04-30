@@ -1,0 +1,11 @@
+StressScenario(
+    description: "Teleport to south pole (lat=-89.99°, lon=0°), surface, idle",
+    seed: 101,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: -89.99, lon: 0.0, altitude_m: 0.0, then_tick: 120),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)

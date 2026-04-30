@@ -1,0 +1,14 @@
+StressScenario(
+    description: "Teleport across antimeridian (+180° then -180°)",
+    seed: 102,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: 0.0, lon: 180.0, altitude_m: 0.0, then_tick: 60),
+        Teleport(lat: 0.0, lon: -180.0, altitude_m: 0.0, then_tick: 60),
+        Teleport(lat: 30.0, lon: 179.99, altitude_m: 0.0, then_tick: 60),
+        Teleport(lat: 30.0, lon: -179.99, altitude_m: 0.0, then_tick: 60),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)
