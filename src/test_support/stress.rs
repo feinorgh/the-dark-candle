@@ -2,10 +2,62 @@
 //!
 //! See `docs/superpowers/specs/2026-04-30-gameplay-stress-tests-design.md`.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
+
+#[derive(Debug, Clone)]
+pub struct CapturedPanic {
+    pub thread: String,
+    pub location: String,
+    pub message: String,
+}
+
+#[derive(Default)]
+pub(crate) struct PanicSlot(Mutex<Option<CapturedPanic>>);
+
+static PANIC_SLOT: std::sync::OnceLock<Arc<PanicSlot>> = std::sync::OnceLock::new();
+
+fn install_panic_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let slot = PANIC_SLOT.get_or_init(|| Arc::new(PanicSlot::default()));
+        let slot_clone = Arc::clone(slot);
+
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let thread = std::thread::current()
+                .name()
+                .unwrap_or("<unnamed>")
+                .to_string();
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let message = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+
+            if let Ok(mut guard) = slot_clone.0.lock() {
+                // Keep the FIRST panic — subsequent panics during unwinding are noise.
+                if guard.is_none() {
+                    *guard = Some(CapturedPanic {
+                        thread,
+                        location,
+                        message,
+                    });
+                }
+            }
+
+            prev(info);
+        }));
+    });
+}
 
 #[derive(Resource, Default)]
 struct PendingTeleport(Option<bevy::math::DVec3>);
@@ -130,6 +182,14 @@ impl StressApp {
         // Import camera components
         use crate::camera::FpsCamera;
 
+        install_panic_hook();
+        // Clear any leftover panic from a previous test in this process.
+        if let Some(slot) = PANIC_SLOT.get()
+            && let Ok(mut g) = slot.0.lock()
+        {
+            *g = None;
+        }
+
         let planet = match preset {
             PlanetPreset::SmallPlanet => PlanetConfig::default(),
             PlanetPreset::Earth => PlanetConfig {
@@ -245,6 +305,15 @@ impl StressApp {
 
         self.app.world_mut().resource_mut::<PendingTeleport>().0 = Some(dir * radius);
     }
+
+    /// Take any panic that was captured by the harness panic hook.
+    /// Clears the slot so subsequent calls return `None` until the next panic.
+    pub fn take_panic(&self) -> Option<CapturedPanic> {
+        PANIC_SLOT
+            .get()
+            .and_then(|slot| slot.0.lock().ok())
+            .and_then(|mut guard| guard.take())
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +354,29 @@ mod tests {
         assert!(
             (normalized - DVec3::X).length() < 1.0e-3,
             "expected +X direction, got {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn panic_hook_captures_panic_in_app_thread() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+
+        // Inject a system that panics on first run.
+        app.app.add_systems(Update, |mut count: Local<u32>| {
+            *count += 1;
+            if *count == 2 {
+                panic!("synthetic panic for test");
+            }
+        });
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.tick_n(3)));
+        assert!(result.is_err(), "expected panic to propagate");
+
+        let captured = app.take_panic().expect("panic was captured");
+        assert!(
+            captured.message.contains("synthetic panic for test"),
+            "captured: {:?}",
+            captured
         );
     }
 }
