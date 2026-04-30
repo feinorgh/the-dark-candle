@@ -314,7 +314,92 @@ impl StressApp {
             .and_then(|slot| slot.0.lock().ok())
             .and_then(|mut guard| guard.take())
     }
+
+    /// Check the requested invariants. Returns the list of failures
+    /// (empty = all checks passed for the requested set).
+    pub fn assert_invariants(&mut self, which: InvariantSet) -> Vec<InvariantFailure> {
+        let mut failures = Vec::new();
+
+        if which.contains(InvariantSet::PANICS)
+            && let Some(p) = self.take_panic()
+        {
+            failures.push(InvariantFailure::Panic {
+                thread: p.thread,
+                location: p.location,
+                message: p.message,
+            });
+        }
+
+        if which.contains(InvariantSet::FINITE) || which.contains(InvariantSet::NO_OVERFLOW) {
+            self.check_transforms(which, &mut failures);
+        }
+
+        if which.contains(InvariantSet::CHUNK_CACHE) {
+            self.check_chunk_cache(&mut failures);
+        }
+
+        // LOAD_RATE handled in Task 8.
+
+        failures
+    }
+
+    fn check_transforms(&mut self, which: InvariantSet, failures: &mut Vec<InvariantFailure>) {
+        let world = self.app.world_mut();
+        let mut q = world.query::<(Entity, &Transform)>();
+        for (entity, tf) in q.iter(world) {
+            let id = entity.to_bits();
+
+            if which.contains(InvariantSet::FINITE) {
+                if !tf.translation.is_finite() {
+                    failures.push(InvariantFailure::NonFiniteTransform {
+                        entity: id,
+                        kind: "translation",
+                        value: format!("{:?}", tf.translation),
+                    });
+                }
+                if !tf.rotation.x.is_finite()
+                    || !tf.rotation.y.is_finite()
+                    || !tf.rotation.z.is_finite()
+                    || !tf.rotation.w.is_finite()
+                {
+                    failures.push(InvariantFailure::NonFiniteTransform {
+                        entity: id,
+                        kind: "rotation",
+                        value: format!("{:?}", tf.rotation),
+                    });
+                }
+                if !tf.scale.is_finite() {
+                    failures.push(InvariantFailure::NonFiniteTransform {
+                        entity: id,
+                        kind: "scale",
+                        value: format!("{:?}", tf.scale),
+                    });
+                }
+            }
+
+            if which.contains(InvariantSet::NO_OVERFLOW) {
+                for (axis, v) in [
+                    ("translation.x", tf.translation.x),
+                    ("translation.y", tf.translation.y),
+                    ("translation.z", tf.translation.z),
+                ] {
+                    if v.is_finite() && v.abs() > F32_OVERFLOW_BOUND {
+                        failures.push(InvariantFailure::F32Overflow {
+                            what: format!("entity {id} {axis}"),
+                            value: v as f64,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_chunk_cache(&mut self, _failures: &mut Vec<InvariantFailure>) {
+        // Implemented in Task 7.
+    }
 }
+
+const F32_OVERFLOW_BOUND: f32 = 1.0e7;
 
 #[cfg(test)]
 mod tests {
@@ -377,6 +462,58 @@ mod tests {
             captured.message.contains("synthetic panic for test"),
             "captured: {:?}",
             captured
+        );
+    }
+
+    #[test]
+    fn finite_invariant_passes_after_clean_teleport() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+        app.tick_n(30);
+        app.teleport(0.0, 0.0, 100.0);
+        app.tick_n(5);
+
+        let failures = app.assert_invariants(InvariantSet::FINITE | InvariantSet::NO_OVERFLOW);
+        assert!(failures.is_empty(), "unexpected failures: {failures:?}");
+    }
+
+    #[test]
+    fn finite_invariant_catches_nan_translation() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+        app.tick_n(30);
+
+        // Inject a NaN translation on the camera.
+        let world = app.app.world_mut();
+        let mut q = world.query_filtered::<&mut Transform, With<crate::camera::FpsCamera>>();
+        if let Some(mut tf) = q.iter_mut(world).next() {
+            tf.translation.x = f32::NAN;
+        }
+
+        let failures = app.assert_invariants(InvariantSet::FINITE);
+        assert!(
+            failures
+                .iter()
+                .any(|f| matches!(f, InvariantFailure::NonFiniteTransform { .. })),
+            "expected NonFiniteTransform failure, got: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn overflow_invariant_catches_huge_translation() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+        app.tick_n(30);
+
+        let world = app.app.world_mut();
+        let mut q = world.query_filtered::<&mut Transform, With<crate::camera::FpsCamera>>();
+        if let Some(mut tf) = q.iter_mut(world).next() {
+            tf.translation.x = 2.0e7;
+        }
+
+        let failures = app.assert_invariants(InvariantSet::NO_OVERFLOW);
+        assert!(
+            failures
+                .iter()
+                .any(|f| matches!(f, InvariantFailure::F32Overflow { .. })),
+            "expected F32Overflow failure, got: {failures:?}"
         );
     }
 }
