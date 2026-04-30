@@ -7,6 +7,9 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 
+#[derive(Resource, Default)]
+struct PendingTeleport(Option<bevy::math::DVec3>);
+
 /// Choice of planet configuration for the stress test.
 #[derive(Clone, Copy, Debug)]
 pub enum PlanetPreset {
@@ -81,6 +84,26 @@ pub struct StressApp {
 }
 
 const FIXED_DT_SECS: f64 = 1.0 / 60.0;
+
+fn apply_pending_teleport(
+    mut pending: ResMut<PendingTeleport>,
+    origin: Res<crate::floating_origin::RenderOrigin>,
+    mut q: Query<
+        (&mut crate::floating_origin::WorldPosition, &mut Transform),
+        With<crate::camera::FpsCamera>,
+    >,
+) {
+    let Some(target) = pending.0.take() else {
+        return;
+    };
+    let Ok((mut wp, mut tf)) = q.single_mut() else {
+        // Camera not yet spawned; put target back and try next frame.
+        pending.0 = Some(target);
+        return;
+    };
+    wp.0 = target;
+    tf.translation = wp.render_offset(&origin);
+}
 
 impl StressApp {
     /// Build a headless stress-test app with the full non-rendering pipeline.
@@ -186,6 +209,10 @@ impl StressApp {
         ));
         app.insert_resource(RenderOrigin(cam_world));
 
+        // Add pending teleport system
+        app.insert_resource(PendingTeleport::default());
+        app.add_systems(Update, apply_pending_teleport);
+
         Self { app, seed }
     }
 
@@ -194,6 +221,29 @@ impl StressApp {
         for _ in 0..n {
             self.app.update();
         }
+    }
+
+    /// Teleport the camera to (lat°, lon°, altitude_m) where altitude_m is
+    /// metres above the planet's `sea_level_radius`.
+    ///
+    /// `lat_deg` is clamped to `[-89.99, +89.99]` to avoid pole singularities.
+    /// `lon_deg` is normalized to `(-180, +180]`.
+    pub fn teleport(&mut self, lat_deg: f64, lon_deg: f64, altitude_m: f64) {
+        use bevy::math::DVec3;
+
+        let lat = lat_deg.clamp(-89.99, 89.99).to_radians();
+        let lon = ((lon_deg + 540.0) % 360.0 - 180.0).to_radians();
+
+        let dir = DVec3::new(lat.cos() * lon.cos(), lat.sin(), -lat.cos() * lon.sin());
+
+        let radius = self
+            .app
+            .world()
+            .resource::<crate::world::planet::PlanetConfig>()
+            .sea_level_radius
+            + altitude_m;
+
+        self.app.world_mut().resource_mut::<PendingTeleport>().0 = Some(dir * radius);
     }
 }
 
@@ -206,5 +256,35 @@ mod tests {
         let mut app = StressApp::new(42, PlanetPreset::SmallPlanet);
         // tick_n must not panic on a freshly built app.
         app.tick_n(10);
+    }
+
+    #[test]
+    fn teleport_moves_player_to_requested_lat_lon_alt() {
+        use crate::camera::FpsCamera;
+        use crate::floating_origin::WorldPosition;
+        use bevy::math::DVec3;
+
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+        app.tick_n(5); // let any startup systems run
+
+        app.teleport(0.0, 0.0, 100.0); // equator, prime meridian, 100 m above sea level
+        app.tick_n(1);
+
+        // Player should now be at radius = sea_level + 100 m, in the +X direction.
+        let world = app.app.world_mut();
+        let mut q = world.query_filtered::<&WorldPosition, With<FpsCamera>>();
+        let pos = q.iter(world).next().expect("camera entity exists").0;
+
+        let expected_radius = 32_000.0_f64 + 100.0;
+        let actual_radius = pos.length();
+        assert!(
+            (actual_radius - expected_radius).abs() < 1.0,
+            "expected radius ≈ {expected_radius}, got {actual_radius}"
+        );
+        let normalized = pos.normalize();
+        assert!(
+            (normalized - DVec3::X).length() < 1.0e-3,
+            "expected +X direction, got {normalized:?}"
+        );
     }
 }
