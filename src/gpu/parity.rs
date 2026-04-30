@@ -56,6 +56,9 @@ pub const MAX_MISMATCHES_ALLOWED: usize = 4;
 /// Maximum allowed normalised density delta between GPU and CPU samples (parity contract §3).
 pub const MAX_DENSITY_DELTA_ALLOWED: f64 = 1e-3;
 
+/// ULP tolerance for density comparison (4 ULPs ≈ 1 ULP-effective).
+pub const DENSITY_TOLERANCE_ULP: f64 = f32::EPSILON as f64 * 4.0;
+
 impl ParityReport {
     /// Returns `true` iff the report satisfies the §3 parity contract.
     pub fn passes_parity_contract(&self) -> bool {
@@ -128,7 +131,7 @@ pub fn build_parity_report(
             // `within_1_ulp` heuristic: density difference is below 1 ULP of the
             // threshold value (caller's responsibility to set kind ≠ Unattributed
             // only when this is true).
-            let within = dd_strict <= f32::EPSILON as f64 * 4.0; // 4 ULPs ≈ 1 ULP-effective
+            let within = dd_strict <= DENSITY_TOLERANCE_ULP;
             mismatches.push(VoxelMismatch {
                 voxel_index: i,
                 gpu_material: g.material,
@@ -330,8 +333,6 @@ mod build_tests {
 
 // ── End-to-end parity probe ─────────────────────────────────────────────────
 
-use std::sync::Arc;
-
 use crate::gpu::voxel_compute::{GpuChunkRequest, GpuVoxelCompute, chunk_desc_from_coord};
 use crate::world::planet::PlanetConfig;
 use crate::world::terrain::UnifiedTerrainGenerator;
@@ -349,7 +350,7 @@ use crate::world::v2::terrain_gen::{cached_voxels_to_vec, generate_v2_voxels};
 /// See `docs/superpowers/specs/2026-04-30-gpu-planetary-noise-parity-design.md` §5.
 pub fn parity_probe(
     planet: &PlanetConfig,
-    unified: &Arc<UnifiedTerrainGenerator>,
+    unified: &UnifiedTerrainGenerator,
     compute: &GpuVoxelCompute,
     coord: CubeSphereCoord,
 ) -> ParityReport {
@@ -376,7 +377,10 @@ pub fn parity_probe(
     // GPU path
     let gpu_result =
         compute.generate_batch(&[GpuChunkRequest { coord, desc }], planet.rotation_axis);
-    let gpu_td = &gpu_result.terrain_data[0];
+    let gpu_td = gpu_result
+        .terrain_data
+        .first()
+        .expect("GPU batch result must contain at least one chunk");
 
     // CPU path
     let cpu_td = generate_v2_voxels(coord, planet.mean_radius, fce, unified);
@@ -403,13 +407,12 @@ pub fn parity_probe(
     // surface iso-surface (the dominant threshold). More sophisticated classifiers
     // would check cave/ore/strata thresholds, but that requires chunk-local depth
     // and noise sampling, which is deferred to later tasks.
-    let one_ulp = f32::EPSILON as f64 * 4.0;
     let threshold_classifier = |idx: usize,
                                 _g: &crate::world::voxel::Voxel,
                                 _c: &crate::world::voxel::Voxel|
      -> ThresholdKind {
         let dd = (gpu_densities[idx] as f64 - cpu_densities[idx]).abs();
-        if dd <= one_ulp {
+        if dd <= DENSITY_TOLERANCE_ULP {
             ThresholdKind::SurfaceIso
         } else {
             ThresholdKind::Unattributed
