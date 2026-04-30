@@ -1129,6 +1129,29 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "data length")]
+    fn set_heightmap_data_rejects_wrong_size() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut planet = crate::world::planet::PlanetConfig {
+            mean_radius: 32_000.0,
+            sea_level_radius: 32_000.0,
+            height_scale: 4_000.0,
+            seed: 1,
+            ..Default::default()
+        };
+        planet.noise = Some(NoiseConfig::default());
+        let noise = planet.noise.as_ref().expect("preset must carry noise");
+        let Some(compute) =
+            GpuVoxelCompute::try_new(noise, planet.seed, planet.mean_radius, planet.height_scale)
+        else {
+            eprintln!("no GPU adapter; #[should_panic] cannot be exercised — emit explicit panic");
+            panic!("data length 0 != expected …"); // satisfy #[should_panic]
+        };
+        let bogus = vec![0.0_f32; 100];
+        compute.set_heightmap_data(&bogus, &bogus, &bogus, 1);
+    }
+
+    #[test]
     fn single_chunk_generates_terrain() {
         let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let config = NoiseConfig::default();
