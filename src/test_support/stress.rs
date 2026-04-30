@@ -394,8 +394,38 @@ impl StressApp {
         }
     }
 
-    fn check_chunk_cache(&mut self, _failures: &mut Vec<InvariantFailure>) {
-        // Implemented in Task 7.
+    fn check_chunk_cache(&mut self, failures: &mut Vec<InvariantFailure>) {
+        use crate::world::v2::chunk_manager::V2ChunkMap;
+        use std::collections::HashSet;
+
+        let world = self.app.world();
+        let Some(map) = world.get_resource::<V2ChunkMap>() else {
+            // World plugin not active in this configuration — nothing to check.
+            return;
+        };
+
+        let planet = world.resource::<crate::world::planet::PlanetConfig>();
+        let mean_r = planet.mean_radius;
+
+        let mut seen: HashSet<crate::world::v2::cubed_sphere::CubeSphereCoord> = HashSet::new();
+        for (coord, _entity) in map.iter() {
+            // Duplicate keys: HashMap can't actually contain duplicates by construction,
+            // but a future refactor might expose them; check anyway for defence-in-depth.
+            if !seen.insert(*coord) {
+                failures.push(InvariantFailure::ChunkCache {
+                    detail: format!("duplicate chunk coord: {coord:?}"),
+                });
+            }
+
+            // Finite world position from the coord.
+            let fce = coord.effective_fce(mean_r);
+            let (world_pos, _, _) = coord.world_transform_scaled_f64(mean_r, fce);
+            if !world_pos.x.is_finite() || !world_pos.y.is_finite() || !world_pos.z.is_finite() {
+                failures.push(InvariantFailure::ChunkCache {
+                    detail: format!("non-finite world pos for coord {coord:?}: {world_pos:?}"),
+                });
+            }
+        }
     }
 }
 
@@ -514,6 +544,20 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f, InvariantFailure::F32Overflow { .. })),
             "expected F32Overflow failure, got: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn chunk_cache_invariant_passes_after_idle() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+        app.tick_n(60); // let some chunks load
+        app.teleport(0.0, 0.0, 0.0);
+        app.tick_n(60);
+
+        let failures = app.assert_invariants(InvariantSet::CHUNK_CACHE);
+        assert!(
+            failures.is_empty(),
+            "unexpected chunk-cache failures after idle: {failures:?}"
         );
     }
 }
