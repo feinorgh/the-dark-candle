@@ -2122,4 +2122,71 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn gpu_lod0_full_face_classification_matches_cpu_sample() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
+        use crate::world::terrain::UnifiedTerrainGenerator;
+        use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord};
+        use std::sync::Arc;
+
+        let planet = crate::world::planet::PlanetConfig {
+            mean_radius: 32_000.0,
+            sea_level_radius: 32_000.0,
+            height_scale: 4_000.0,
+            seed: 42,
+            noise: Some(NoiseConfig::default()),
+            ..Default::default()
+        };
+        let noise = planet.noise.as_ref().expect("preset must carry noise");
+        let Some(compute) =
+            GpuVoxelCompute::try_new(noise, planet.seed, planet.mean_radius, planet.height_scale)
+        else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 4,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
+        let (elev, rough, ocean) = bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
+
+        let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+        let half = (fce / 2.0) as i32;
+        let stride = ((fce as i32) / 8).max(1);
+
+        let mut compared = 0;
+        let mut mismatches = 0;
+        for du in (-half..half).step_by(stride as usize) {
+            for dv in (-half..half).step_by(stride as usize) {
+                let lat = 0.0; // PosX face mid-latitude approximation; coarse statistical check
+                let lon = std::f64::consts::FRAC_PI_2;
+                let surface_r = unified.sample_surface_radius_at(lat, lon);
+                let layer = ((surface_r - planet.mean_radius)
+                    / crate::world::chunk::CHUNK_SIZE as f64)
+                    .round() as i32;
+                let coord = CubeSphereCoord::new_with_lod(CubeFace::PosX, du, dv, layer, 0);
+                let report = crate::gpu::parity::parity_probe(&planet, &unified, &compute, coord);
+                compared += 1;
+                if report.gpu_classification != report.cpu_classification {
+                    mismatches += 1;
+                    eprintln!(
+                        "classification mismatch at ({du},{dv}): GPU={} CPU={}",
+                        report.gpu_classification, report.cpu_classification
+                    );
+                }
+            }
+        }
+        eprintln!("compared {compared} chunks, classification mismatches: {mismatches}");
+        assert_eq!(
+            mismatches, 0,
+            "any classification mismatch in the full-face sweep is a parity bug"
+        );
+    }
 }
