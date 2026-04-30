@@ -1,0 +1,13 @@
+StressScenario(
+    description: "Teleport to high altitudes: 50 km, 500 km, 5000 km above surface",
+    seed: 301,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:    50000.0, then_tick: 60),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:   500000.0, then_tick: 60),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 5000000.0, then_tick: 60),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)

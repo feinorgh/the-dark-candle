@@ -1,0 +1,18 @@
+StressScenario(
+    description: "Oscillate between surface and 100 km altitude every 5 ticks (LOD churn)",
+    seed: 302,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:      0.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 100000.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:      0.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 100000.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:      0.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 100000.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m:      0.0, then_tick: 5),
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 100000.0, then_tick: 5),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)
