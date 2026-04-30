@@ -50,16 +50,22 @@ pub struct ParityReport {
     pub mismatches: Vec<VoxelMismatch>,
 }
 
+/// Maximum allowed voxel material disagreements per chunk (parity contract §3).
+pub const MAX_MISMATCHES_ALLOWED: usize = 4;
+
+/// Maximum allowed normalised density delta between GPU and CPU samples (parity contract §3).
+pub const MAX_DENSITY_DELTA_ALLOWED: f64 = 1e-3;
+
 impl ParityReport {
     /// Returns `true` iff the report satisfies the §3 parity contract.
     pub fn passes_parity_contract(&self) -> bool {
         self.gpu_classification == self.cpu_classification
-            && self.mismatches.len() <= 4
+            && self.mismatches.len() <= MAX_MISMATCHES_ALLOWED
             && self
                 .mismatches
                 .iter()
                 .all(|m| m.within_1_ulp && m.threshold_kind != ThresholdKind::Unattributed)
-            && self.max_density_delta <= 1e-3
+            && self.max_density_delta <= MAX_DENSITY_DELTA_ALLOWED
     }
 }
 
