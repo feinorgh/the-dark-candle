@@ -135,3 +135,51 @@ fn run_all_stress_scenarios() {
 // (they appear inside formatted failure strings via Debug).
 #[allow(dead_code)]
 fn _import_used(_f: &InvariantFailure) {}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            failure_persistence: Some(Box::new(
+                proptest::test_runner::FileFailurePersistence::Direct(
+                    "tests/cases/stress/proptest-regressions/random_teleport_invariants.txt"
+                ),
+            )),
+            ..ProptestConfig::default()
+        })]
+        #[test]
+        // NOTE: altitude bucket capped at 500 km until CHUNK-002 (overflow at
+        // chunk_manager.rs:648 for altitudes ≥ ~1.3 Mm) is resolved. Then
+        // restore 5_000_000.0 / 9_000_000.0 buckets for true extreme testing.
+        fn random_teleport_invariants(
+            lat in -89.99f64..=89.99f64,
+            lon in -180.0f64..=180.0f64,
+            altitude_m in prop_oneof![
+                Just(-500.0_f64),
+                Just(0.0_f64),
+                Just(50_000.0_f64),
+                Just(500_000.0_f64),
+            ],
+        ) {
+            let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+            app.tick_n(30);
+            app.teleport(lat, lon, altitude_m);
+            app.tick_n(30);
+
+            let failures = app.assert_invariants(
+                InvariantSet::PANICS
+                    | InvariantSet::FINITE
+                    | InvariantSet::NO_OVERFLOW
+                    | InvariantSet::CHUNK_CACHE,
+            );
+            prop_assert!(
+                failures.is_empty(),
+                "lat={lat}, lon={lon}, alt={altitude_m}: failures = {failures:?}"
+            );
+        }
+    }
+}
