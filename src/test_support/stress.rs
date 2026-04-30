@@ -16,6 +16,38 @@ pub struct CapturedPanic {
 }
 
 #[derive(Default)]
+pub(crate) struct LoadRateTracker {
+    samples: std::collections::VecDeque<(f64, usize)>, // (sim_time_secs, loaded_count)
+}
+
+impl LoadRateTracker {
+    fn push(&mut self, t: f64, loaded: usize) {
+        self.samples.push_back((t, loaded));
+        // Keep only the last 2 simulated seconds.
+        while let Some(&(front_t, _)) = self.samples.front() {
+            if t - front_t > 2.0 {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn rate(&self) -> f32 {
+        if self.samples.len() < 2 {
+            return 0.0;
+        }
+        let (t0, n0) = *self.samples.front().unwrap();
+        let (t1, n1) = *self.samples.back().unwrap();
+        let dt = (t1 - t0) as f32;
+        if dt <= 0.0 {
+            return 0.0;
+        }
+        ((n1 as i64 - n0 as i64) as f32 / dt).max(0.0)
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct PanicSlot(Mutex<Option<CapturedPanic>>);
 
 static PANIC_SLOT: std::sync::OnceLock<Arc<PanicSlot>> = std::sync::OnceLock::new();
@@ -133,6 +165,8 @@ pub enum InvariantFailure {
 pub struct StressApp {
     pub(crate) app: App,
     pub(crate) seed: u64, // fields populated across plan tasks 3-8
+    pub(crate) load_rate: LoadRateTracker,
+    pub(crate) sim_time: f64,
 }
 
 const FIXED_DT_SECS: f64 = 1.0 / 60.0;
@@ -273,13 +307,27 @@ impl StressApp {
         app.insert_resource(PendingTeleport::default());
         app.add_systems(Update, apply_pending_teleport);
 
-        Self { app, seed }
+        Self {
+            app,
+            seed,
+            load_rate: LoadRateTracker::default(),
+            sim_time: 0.0,
+        }
     }
 
     /// Advance the simulation by `n` fixed-update frames.
     pub fn tick_n(&mut self, n: u32) {
         for _ in 0..n {
             self.app.update();
+            self.sim_time += FIXED_DT_SECS;
+
+            let count = self
+                .app
+                .world()
+                .get_resource::<crate::world::v2::chunk_manager::V2ChunkMap>()
+                .map(|m| m.loaded_count())
+                .unwrap_or(0);
+            self.load_rate.push(self.sim_time, count);
         }
     }
 
@@ -315,6 +363,11 @@ impl StressApp {
             .and_then(|mut guard| guard.take())
     }
 
+    /// Get the chunk load rate (chunks/second) computed over the last 2 simulated seconds.
+    pub fn chunk_load_rate(&self) -> f32 {
+        self.load_rate.rate()
+    }
+
     /// Check the requested invariants. Returns the list of failures
     /// (empty = all checks passed for the requested set).
     pub fn assert_invariants(&mut self, which: InvariantSet) -> Vec<InvariantFailure> {
@@ -339,6 +392,25 @@ impl StressApp {
         }
 
         // LOAD_RATE handled in Task 8.
+
+        failures
+    }
+
+    /// Check the requested invariants with optional minimum load rate.
+    /// Returns the list of failures (empty = all checks passed for the requested set).
+    pub fn assert_invariants_with_min_rate(
+        &mut self,
+        which: InvariantSet,
+        min_rate: Option<f32>,
+    ) -> Vec<InvariantFailure> {
+        let mut failures = self.assert_invariants(which);
+
+        if let (Some(min), true) = (min_rate, which.contains(InvariantSet::LOAD_RATE)) {
+            let observed = self.chunk_load_rate();
+            if observed < min {
+                failures.push(InvariantFailure::LoadRateBelowMin { observed, min });
+            }
+        }
 
         failures
     }
@@ -559,5 +631,20 @@ mod tests {
             failures.is_empty(),
             "unexpected chunk-cache failures after idle: {failures:?}"
         );
+    }
+
+    #[test]
+    fn load_rate_reports_zero_on_empty_app_then_positive_after_load() {
+        let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+
+        // Initial rate is undefined / zero.
+        let r0 = app.chunk_load_rate();
+        assert!(r0 >= 0.0, "rate must be non-negative, got {r0}");
+
+        app.tick_n(120);
+        let r1 = app.chunk_load_rate();
+        // Expect SOME chunks to have loaded during 2 simulated seconds at the
+        // origin of a small planet. If flaky, increase tick count.
+        assert!(r1 > 0.0, "expected some chunk loading; got rate = {r1}");
     }
 }
