@@ -204,6 +204,34 @@ For each `divergent` audit row:
 - `src/gpu/voxel_compute.rs:1794` — TODO comment: "GPU shader implements FBM noise; update when GPU shader supports planetary terrain."
 - `ai-context.json:1779` — tech_debt entry: "GPU voxel shader uses FBM noise terrain — does not yet implement Planetary IDW from PlanetData. GPU parity tests are marked #\[ignore\]. Tracked as GPU-PARITY-001."
 
+### Synthesis
+
+- **Total rows audited:** 13
+- **Status counts:**
+  - matches: 11
+  - divergent: 1
+  - not-tested: 0
+  - stale-doc: 1
+
+**Phase 3 fix list (divergent rows, in order Phase 3 will tackle):**
+
+- Row 11: `classify_pass` GPU hard-codes `MAT_STONE` for AllSolid; CPU preserves actual material (basalt/granite). AllSolid bypass in `voxel_compute.rs:941` prevents CPU downgrade.
+
+**Phase 2 test list (not-tested rows):**
+
+*(None — all matches and divergent items will be covered by parametric parity harness and gap-filler tests.)*
+
+**Phase 4 cleanup list (stale-doc rows from row 13):**
+
+- Delete `src/gpu/voxel_compute.rs:1413` — TODO comment: "GPU shader implements FBM noise; CPU now uses PlanetaryTerrainSampler (IDW)."
+- Delete `src/gpu/voxel_compute.rs:1415` — `#[ignore]` on test `gpu_vs_cpu_surface_chunk_comparison`
+- Delete `src/gpu/voxel_compute.rs:1453` — TODO comment: "GPU shader implements FBM noise; update when GPU shader supports planetary terrain."
+- Delete `src/gpu/voxel_compute.rs:1770` — `#[ignore]` on test `gpu_vs_cpu_parity_earth_scale_surface_chunk`
+- Delete `src/gpu/voxel_compute.rs:1794` — TODO comment: "GPU shader implements FBM noise; update when GPU shader supports planetary terrain."
+- Delete `ai-context.json:1779` — tech_debt entry claiming GPU uses FBM terrain and parity tests are ignored.
+
+**Production bake helper:** `crate::planet::gpu_heightmap::bake_elevation_roughness_ocean(&PlanetaryTerrainSampler) -> (Vec<f32>, Vec<f32>, Vec<f32>)` is a free `pub fn`. Runtime call site: `src/world/v2/chunk_manager.rs:try_inject_gpu_heightmap` (line 1424). Tests will call `bake_elevation_roughness_ocean` directly; **no test-only wrapper is needed**.
+
 ## Appendix B — Final outcome (populated in Phase 4)
 
 *To be filled in at the end of Phase 4.*
