@@ -47,6 +47,11 @@ proptest = "1.5"
 [features]
 test-support = []
 
+[[test]]
+name = "stress"
+path = "tests/stress.rs"
+required-features = ["test-support"]
+
 # Optimize the final Windows/Linux release build
 [profile.release]
 lto = "thin"
