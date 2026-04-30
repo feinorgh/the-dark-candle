@@ -1668,132 +1668,68 @@ mod tests {
     /// one chunk straddles the boundary and actually exercises the
     /// `depth = surface_r - r` comparison.
     #[test]
-    // TODO: GPU shader implements FBM noise; CPU now uses PlanetaryTerrainSampler (IDW).
-    // Re-enable once the GPU shader is updated to support planetary terrain.
-    #[ignore]
-    fn gpu_vs_cpu_parity_earth_scale_surface_chunk() {
+    fn gpu_vs_cpu_parity_earth_scale_face_center() {
         let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::gpu::parity::parity_probe;
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
         use crate::world::scene_presets::ScenePreset;
         use crate::world::terrain::UnifiedTerrainGenerator;
-        use crate::world::v2::terrain_gen::generate_v2_voxels;
+        use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord};
+        use std::sync::Arc;
 
         let planet = ScenePreset::SphericalPlanet.planet_config();
-        let config = planet
-            .noise
-            .as_ref()
-            .expect("spherical_planet preset must carry noise config")
-            .clone();
-        let mean_radius = planet.mean_radius;
-        let height_scale = planet.height_scale;
-        let sea_level = planet.sea_level_radius;
+        let noise = planet.noise.as_ref().expect("preset must carry noise");
 
         let Some(compute) =
-            GpuVoxelCompute::try_new(&config, planet.seed, mean_radius, height_scale)
+            GpuVoxelCompute::try_new(noise, planet.seed, planet.mean_radius, planet.height_scale)
         else {
-            eprintln!("skipping earth-scale parity test: no GPU adapter");
+            eprintln!("skipping earth-scale parity: no GPU adapter");
             return;
         };
 
-        // TODO: GPU shader implements FBM noise; update when GPU shader supports planetary terrain.
         let gen_cfg = crate::planet::PlanetConfig {
             seed: planet.seed as u64,
-            grid_level: 3,
+            grid_level: 4,
             ..Default::default()
         };
-        let pd = std::sync::Arc::new(crate::planet::PlanetData::new(gen_cfg));
-        let unified = std::sync::Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
 
-        let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-        let half_fce = (fce / 2.0) as i32;
+        let (elev, rough, ocean) = bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
 
-        // PosX face-center direction is (1, 0, 0) → lat=0, lon=π/2.
-        // Probe the actual surface at the chunk's lat/lon so the surface
-        // layer is correct.
-        let (chunk_lat, chunk_lon) = (0.0_f64, std::f64::consts::FRAC_PI_2);
-        let surface_r = unified.sample_surface_radius_at(chunk_lat, chunk_lon);
-        let surface_layer = ((surface_r - mean_radius) / CHUNK_SIZE as f64).round() as i32;
-        eprintln!(
-            "earth-scale: surface_r={surface_r:.1}, mean_radius={mean_radius}, \
-             surface_layer={surface_layer}"
-        );
+        let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+        let half = (fce / 2.0) as i32;
+        let (lat, lon) = (0.0, std::f64::consts::FRAC_PI_2);
+        let surface_r = unified.sample_surface_radius_at(lat, lon);
+        let surface_layer = ((surface_r - planet.mean_radius)
+            / crate::world::chunk::CHUNK_SIZE as f64)
+            .round() as i32;
 
-        // Sweep layers around the surface. The chunk straddling the surface
-        // must classify Mixed and must have matching voxel counts.
-        let layer_range = -3..=3;
         let mut saw_mixed = false;
-        for dl in layer_range {
-            let layer = surface_layer + dl;
-            let coord = CubeSphereCoord::new_with_lod(
-                crate::world::v2::cubed_sphere::CubeFace::PosX,
-                half_fce,
-                half_fce,
-                layer,
-                0,
-            );
-
-            let desc = chunk_desc_from_coord(
-                coord,
-                mean_radius,
-                fce,
-                sea_level,
-                planet.soil_depth,
-                planet.cave_threshold,
-                0,
-            );
-            let request = GpuChunkRequest { coord, desc };
-            let gpu_result = compute.generate_batch(&[request], planet.rotation_axis);
-            let gpu_td = &gpu_result.terrain_data[0];
-            let cpu_td = generate_v2_voxels(coord, mean_radius, fce, &unified);
-
-            let classification = |v: &CachedVoxels| -> &'static str {
-                match v {
-                    CachedVoxels::AllAir => "AllAir",
-                    CachedVoxels::AllSolid(_) => "AllSolid",
-                    CachedVoxels::Mixed(_) => "Mixed",
-                }
-            };
-            let gc = classification(&gpu_td.voxels);
-            let cc = classification(&cpu_td.voxels);
-
-            let gpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&gpu_td.voxels);
-            let cpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&cpu_td.voxels);
-            let gpu_solid = gpu_voxels
-                .iter()
-                .filter(|v| v.material != MaterialId::AIR)
-                .count();
-            let cpu_solid = cpu_voxels
-                .iter()
-                .filter(|v| v.material != MaterialId::AIR)
-                .count();
-            let denom = CHUNK_VOLUME as f64;
-            let gf = gpu_solid as f64 / denom;
-            let cf = cpu_solid as f64 / denom;
-
+        for dl in -3..=3 {
+            let coord =
+                CubeSphereCoord::new_with_lod(CubeFace::PosX, half, half, surface_layer + dl, 0);
+            let report = parity_probe(&planet, &unified, &compute, coord);
             eprintln!(
-                "layer={layer} (dl={dl:+}): GPU={gc} ({gpu_solid}), \
-                 CPU={cc} ({cpu_solid}), diff={:.4}",
-                (gf - cf).abs()
+                "earth-scale dl={dl:+} cls=GPU:{} CPU:{} mismatches={} max_dd={:.3e}",
+                report.gpu_classification,
+                report.cpu_classification,
+                report.mismatches.len(),
+                report.max_density_delta,
             );
-
-            assert_eq!(
-                gc, cc,
-                "classification mismatch at layer {layer} (dl={dl:+})"
-            );
-            if gc == "Mixed" {
+            if report.gpu_classification == "Mixed" {
                 saw_mixed = true;
-                // At Earth scale the regression bug produced ~50% random
-                // solid fraction in Mixed chunks instead of matching CPU.
-                assert!(
-                    (gf - cf).abs() < 0.05,
-                    "solid fraction diverges at layer {layer}: \
-                     GPU={gf:.4}, CPU={cf:.4} (likely f32 cancellation bug)"
-                );
             }
+            assert!(
+                report.passes_parity_contract(),
+                "earth-scale parity contract failed at dl={dl:+}: {:#?}",
+                report,
+            );
         }
-
         assert!(
             saw_mixed,
-            "expected at least one Mixed chunk while sweeping layers around the surface"
+            "expected at least one Mixed chunk in the layer sweep"
         );
     }
 }
