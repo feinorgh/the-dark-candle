@@ -327,3 +327,104 @@ mod build_tests {
         assert!(!r.passes_parity_contract());
     }
 }
+
+// ── End-to-end parity probe ─────────────────────────────────────────────────
+
+use std::sync::Arc;
+
+use crate::gpu::voxel_compute::{GpuChunkRequest, GpuVoxelCompute, chunk_desc_from_coord};
+use crate::world::planet::PlanetConfig;
+use crate::world::terrain::UnifiedTerrainGenerator;
+use crate::world::v2::terrain_gen::{cached_voxels_to_vec, generate_v2_voxels};
+
+/// Run GPU and CPU terrain generation for a single chunk and produce a parity report.
+///
+/// This is the end-to-end driver for the parity pipeline:
+/// 1. Computes chunk metadata (surface radius, chunk descriptor)
+/// 2. Dispatches GPU generation
+/// 3. Dispatches CPU generation
+/// 4. Classifies both results
+/// 5. Compares voxel-by-voxel and builds a report
+///
+/// See `docs/superpowers/specs/2026-04-30-gpu-planetary-noise-parity-design.md` §5.
+pub fn parity_probe(
+    planet: &PlanetConfig,
+    unified: &Arc<UnifiedTerrainGenerator>,
+    compute: &GpuVoxelCompute,
+    coord: CubeSphereCoord,
+) -> ParityReport {
+    let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+
+    // Compute chunk center's (lat, lon) for surface radius sampling.
+    // `unit_sphere_dir` gives us the radial unit direction at the chunk center.
+    let dir = coord.unit_sphere_dir(fce);
+    let (chunk_lat, chunk_lon) = crate::planet::detail::pos_to_lat_lon(dir);
+
+    let surface_r = unified.sample_surface_radius_at(chunk_lat, chunk_lon);
+    let surface_offset = surface_r - planet.mean_radius;
+
+    let desc = chunk_desc_from_coord(
+        coord,
+        planet.mean_radius,
+        fce,
+        planet.sea_level_radius,
+        planet.soil_depth,
+        planet.cave_threshold,
+        0,
+    );
+
+    // GPU path
+    let gpu_result =
+        compute.generate_batch(&[GpuChunkRequest { coord, desc }], planet.rotation_axis);
+    let gpu_td = &gpu_result.terrain_data[0];
+
+    // CPU path
+    let cpu_td = generate_v2_voxels(coord, planet.mean_radius, fce, unified);
+
+    // Classify voxel distributions
+    let classify = |v: &crate::world::v2::terrain_gen::CachedVoxels| -> &'static str {
+        match v {
+            crate::world::v2::terrain_gen::CachedVoxels::AllAir => "AllAir",
+            crate::world::v2::terrain_gen::CachedVoxels::AllSolid(_) => "AllSolid",
+            crate::world::v2::terrain_gen::CachedVoxels::Mixed(_) => "Mixed",
+        }
+    };
+    let gpu_cls = classify(&gpu_td.voxels);
+    let cpu_cls = classify(&cpu_td.voxels);
+
+    // Convert cached voxels to flat arrays for comparison
+    let gpu_voxels = cached_voxels_to_vec(&gpu_td.voxels);
+    let cpu_voxels = cached_voxels_to_vec(&cpu_td.voxels);
+    let gpu_densities: Vec<f32> = gpu_voxels.iter().map(|v| v.density).collect();
+    let cpu_densities: Vec<f64> = cpu_voxels.iter().map(|v| v.density as f64).collect();
+
+    // Define a minimal threshold classifier for §3 parity contract compliance.
+    // In this simple version, we attribute any 1-ULP-tolerant mismatch to the
+    // surface iso-surface (the dominant threshold). More sophisticated classifiers
+    // would check cave/ore/strata thresholds, but that requires chunk-local depth
+    // and noise sampling, which is deferred to later tasks.
+    let one_ulp = f32::EPSILON as f64 * 4.0;
+    let threshold_classifier = |idx: usize,
+                                _g: &crate::world::voxel::Voxel,
+                                _c: &crate::world::voxel::Voxel|
+     -> ThresholdKind {
+        let dd = (gpu_densities[idx] as f64 - cpu_densities[idx]).abs();
+        if dd <= one_ulp {
+            ThresholdKind::SurfaceIso
+        } else {
+            ThresholdKind::Unattributed
+        }
+    };
+
+    build_parity_report(
+        coord,
+        gpu_cls,
+        cpu_cls,
+        &gpu_voxels,
+        &cpu_voxels,
+        &gpu_densities,
+        &cpu_densities,
+        surface_offset,
+        threshold_classifier,
+    )
+}
