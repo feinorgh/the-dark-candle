@@ -77,3 +77,55 @@ pub fn bake_elevation_roughness_ocean(
 
     (elevation, roughness, ocean)
 }
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+    use crate::world::noise::NoiseConfig;
+    use crate::world::planet::PlanetConfig as WorldPlanetConfig;
+    use crate::world::terrain::UnifiedTerrainGenerator;
+    use std::sync::Arc;
+
+    fn make_sampler(seed: u64) -> Arc<UnifiedTerrainGenerator> {
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed,
+            grid_level: 4,
+            ..Default::default()
+        };
+        let mut pd = crate::planet::PlanetData::new(gen_cfg);
+        crate::planet::tectonics::run_tectonics(&mut pd, |_| {});
+        let pd = Arc::new(pd);
+        let world = WorldPlanetConfig {
+            mean_radius: 32_000.0,
+            sea_level_radius: 32_000.0,
+            height_scale: 4_000.0,
+            seed: seed as u32,
+            noise: Some(NoiseConfig::default()),
+            ..Default::default()
+        };
+        Arc::new(UnifiedTerrainGenerator::new(pd, world))
+    }
+
+    #[test]
+    fn bake_is_deterministic_for_fixed_seed() {
+        let s1 = make_sampler(1234);
+        let s2 = make_sampler(1234);
+        let (e1, r1, o1) = bake_elevation_roughness_ocean(&s1.0);
+        let (e2, r2, o2) = bake_elevation_roughness_ocean(&s2.0);
+        assert_eq!(e1, e2);
+        assert_eq!(r1, r2);
+        assert_eq!(o1, o2);
+    }
+
+    #[test]
+    fn bake_differs_for_different_seeds() {
+        let s1 = make_sampler(1234);
+        let s2 = make_sampler(5678);
+        let (e1, _, _) = bake_elevation_roughness_ocean(&s1.0);
+        let (e2, _, _) = bake_elevation_roughness_ocean(&s2.0);
+        assert_ne!(
+            e1, e2,
+            "different seeds must produce different elevation maps"
+        );
+    }
+}

@@ -73,6 +73,10 @@ pub struct BoundaryLoop {
     pub vertices: Vec<DVec3>,
     /// Original mesh vertex indices, parallel to `vertices`.
     pub mesh_indices: Vec<u32>,
+    /// Geometric normals from the source mesh, parallel to `vertices`.
+    pub normals: Vec<[f32; 3]>,
+    /// Vertex colors (RGBA) from the source mesh, parallel to `vertices`.
+    pub colors: Vec<[f32; 4]>,
 }
 
 /// Per-face boundary loops extracted from a chunk's surface-nets mesh.
@@ -177,10 +181,20 @@ pub fn extract_boundary_loops(
                 .iter()
                 .map(|&vi| to_world(mesh.positions[vi as usize]))
                 .collect();
+            let normals: Vec<[f32; 3]> = chain_indices
+                .iter()
+                .map(|&vi| mesh.normals[vi as usize])
+                .collect();
+            let colors: Vec<[f32; 4]> = chain_indices
+                .iter()
+                .map(|&vi| mesh.colors[vi as usize])
+                .collect();
             result.loops[face_idx].push(BoundaryLoop {
                 face,
                 vertices,
                 mesh_indices: chain_indices,
+                normals,
+                colors,
             });
         }
     }

@@ -106,6 +106,7 @@ pub struct V2CornerStitchMap {
 /// chain exactly meets the interval boundary.
 ///
 /// Returns an empty `Vec` when the entire chain falls outside the interval.
+#[cfg(test)]
 fn clip_loop_to_range(chain: &[DVec3], axis: DVec3, t_min: f64, t_max: f64) -> Vec<DVec3> {
     if chain.len() < 2 {
         return chain.to_vec();
@@ -154,10 +155,144 @@ fn clip_loop_to_range(chain: &[DVec3], axis: DVec3, t_min: f64, t_max: f64) -> V
     result
 }
 
+/// Clip a loop of world-space vertices to the 1-D tangential interval `[t_min, t_max]`,
+/// propagating parallel normals and colors with linear interpolation at clip boundaries.
+///
+/// Normals are renormalized after interpolation.  Returns empty vecs when the entire
+/// chain falls outside the interval.
+fn clip_chain_with_attributes(
+    positions: &[DVec3],
+    normals: &[[f32; 3]],
+    colors: &[[f32; 4]],
+    axis: DVec3,
+    t_min: f64,
+    t_max: f64,
+) -> (Vec<DVec3>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
+    let n = positions.len();
+    if n < 2 {
+        return (positions.to_vec(), normals.to_vec(), colors.to_vec());
+    }
+
+    let projs: Vec<f64> = positions.iter().map(|p| p.dot(axis)).collect();
+
+    let lerp_n = |na: [f32; 3], nb: [f32; 3], s: f64| -> [f32; 3] {
+        let t = s as f32;
+        let x = na[0] + t * (nb[0] - na[0]);
+        let y = na[1] + t * (nb[1] - na[1]);
+        let z = na[2] + t * (nb[2] - na[2]);
+        let len = (x * x + y * y + z * z).sqrt().max(1e-6);
+        [x / len, y / len, z / len]
+    };
+    let lerp_c = |ca: [f32; 4], cb: [f32; 4], s: f64| -> [f32; 4] {
+        let t = s as f32;
+        [
+            ca[0] + t * (cb[0] - ca[0]),
+            ca[1] + t * (cb[1] - ca[1]),
+            ca[2] + t * (cb[2] - ca[2]),
+            ca[3] + t * (cb[3] - ca[3]),
+        ]
+    };
+
+    let mut out_p: Vec<DVec3> = Vec::new();
+    let mut out_n: Vec<[f32; 3]> = Vec::new();
+    let mut out_c: Vec<[f32; 4]> = Vec::new();
+
+    for i in 0..n {
+        let ti = projs[i];
+        let inside = ti >= t_min && ti <= t_max;
+
+        if inside {
+            if i > 0 {
+                let t_prev = projs[i - 1];
+                if t_prev < t_min {
+                    let s = (t_min - t_prev) / (ti - t_prev);
+                    out_p.push(positions[i - 1].lerp(positions[i], s));
+                    out_n.push(lerp_n(normals[i - 1], normals[i], s));
+                    out_c.push(lerp_c(colors[i - 1], colors[i], s));
+                } else if t_prev > t_max {
+                    let s = (t_max - t_prev) / (ti - t_prev);
+                    out_p.push(positions[i - 1].lerp(positions[i], s));
+                    out_n.push(lerp_n(normals[i - 1], normals[i], s));
+                    out_c.push(lerp_c(colors[i - 1], colors[i], s));
+                }
+            }
+            out_p.push(positions[i]);
+            out_n.push(normals[i]);
+            out_c.push(colors[i]);
+        } else if i > 0 {
+            let t_prev = projs[i - 1];
+            let prev_inside = t_prev >= t_min && t_prev <= t_max;
+            if prev_inside {
+                let t_exit = if ti < t_min { t_min } else { t_max };
+                let s = (t_exit - t_prev) / (ti - t_prev);
+                out_p.push(positions[i - 1].lerp(positions[i], s));
+                out_n.push(lerp_n(normals[i - 1], normals[i], s));
+                out_c.push(lerp_c(colors[i - 1], colors[i], s));
+            }
+        }
+    }
+
+    (out_p, out_n, out_c)
+}
+
+/// Clip a coarse boundary chain (with normals and colors) to the tangential
+/// extent of a fine boundary chain.  Uses the coarse chain's own axis so that
+/// the clip boundaries exactly match those used by `clip_coarse_to_fine_extent`
+/// in the corner stitch — eliminating T-junction gaps.
+fn clip_coarse_to_fine_extent_with_attrs(
+    fine_verts: &[DVec3],
+    coarse_verts: &[DVec3],
+    coarse_normals: &[[f32; 3]],
+    coarse_colors: &[[f32; 4]],
+    outward: DVec3,
+) -> (Vec<DVec3>, Vec<[f32; 3]>, Vec<[f32; 4]>) {
+    if coarse_verts.len() < 2 {
+        return (
+            coarse_verts.to_vec(),
+            coarse_normals.to_vec(),
+            coarse_colors.to_vec(),
+        );
+    }
+    let axis_raw = coarse_verts.last().unwrap() - coarse_verts.first().unwrap();
+    let axis = if axis_raw.length_squared() > 1e-10 {
+        axis_raw.normalize()
+    } else {
+        let arb = if outward.x.abs() < 0.9 {
+            DVec3::X
+        } else {
+            DVec3::Y
+        };
+        outward.cross(arb).normalize()
+    };
+    let proj_f: Vec<f64> = fine_verts.iter().map(|p| p.dot(axis)).collect();
+    let t_min = proj_f.iter().cloned().fold(f64::INFINITY, f64::min);
+    let t_max = proj_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    clip_chain_with_attributes(
+        coarse_verts,
+        coarse_normals,
+        coarse_colors,
+        axis,
+        t_min,
+        t_max,
+    )
+}
+
+/// Returns the index (0 or `chain.len()-1`) of the endpoint of `chain`
+/// closest to `target`.
+fn nearest_chain_endpoint_idx(chain: &[DVec3], target: DVec3) -> usize {
+    let first = *chain.first().unwrap();
+    let last = *chain.last().unwrap();
+    if (first - target).length_squared() <= (last - target).length_squared() {
+        0
+    } else {
+        chain.len() - 1
+    }
+}
 /// Clip a coarse boundary chain to the tangential extent of a fine boundary chain.
 ///
 /// Mirrors the clipping step in `v2_stitch_update` so that corner-stitch
 /// endpoints exactly match those already used by the two adjacent pairwise stitches.
+#[cfg(test)]
 fn clip_coarse_to_fine_extent(
     fine_verts: &[DVec3],
     coarse_verts: &[DVec3],
@@ -184,6 +319,7 @@ fn clip_coarse_to_fine_extent(
 }
 
 /// Returns the endpoint (first or last) of `chain` closest to `target`.
+#[cfg(test)]
 fn nearest_chain_endpoint(chain: &[DVec3], target: DVec3) -> DVec3 {
     let first = *chain.first().unwrap();
     let last = *chain.last().unwrap();
@@ -197,20 +333,28 @@ fn nearest_chain_endpoint(chain: &[DVec3], target: DVec3) -> DVec3 {
 /// Triangulate a stitch ribbon between two world-space boundary loops.
 ///
 /// `loop_f` — fine chunk boundary vertices (ordered polyline, world space).
+/// `normals_f` / `colors_f` — parallel source-mesh normals and colors for the fine loop.
 /// `loop_c` — coarse chunk boundary vertices (ordered polyline, world space).
 ///             Must already be clipped to the fine loop's tangential extent.
+/// `normals_c` / `colors_c` — parallel source-mesh normals and colors for the coarse loop.
 /// `origin` — `RenderOrigin` (DVec3) subtracted to get render-space f32 coords.
-/// `outward_hint` — approximate radial outward unit vector at the seam.
+/// `outward_hint` — approximate radial outward unit vector; used only for winding correction.
 ///
-/// Returns `(positions, normals, indices)` for a Bevy `Mesh`.
+/// Returns `(positions, normals, colors, indices)` for a Bevy `Mesh`.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn stitch_triangulate(
     loop_f: &[DVec3],
+    normals_f: &[[f32; 3]],
+    colors_f: &[[f32; 4]],
     loop_c: &[DVec3],
+    normals_c: &[[f32; 3]],
+    colors_c: &[[f32; 4]],
     origin: DVec3,
     outward_hint: DVec3,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<u32>) {
     if loop_f.len() < 2 || loop_c.len() < 2 {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     // ── Render-space conversion ───────────────────────────────────────────────
@@ -236,23 +380,31 @@ pub fn stitch_triangulate(
     // ── Ensure coarse loop goes in increasing-projection order ────────────────
     let proj_c_first = loop_c.first().unwrap().dot(axis);
     let proj_c_last = loop_c.last().unwrap().dot(axis);
-    let (loop_c_ord, _proj_c_first_ord) = if proj_c_first <= proj_c_last {
-        (loop_c.to_vec(), proj_c_first)
+    let (loop_c_ord, normals_c_ord, colors_c_ord) = if proj_c_first <= proj_c_last {
+        (loop_c.to_vec(), normals_c.to_vec(), colors_c.to_vec())
     } else {
         let mut v = loop_c.to_vec();
         v.reverse();
-        (v, proj_c_last)
+        let mut n = normals_c.to_vec();
+        n.reverse();
+        let mut c = colors_c.to_vec();
+        c.reverse();
+        (v, n, c)
     };
 
     // ── Ensure fine loop goes in the same direction as coarse ─────────────────
     let proj_f_first = loop_f.first().unwrap().dot(axis);
     let proj_f_last = loop_f.last().unwrap().dot(axis);
-    let loop_f_ord: Vec<DVec3> = if proj_f_first <= proj_f_last {
-        loop_f.to_vec()
+    let (loop_f_ord, normals_f_ord, colors_f_ord) = if proj_f_first <= proj_f_last {
+        (loop_f.to_vec(), normals_f.to_vec(), colors_f.to_vec())
     } else {
         let mut v = loop_f.to_vec();
         v.reverse();
-        v
+        let mut n = normals_f.to_vec();
+        n.reverse();
+        let mut c = colors_f.to_vec();
+        c.reverse();
+        (v, n, c)
     };
 
     let proj_c_ord: Vec<f64> = loop_c_ord.iter().map(|p| p.dot(axis)).collect();
@@ -262,11 +414,17 @@ pub fn stitch_triangulate(
     let c_len = loop_c_ord.len();
     let f_len = loop_f_ord.len();
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(c_len + f_len);
-    for p in &loop_c_ord {
+    let mut all_normals: Vec<[f32; 3]> = Vec::with_capacity(c_len + f_len);
+    let mut all_colors: Vec<[f32; 4]> = Vec::with_capacity(c_len + f_len);
+    for (i, p) in loop_c_ord.iter().enumerate() {
         positions.push(to_f32(*p));
+        all_normals.push(normals_c_ord[i]);
+        all_colors.push(colors_c_ord[i]);
     }
-    for p in &loop_f_ord {
+    for (i, p) in loop_f_ord.iter().enumerate() {
         positions.push(to_f32(*p));
+        all_normals.push(normals_f_ord[i]);
+        all_colors.push(colors_f_ord[i]);
     }
 
     // ── Two-pointer zipper merge ───────────────────────────────────────────────
@@ -303,7 +461,7 @@ pub fn stitch_triangulate(
     }
 
     if indices.is_empty() {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     // ── Winding order: ensure normals face outward ────────────────────────────
@@ -323,15 +481,14 @@ pub fn stitch_triangulate(
         }
     }
 
-    let normals = vec![outward_f32.to_array(); c_len + f_len];
-
-    (positions, normals, indices)
+    (positions, all_normals, all_colors, indices)
 }
 
 /// Build a Bevy `Mesh` from stitch triangulation output.
 pub fn build_stitch_mesh(
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
+    colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
 ) -> Mesh {
     let n = positions.len();
@@ -341,10 +498,8 @@ pub fn build_stitch_mesh(
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    // UV coordinates required by StandardMaterial
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0f32]; n]);
-    // Vertex colors: white so the chunk material tint applies uniformly
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32, 1.0, 1.0, 1.0]; n]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -462,7 +617,7 @@ pub fn v2_stitch_update(
                 continue;
             }
 
-            // Compute projection axis from the longest overall chain on either side.
+            // Outward hint from the reference (longest) chain's midpoint.
             let reference_chain = fine_chains
                 .iter()
                 .chain(coarse_chains.iter())
@@ -474,43 +629,60 @@ pub fn v2_stitch_update(
                 .fold(DVec3::ZERO, |a, &p| a + p)
                 / reference_chain.vertices.len() as f64;
             let outward_hint_global = ref_mid.normalize();
-            let axis_raw = *reference_chain.vertices.last().unwrap()
-                - *reference_chain.vertices.first().unwrap();
-            let axis = if axis_raw.length_squared() > 1e-10 {
-                axis_raw.normalize()
-            } else {
-                let arb = if outward_hint_global.x.abs() < 0.9 {
-                    DVec3::X
-                } else {
-                    DVec3::Y
-                };
-                outward_hint_global.cross(arb).normalize()
-            };
 
             // Stitch all (fine_chain, coarse_chain) pairs that have projected
-            // overlap. Each pair is clipped independently and gets its own
-            // per-pair outward_hint for reliable winding correction.
+            // overlap. Each pair uses the COARSE chain's own axis for clipping
+            // (matching clip_coarse_to_fine_extent used in the corner stitch
+            // system — this eliminates T-junction gaps at corners).
             let mut all_positions: Vec<[f32; 3]> = Vec::new();
             let mut all_normals: Vec<[f32; 3]> = Vec::new();
+            let mut all_colors: Vec<[f32; 4]> = Vec::new();
             let mut all_indices: Vec<u32> = Vec::new();
 
             for fine_chain in fine_chains {
                 if fine_chain.vertices.len() < 2 {
                     continue;
                 }
-                let proj_f: Vec<f64> = fine_chain.vertices.iter().map(|p| p.dot(axis)).collect();
-                let t_min = proj_f.iter().cloned().fold(f64::INFINITY, f64::min);
-                let t_max = proj_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
                 for coarse_chain in coarse_chains {
                     if coarse_chain.vertices.len() < 2 {
                         continue;
                     }
-                    // Clip coarse chain to fine chain's tangential extent.
-                    // Returns < 2 points when the chains don't overlap → skip.
-                    let clipped_coarse =
-                        clip_loop_to_range(&coarse_chain.vertices, axis, t_min, t_max);
-                    if clipped_coarse.len() < 2 {
+                    // Compute axis from the COARSE chain so clip bounds match
+                    // the corner stitch system exactly.
+                    let axis_raw = *coarse_chain.vertices.last().unwrap()
+                        - *coarse_chain.vertices.first().unwrap();
+                    let coarse_axis = if axis_raw.length_squared() > 1e-10 {
+                        axis_raw.normalize()
+                    } else {
+                        let arb = if outward_hint_global.x.abs() < 0.9 {
+                            DVec3::X
+                        } else {
+                            DVec3::Y
+                        };
+                        outward_hint_global.cross(arb).normalize()
+                    };
+
+                    // Project fine chain onto the coarse axis to find extent.
+                    let proj_f: Vec<f64> = fine_chain
+                        .vertices
+                        .iter()
+                        .map(|p| p.dot(coarse_axis))
+                        .collect();
+                    let t_min = proj_f.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let t_max = proj_f.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+                    // Clip coarse chain (with normals and colors) to fine extent.
+                    let (clipped_coarse_pos, clipped_coarse_nrm, clipped_coarse_col) =
+                        clip_chain_with_attributes(
+                            &coarse_chain.vertices,
+                            &coarse_chain.normals,
+                            &coarse_chain.colors,
+                            coarse_axis,
+                            t_min,
+                            t_max,
+                        );
+                    if clipped_coarse_pos.len() < 2 {
                         continue;
                     }
 
@@ -524,25 +696,29 @@ pub fn v2_stitch_update(
                     // cross-hill pairs that produce large inclined surfaces.
                     let mean_r_fine = fine_chain.vertices.iter().map(|v| v.length()).sum::<f64>()
                         / fine_chain.vertices.len() as f64;
-                    let mean_r_coarse = clipped_coarse.iter().map(|v| v.length()).sum::<f64>()
-                        / clipped_coarse.len() as f64;
+                    let mean_r_coarse = clipped_coarse_pos.iter().map(|v| v.length()).sum::<f64>()
+                        / clipped_coarse_pos.len() as f64;
                     let coarse_chunk_height = CHUNK_SIZE as f64 * (1u64 << coarse_coord.lod) as f64;
                     if (mean_r_fine - mean_r_coarse).abs() > coarse_chunk_height {
                         continue;
                     }
 
-                    let pair_n = fine_chain.vertices.len() + clipped_coarse.len();
+                    let pair_n = fine_chain.vertices.len() + clipped_coarse_pos.len();
                     let outward_hint = (fine_chain
                         .vertices
                         .iter()
-                        .chain(clipped_coarse.iter())
+                        .chain(clipped_coarse_pos.iter())
                         .fold(DVec3::ZERO, |a, &p| a + p)
                         / pair_n as f64)
                         .normalize();
 
-                    let (pos, nrm, idx) = stitch_triangulate(
+                    let (pos, nrm, col, idx) = stitch_triangulate(
                         &fine_chain.vertices,
-                        &clipped_coarse,
+                        &fine_chain.normals,
+                        &fine_chain.colors,
+                        &clipped_coarse_pos,
+                        &clipped_coarse_nrm,
+                        &clipped_coarse_col,
                         origin_pos,
                         outward_hint,
                     );
@@ -551,6 +727,7 @@ pub fn v2_stitch_update(
                         let base = all_positions.len() as u32;
                         all_positions.extend(pos);
                         all_normals.extend(nrm);
+                        all_colors.extend(col);
                         all_indices.extend(idx.into_iter().map(|i| i + base));
                     }
                 }
@@ -560,7 +737,7 @@ pub fn v2_stitch_update(
                 continue;
             }
 
-            let mesh = build_stitch_mesh(all_positions, all_normals, all_indices);
+            let mesh = build_stitch_mesh(all_positions, all_normals, all_colors, all_indices);
             let mesh_handle = meshes.add(mesh);
 
             let stitch_entity = commands
@@ -627,19 +804,34 @@ const CORNER_PAIRS: [(ChunkDir, ChunkDir); 4] = [
 /// winding order is corrected against `outward` so normals face outward.
 /// Degenerate triangles (area² < 1e-10) are silently dropped.
 ///
-/// Returns `(positions, normals, indices)` ready for `build_stitch_mesh`.
+/// Returns `(positions, normals, colors, indices)` ready for `build_stitch_mesh`.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn corner_quad_triangles(
     p0: [f32; 3],
+    n0: [f32; 3],
+    c0: [f32; 4],
     p1: [f32; 3],
+    n1: [f32; 3],
+    c1: [f32; 4],
     p2: [f32; 3],
+    n2: [f32; 3],
+    c2: [f32; 4],
     p3: [f32; 3],
+    n3: [f32; 3],
+    c3: [f32; 4],
     outward: Vec3,
-) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>, Vec<u32>) {
     let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut norms: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let mut base = 0u32;
 
-    for &(a, b, c) in &[(p0, p1, p2), (p2, p1, p3)] {
+    for &(a, na, ca, b, nb, cb, c, nc, cc) in &[
+        (p0, n0, c0, p1, n1, c1, p2, n2, c2),
+        (p2, n2, c2, p1, n1, c1, p3, n3, c3),
+    ] {
         let va = Vec3::from(a);
         let vb = Vec3::from(b);
         let vc = Vec3::from(c);
@@ -647,20 +839,25 @@ fn corner_quad_triangles(
         if area_cross.length_squared() < 1e-10 {
             continue;
         }
-        let (b_out, c_out) = if area_cross.dot(outward) < 0.0 {
-            (c, b)
+        let ((b_out, nb_out, cb_out), (c_out, nc_out, cc_out)) = if area_cross.dot(outward) < 0.0 {
+            ((c, nc, cc), (b, nb, cb))
         } else {
-            (b, c)
+            ((b, nb, cb), (c, nc, cc))
         };
         positions.push(a);
         positions.push(b_out);
         positions.push(c_out);
+        norms.push(na);
+        norms.push(nb_out);
+        norms.push(nc_out);
+        colors.push(ca);
+        colors.push(cb_out);
+        colors.push(cc_out);
         indices.extend_from_slice(&[base, base + 1, base + 2]);
         base += 3;
     }
 
-    let normals = vec![outward.to_array(); positions.len()];
-    (positions, normals, indices)
+    (positions, norms, colors, indices)
 }
 
 /// System: maintain corner-cap triangles at all three-way LOD seam junctions.
@@ -853,17 +1050,23 @@ pub fn v2_corner_stitch_update(
 
             // Re-clip coarse chains exactly as the pairwise stitches do, so
             // our corner endpoints match the stitch ribbon endpoints.
-            let clipped_a = clip_coarse_to_fine_extent(
-                &fine_chain_a.vertices,
-                &coarse_chain_a.vertices,
-                outward,
-            );
-            let clipped_b = clip_coarse_to_fine_extent(
-                &fine_chain_b.vertices,
-                &coarse_chain_b.vertices,
-                outward,
-            );
-            if clipped_a.len() < 2 || clipped_b.len() < 2 {
+            let (clipped_a_pos, clipped_a_nrm, clipped_a_col) =
+                clip_coarse_to_fine_extent_with_attrs(
+                    &fine_chain_a.vertices,
+                    &coarse_chain_a.vertices,
+                    &coarse_chain_a.normals,
+                    &coarse_chain_a.colors,
+                    outward,
+                );
+            let (clipped_b_pos, clipped_b_nrm, clipped_b_col) =
+                clip_coarse_to_fine_extent_with_attrs(
+                    &fine_chain_b.vertices,
+                    &coarse_chain_b.vertices,
+                    &coarse_chain_b.normals,
+                    &coarse_chain_b.colors,
+                    outward,
+                );
+            if clipped_a_pos.len() < 2 || clipped_b_pos.len() < 2 {
                 continue;
             }
 
@@ -886,10 +1089,25 @@ pub fn v2_corner_stitch_update(
                 .fold(DVec3::ZERO, |a, &v| a + v)
                 / fine_chain_a.vertices.len() as f64;
 
-            let fine_corner_a = nearest_chain_endpoint(&fine_chain_a.vertices, centroid_b);
-            let coarse_a_pt = nearest_chain_endpoint(&clipped_a, centroid_b);
-            let fine_corner_b = nearest_chain_endpoint(&fine_chain_b.vertices, centroid_a);
-            let coarse_b_pt = nearest_chain_endpoint(&clipped_b, centroid_a);
+            let fine_a_idx = nearest_chain_endpoint_idx(&fine_chain_a.vertices, centroid_b);
+            let coarse_a_idx = nearest_chain_endpoint_idx(&clipped_a_pos, centroid_b);
+            let fine_b_idx = nearest_chain_endpoint_idx(&fine_chain_b.vertices, centroid_a);
+            let coarse_b_idx = nearest_chain_endpoint_idx(&clipped_b_pos, centroid_a);
+
+            let fine_corner_a = fine_chain_a.vertices[fine_a_idx];
+            let coarse_a_pt = clipped_a_pos[coarse_a_idx];
+            let fine_corner_b = fine_chain_b.vertices[fine_b_idx];
+            let coarse_b_pt = clipped_b_pos[coarse_b_idx];
+
+            // Corner vertex normals and colors from source meshes.
+            let n_fine_a = fine_chain_a.normals[fine_a_idx];
+            let c_fine_a = fine_chain_a.colors[fine_a_idx];
+            let n_coarse_a = clipped_a_nrm[coarse_a_idx];
+            let c_coarse_a = clipped_a_col[coarse_a_idx];
+            let n_fine_b = fine_chain_b.normals[fine_b_idx];
+            let c_fine_b = fine_chain_b.colors[fine_b_idx];
+            let n_coarse_b = clipped_b_nrm[coarse_b_idx];
+            let c_coarse_b = clipped_b_col[coarse_b_idx];
 
             // Emit a quad as two triangles:
             //   T1: (fine_corner_a, coarse_a_pt, fine_corner_b)
@@ -908,12 +1126,26 @@ pub fn v2_corner_stitch_update(
             let p3 = to_f32(coarse_b_pt);
 
             let outward_f32 = outward.as_vec3();
-            let (positions, normals, indices) = corner_quad_triangles(p0, p1, p2, p3, outward_f32);
+            let (positions, normals, colors, indices) = corner_quad_triangles(
+                p0,
+                n_fine_a,
+                c_fine_a,
+                p1,
+                n_coarse_a,
+                c_coarse_a,
+                p2,
+                n_fine_b,
+                c_fine_b,
+                p3,
+                n_coarse_b,
+                c_coarse_b,
+                outward_f32,
+            );
 
             if indices.is_empty() {
                 continue;
             }
-            let mesh = build_stitch_mesh(positions, normals, indices);
+            let mesh = build_stitch_mesh(positions, normals, colors, indices);
             let mesh_handle = meshes.add(mesh);
 
             let corner_entity = commands
@@ -979,13 +1211,20 @@ mod tests {
             DVec3::new(2.0, 0.0, 0.0),
             DVec3::new(3.0, 0.0, 0.0),
         ];
+        let dummy_n_c = vec![[0.0f32, 0.0, 1.0]; loop_c.len()];
+        let dummy_c_c = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_c.len()];
+        let dummy_n_f = vec![[0.0f32, 0.0, 1.0]; loop_f.len()];
+        let dummy_c_f = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_f.len()];
         let origin = DVec3::ZERO;
         let outward = DVec3::Z;
-        let (pos, nrm, idx) = stitch_triangulate(&loop_f, &loop_c, origin, outward);
+        let (pos, nrm, col, idx) = stitch_triangulate(
+            &loop_f, &dummy_n_f, &dummy_c_f, &loop_c, &dummy_n_c, &dummy_c_c, origin, outward,
+        );
 
         assert!(!idx.is_empty(), "should produce triangles");
         assert_eq!(idx.len() % 3, 0, "indices must be multiple of 3");
         assert_eq!(pos.len(), nrm.len(), "positions and normals must match");
+        assert_eq!(pos.len(), col.len(), "positions and colors must match");
 
         // No index out of bounds
         for &i in &idx {
@@ -997,7 +1236,20 @@ mod tests {
     fn stitch_no_degenerate_triangles() {
         let loop_c = make_line(DVec3::new(0.0, 0.0, 0.05), DVec3::new(8.0, 0.0, 0.05), 3);
         let loop_f = make_line(DVec3::new(0.0, 0.0, 0.0), DVec3::new(8.0, 0.0, 0.0), 9);
-        let (pos, _, idx) = stitch_triangulate(&loop_f, &loop_c, DVec3::ZERO, DVec3::Z);
+        let dummy_n_c = vec![[0.0f32, 0.0, 1.0]; loop_c.len()];
+        let dummy_c_c = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_c.len()];
+        let dummy_n_f = vec![[0.0f32, 0.0, 1.0]; loop_f.len()];
+        let dummy_c_f = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_f.len()];
+        let (pos, _, _, idx) = stitch_triangulate(
+            &loop_f,
+            &dummy_n_f,
+            &dummy_c_f,
+            &loop_c,
+            &dummy_n_c,
+            &dummy_c_c,
+            DVec3::ZERO,
+            DVec3::Z,
+        );
 
         for tri in idx.chunks_exact(3) {
             let v0 = Vec3::from(pos[tri[0] as usize]);
@@ -1024,7 +1276,20 @@ mod tests {
             .fold(DVec3::splat(f64::NEG_INFINITY), |a, &p| a.max(p));
         let margin = 2.0f64;
 
-        let (pos, _, _) = stitch_triangulate(&loop_f, &loop_c, DVec3::ZERO, DVec3::Z);
+        let dummy_n_c = vec![[0.0f32, 0.0, 1.0]; loop_c.len()];
+        let dummy_c_c = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_c.len()];
+        let dummy_n_f = vec![[0.0f32, 0.0, 1.0]; loop_f.len()];
+        let dummy_c_f = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_f.len()];
+        let (pos, _, _, _) = stitch_triangulate(
+            &loop_f,
+            &dummy_n_f,
+            &dummy_c_f,
+            &loop_c,
+            &dummy_n_c,
+            &dummy_c_c,
+            DVec3::ZERO,
+            DVec3::Z,
+        );
         for p in &pos {
             let wp = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
             assert!(
@@ -1061,7 +1326,20 @@ mod tests {
             DVec3::new(4.0, 0.0, 0.0),
         ];
         let outward = DVec3::Z;
-        let (pos, _, idx) = stitch_triangulate(&loop_f, &loop_c, DVec3::ZERO, outward);
+        let dummy_n_c = vec![[0.0f32, 0.0, 1.0]; loop_c.len()];
+        let dummy_c_c = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_c.len()];
+        let dummy_n_f = vec![[0.0f32, 0.0, 1.0]; loop_f.len()];
+        let dummy_c_f = vec![[1.0f32, 1.0, 1.0, 1.0]; loop_f.len()];
+        let (pos, _, _, idx) = stitch_triangulate(
+            &loop_f,
+            &dummy_n_f,
+            &dummy_c_f,
+            &loop_c,
+            &dummy_n_c,
+            &dummy_c_c,
+            DVec3::ZERO,
+            outward,
+        );
         let outward_f32 = Vec3::Z;
         for tri in idx.chunks_exact(3) {
             let v0 = Vec3::from(pos[tri[0] as usize]);
@@ -1107,23 +1385,18 @@ mod tests {
 
     #[test]
     fn corner_quad_two_triangles_for_non_degenerate_quad() {
-        // A flat square in the XY plane:
-        //  p0=(0,1,0)  p1=(0,0,0)
-        //  p2=(1,1,0)  p3=(1,0,0)
-        // outward = +Z
+        let dn = [0.0f32, 0.0, 1.0];
+        let dc = [1.0f32, 1.0, 1.0, 1.0];
         let p0 = [0.0f32, 1.0, 0.0];
         let p1 = [0.0f32, 0.0, 0.0];
         let p2 = [1.0f32, 1.0, 0.0];
         let p3 = [1.0f32, 0.0, 0.0];
-        let (positions, normals, indices) = corner_quad_triangles(p0, p1, p2, p3, Vec3::Z);
+        let (positions, normals, colors, indices) =
+            corner_quad_triangles(p0, dn, dc, p1, dn, dc, p2, dn, dc, p3, dn, dc, Vec3::Z);
         assert_eq!(indices.len(), 6, "two triangles → 6 indices");
         assert_eq!(positions.len(), 6);
         assert_eq!(normals.len(), 6);
-        // All normals should face +Z
-        for n in &normals {
-            assert!(n[2] > 0.9, "normal should face +Z, got {:?}", n);
-        }
-        // No degenerate triangles (all triangles have non-zero area)
+        assert_eq!(colors.len(), 6);
         for tri in indices.chunks(3) {
             let a = Vec3::from(positions[tri[0] as usize]);
             let b = Vec3::from(positions[tri[1] as usize]);
@@ -1135,12 +1408,14 @@ mod tests {
 
     #[test]
     fn corner_quad_skips_degenerate_triangle() {
-        // Make T2 degenerate by having p2 == p3 (coarse end == fine end).
+        let dn = [0.0f32, 0.0, 1.0];
+        let dc = [1.0f32, 1.0, 1.0, 1.0];
         let p0 = [0.0f32, 1.0, 0.0];
         let p1 = [0.0f32, 0.0, 0.0];
-        let p2 = [1.0f32, 1.0, 0.0]; // == p3 → T2 degenerates
-        let p3 = [1.0f32, 1.0, 0.0];
-        let (_, _, indices) = corner_quad_triangles(p0, p1, p2, p3, Vec3::Z);
+        let p2 = [1.0f32, 1.0, 0.0];
+        let p3 = [1.0f32, 1.0, 0.0]; // == p2 → T2 degenerates
+        let (_, _, _, indices) =
+            corner_quad_triangles(p0, dn, dc, p1, dn, dc, p2, dn, dc, p3, dn, dc, Vec3::Z);
         assert_eq!(
             indices.len(),
             3,
@@ -1150,13 +1425,14 @@ mod tests {
 
     #[test]
     fn corner_quad_winding_flipped_to_match_outward() {
-        // T1 = (p0, p1, p2).  With outward=-Z the winding should be reversed.
+        let dn = [0.0f32, 0.0, 1.0];
+        let dc = [1.0f32, 1.0, 1.0, 1.0];
         let p0 = [0.0f32, 0.0, 0.0];
         let p1 = [1.0f32, 0.0, 0.0];
         let p2 = [0.0f32, 1.0, 0.0];
         let p3 = [1.0f32, 1.0, 0.0];
-        let (positions, _, indices) = corner_quad_triangles(p0, p1, p2, p3, -Vec3::Z);
-        // With -Z outward, each emitted triangle should have area_cross pointing -Z
+        let (positions, _, _, indices) =
+            corner_quad_triangles(p0, dn, dc, p1, dn, dc, p2, dn, dc, p3, dn, dc, -Vec3::Z);
         for tri in indices.chunks(3) {
             let a = Vec3::from(positions[tri[0] as usize]);
             let b = Vec3::from(positions[tri[1] as usize]);
