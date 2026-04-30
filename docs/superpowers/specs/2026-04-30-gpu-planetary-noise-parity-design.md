@@ -179,8 +179,12 @@ For each `divergent` audit row:
 
 *To be filled in during Phase 1 work.*
 
-| # | GPU site | CPU site | Status | Phase-3 fix? | Phase-2 test? | Notes |
-|---|---|---|---|---|---|---|
+| # | Item | GPU site | CPU site | Status | Phase-3 fix? | Phase-2 test? | Notes |
+|---|---|---|---|---|---|---|---|
+| 1 | Heightmap bake — resolution, projection, orientation, units | `src/planet/gpu_heightmap.rs:30-33,56-78`; `src/gpu/shaders/voxel_gen.wgsl:419-420,428-454` | `src/world/terrain.rs:937-941`; `src/world/planetary_sampler.rs:188-218`; `src/planet/detail.rs:281-284` | matches | no | yes | Row 0 = north pole (+π/2); col 0 = lon −π. Pixel centres `(i+0.5)/res`. WGSL `u*W−0.5` matches. Determinism not tested. |
+| 2 | Roughness bake — value range and encoding | `src/planet/gpu_heightmap.rs:70-73`; `src/gpu/shaders/voxel_gen.wgsl:458-476` | `src/world/planetary_sampler.rs:230-247`; `src/planet/detail.rs:102-129` | matches | no | yes | Roughness ∈ [0,1] enforced by `clamp(0.0,1.0)` at line 128. Bilinearly interpolated on both sides. |
+| 3 | Ocean bake — nearest-neighbour intent | `src/planet/gpu_heightmap.rs:70-74`; `src/gpu/shaders/voxel_gen.wgsl:481-489` | `src/world/planetary_sampler.rs:242-245` | matches | no | yes | Baked as binary 1.0/0.0. WGSL samples with `i32(u*W)` truncation (NN). Prevents coastline bleed. |
+| 4 | Sampling math — u/v wrap, pole clamp, half-pixel | `src/gpu/shaders/voxel_gen.wgsl:428-489` | `src/planet/gpu_heightmap.rs:56-68` | matches | no | yes | u-wrap: `fract(lon/(2π)+0.5)`; v: `0.5−lat/π`. Sub-pixel `u*W−0.5`, `floor+frac`. x wrap modulo W; y clamp [0,H−1]. |
 
 ## Appendix B — Final outcome (populated in Phase 4)
 
