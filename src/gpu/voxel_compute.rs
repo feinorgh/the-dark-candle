@@ -1958,4 +1958,145 @@ mod tests {
 
         eprintln!("\n✓ earth-scale probe-matrix: all probes passed parity contract");
     }
+
+    /// Pick a (lat, lon) from the baked heightmap that matches the given biome.
+    ///
+    /// Biomes: "coastline" (ocean pixel adjacent to land), "deep_ocean" (ocean < -2000m),
+    /// "mountain" (land with roughness > 0.7 and elevation > 1500m).
+    ///
+    /// Returns the first matching pixel's (lat, lon) in radians, or None if no match found.
+    #[cfg(test)]
+    fn pick_lat_lon_by_biome(
+        elev: &[f32],
+        rough: &[f32],
+        ocean: &[f32],
+        biome: &str,
+    ) -> Option<(f64, f64)> {
+        use crate::planet::gpu_heightmap::{HEIGHTMAP_HEIGHT, HEIGHTMAP_WIDTH};
+        let w = HEIGHTMAP_WIDTH as usize;
+        let h = HEIGHTMAP_HEIGHT as usize;
+        let pixel = |lat_idx: usize, lon_idx: usize| {
+            let lat = (0.5 - (lat_idx as f64 + 0.5) / h as f64) * std::f64::consts::PI;
+            let lon = ((lon_idx as f64 + 0.5) / w as f64 - 0.5) * 2.0 * std::f64::consts::PI;
+            (lat, lon)
+        };
+        for r in 0..h {
+            for c in 0..w {
+                let i = r * w + c;
+                let matches = match biome {
+                    "coastline" => {
+                        if ocean[i] != 1.0 {
+                            continue;
+                        }
+                        let mut land_neighbour = false;
+                        for dr in [-1i32, 0, 1] {
+                            for dc in [-1i32, 0, 1] {
+                                let rr = (r as i32 + dr).clamp(0, h as i32 - 1) as usize;
+                                let cc = ((c as i32 + dc).rem_euclid(w as i32)) as usize;
+                                if ocean[rr * w + cc] == 0.0 {
+                                    land_neighbour = true;
+                                }
+                            }
+                        }
+                        land_neighbour
+                    }
+                    "deep_ocean" => ocean[i] == 1.0 && elev[i] < -2000.0,
+                    "mountain" => ocean[i] == 0.0 && rough[i] > 0.7 && elev[i] > 1500.0,
+                    _ => false,
+                };
+                if matches {
+                    let (lat, lon) = pixel(r, c);
+                    return Some((lat, lon));
+                }
+            }
+        }
+        None
+    }
+
+    /// Biome-driven parity probe test: picks coastline, deep ocean, and mountain locations
+    /// from the baked heightmap and probes across layers [-3, +3] to detect strata-material
+    /// divergence in diverse terrain types.
+    #[test]
+    fn gpu_vs_cpu_parity_biome_driven() {
+        let planet = crate::world::scene_presets::ScenePreset::SphericalPlanet.planet_config();
+        let noise = planet.noise.as_ref().expect("preset must carry noise");
+        let Some(compute) =
+            GpuVoxelCompute::try_new(noise, planet.seed, planet.mean_radius, planet.height_scale)
+        else {
+            eprintln!("skipping biome-driven parity: no GPU adapter");
+            return;
+        };
+
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 4,
+            ..Default::default()
+        };
+        let pd = std::sync::Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = std::sync::Arc::new(crate::world::terrain::UnifiedTerrainGenerator::new(
+            pd,
+            planet.clone(),
+        ));
+        let (elev, rough, ocean) =
+            crate::planet::gpu_heightmap::bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
+
+        // Debug: analyze heightmap ranges
+        let min_elev = elev.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_elev = elev.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let min_rough = rough.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_rough = rough.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let ocean_count = ocean.iter().filter(|&&o| o == 1.0).count();
+        let land_count = ocean.iter().filter(|&&o| o == 0.0).count();
+
+        eprintln!("\nHeightmap analysis:");
+        eprintln!("  elevation: [{:.1}, {:.1}] m", min_elev, max_elev);
+        eprintln!("  roughness: [{:.3}, {:.3}]", min_rough, max_rough);
+        eprintln!(
+            "  ocean: {} pixels, land: {} pixels",
+            ocean_count, land_count
+        );
+
+        let rough_05 = rough.iter().filter(|&&r| r > 0.5).count();
+        let rough_07 = rough.iter().filter(|&&r| r > 0.7).count();
+        let elev_1000 = elev.iter().filter(|&&e| e > 1000.0).count();
+        let elev_1500 = elev.iter().filter(|&&e| e > 1500.0).count();
+        let deep_ocean = ocean
+            .iter()
+            .zip(&elev)
+            .filter(|&(&o, &e)| o == 1.0 && e < -2000.0)
+            .count();
+
+        eprintln!("  rough > 0.5: {}, rough > 0.7: {}", rough_05, rough_07);
+        eprintln!("  elev > 1000: {}, elev > 1500: {}", elev_1000, elev_1500);
+        eprintln!("  deep_ocean (elev < -2000): {}", deep_ocean);
+
+        let mut chosen = Vec::new();
+        for biome in ["coastline", "deep_ocean", "mountain"] {
+            match pick_lat_lon_by_biome(&elev, &rough, &ocean, biome) {
+                Some((lat, lon)) => chosen.push((biome, lat, lon)),
+                None => eprintln!("no {biome} pixel found in baked maps; skipping"),
+            }
+        }
+
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+
+        for (label, lat, lon) in chosen {
+            for dl in -3..=3 {
+                let coord = coord_for_lat_lon(lat, lon, planet.mean_radius, &unified, fce);
+                let probe_coord = coord.with_layer_offset(dl);
+                let report =
+                    crate::gpu::parity::parity_probe(&planet, &unified, &compute, probe_coord);
+                assert!(
+                    report.passes_parity_contract(),
+                    "[{label}] parity failed at lat={:.3} lon={:.3} dl={:+}: {:#?}",
+                    lat.to_degrees(),
+                    lon.to_degrees(),
+                    dl,
+                    report,
+                );
+            }
+        }
+    }
 }
