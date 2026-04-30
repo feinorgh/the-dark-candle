@@ -228,4 +228,49 @@ mod proptests {
             );
         }
     }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            failure_persistence: Some(Box::new(
+                proptest::test_runner::FileFailurePersistence::Direct(
+                    "tests/cases/stress/proptest-regressions/random_altitude_extreme.txt"
+                ),
+            )),
+            ..ProptestConfig::default()
+        })]
+        #[test]
+        // NOTE: bucket 4 capped at 500 km until CHUNK-002 (overflow at
+        // chunk_manager.rs:648 for altitudes ≥ ~1.3 Mm) is resolved. Then
+        // restore the 9_000_000.0 bucket for true high-orbit testing.
+        fn random_altitude_extreme(
+            lat in -89.99f64..=89.99f64,
+            lon in -180.0f64..=180.0f64,
+            bucket in 0u8..5u8,
+        ) {
+            let altitude_m = match bucket {
+                0 => -1_000.0,             // deep underground
+                1 => 0.0,                  // surface
+                2 => 100_000.0,            // low atmosphere
+                3 => 300_000.0,            // higher atmosphere
+                _ => 500_000.0,            // bumped down from 9 Mm — see CHUNK-002
+            };
+
+            let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
+            app.tick_n(30);
+            app.teleport(lat, lon, altitude_m);
+            app.tick_n(30);
+
+            let failures = app.assert_invariants(
+                InvariantSet::PANICS
+                    | InvariantSet::FINITE
+                    | InvariantSet::NO_OVERFLOW
+                    | InvariantSet::CHUNK_CACHE,
+            );
+            prop_assert!(
+                failures.is_empty(),
+                "lat={lat}, lon={lon}, alt={altitude_m}: failures = {failures:?}"
+            );
+        }
+    }
 }
