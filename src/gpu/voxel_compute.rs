@@ -1118,7 +1118,7 @@ mod tests {
 
     #[test]
     fn empty_batch_returns_empty() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let config = NoiseConfig::default();
         let Some(compute) = GpuVoxelCompute::try_new(&config, 42, 6_371_000.0, 8_800.0) else {
             eprintln!("skipping GPU test: no adapter");
@@ -1130,7 +1130,7 @@ mod tests {
 
     #[test]
     fn single_chunk_generates_terrain() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -1162,7 +1162,7 @@ mod tests {
 
     #[test]
     fn all_air_chunk_classification() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -1195,7 +1195,7 @@ mod tests {
 
     #[test]
     fn multi_chunk_batch() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let config = NoiseConfig::default();
         let mean_radius = 6_371_000.0;
         let height_scale = 8_800.0;
@@ -1244,7 +1244,7 @@ mod tests {
     /// and produced terrain above sea level.
     #[test]
     fn gpu_heightmap_vs_cpu_surface_chunks() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::world::terrain::UnifiedTerrainGenerator;
         use crate::world::v2::terrain_gen::generate_v2_voxels;
 
@@ -1405,176 +1405,79 @@ mod tests {
     }
 
     /// Diagnostic test: compare GPU and CPU terrain for a surface-crossing chunk.
-    ///
-    /// Uses the actual planet_config.ron parameters (32 km planet, height_scale=4000).
-    /// Finds the actual surface layer by sampling CPU noise, then compares GPU and CPU
-    /// terrain generation for that chunk.
     #[test]
-    // TODO: GPU shader implements FBM noise; CPU now uses PlanetaryTerrainSampler (IDW).
-    // Re-enable once the GPU shader is updated to support planetary terrain.
-    #[ignore]
-    fn gpu_vs_cpu_surface_chunk_comparison() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+    fn gpu_vs_cpu_surface_chunk_small_planet_face_center() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::gpu::parity::parity_probe;
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
         use crate::world::terrain::UnifiedTerrainGenerator;
-        use crate::world::v2::terrain_gen::generate_v2_voxels;
+        use crate::world::v2::cubed_sphere::{CubeFace, CubeSphereCoord};
+        use std::sync::Arc;
 
-        let config = NoiseConfig {
-            fbm_base_freq: 1.0,
-            ridged_base_freq: 1.5,
-            selector_freq: 0.5,
-            warp_strength: 0.1,
-            warp_freq: 0.8,
-            micro_freq: 15.0,
-            micro_amplitude: 0.02,
-            continent_enabled: false,
+        let noise_config = NoiseConfig::default();
+
+        let planet = crate::world::planet::PlanetConfig {
+            mean_radius: 32_000.0,
+            sea_level_radius: 32_000.0,
+            height_scale: 4_000.0,
+            seed: 42,
+            noise: Some(noise_config.clone()),
             ..Default::default()
         };
-        let mean_radius = 32_000.0;
-        let height_scale = 4_000.0;
-        let sea_level = 32_000.0;
-        let seed = 42u32;
 
-        // GPU path
-        let Some(compute) = GpuVoxelCompute::try_new(&config, seed, mean_radius, height_scale)
-        else {
-            eprintln!("skipping GPU test: no adapter");
+        let Some(compute) = GpuVoxelCompute::try_new(
+            planet.noise.as_ref().expect("preset must have noise"),
+            planet.seed,
+            planet.mean_radius,
+            planet.height_scale,
+        ) else {
+            eprintln!("skipping: no GPU adapter");
             return;
         };
 
-        // CPU path
-        let planet = crate::world::planet::PlanetConfig {
-            mean_radius,
-            sea_level_radius: sea_level,
-            height_scale,
-            seed,
-            noise: Some(config.clone()),
-            ..Default::default()
-        };
-        // TODO: GPU shader implements FBM noise; update when GPU shader supports planetary terrain.
         let gen_cfg = crate::planet::PlanetConfig {
             seed: planet.seed as u64,
-            grid_level: 3,
+            grid_level: 4,
             ..Default::default()
         };
-        let pd = std::sync::Arc::new(crate::planet::PlanetData::new(gen_cfg));
-        let unified = std::sync::Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
 
-        let fce = CubeSphereCoord::face_chunks_per_edge(mean_radius);
-        let half_fce = (fce / 2.0) as i32;
+        let (elev, rough, ocean) = bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
+        assert!(compute.is_heightmap_ready());
 
-        // Find the actual surface height at the center of PosX face.
-        let surface_r = unified.sample_surface_radius_at(0.0, 0.0);
-        let surface_layer = ((surface_r - mean_radius) / CHUNK_SIZE as f64) as i32;
-        eprintln!(
-            "Surface radius at (0,0): {surface_r:.1}, mean_radius: {mean_radius}, \
-             surface_layer: {surface_layer}"
-        );
+        let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+        let half = (fce / 2.0) as i32;
+        let surface_r = unified.sample_surface_radius_at(0.0, std::f64::consts::FRAC_PI_2);
+        let surface_layer = ((surface_r - planet.mean_radius)
+            / crate::world::chunk::CHUNK_SIZE as f64)
+            .round() as i32;
 
-        // Test the surface-crossing layer
-        let coord = CubeSphereCoord::new_with_lod(
-            crate::world::v2::cubed_sphere::CubeFace::PosX,
-            half_fce,
-            half_fce,
-            surface_layer,
-            0, // LOD 0
-        );
-
-        // GPU generation
-        let desc = chunk_desc_from_coord(
-            coord,
-            mean_radius,
-            fce,
-            sea_level,
-            planet.soil_depth,
-            planet.cave_threshold,
-            0,
-        );
-        eprintln!(
-            "ChunkDesc: base_r_offset={}, top_r_offset={}, sea_level_offset={}, half_diag={}",
-            desc.base_r_offset, desc.top_r_offset, desc.sea_level_offset, desc.half_diag
-        );
-
-        let request = GpuChunkRequest { coord, desc };
-        let gpu_result = compute.generate_batch(&[request], planet.rotation_axis);
-        let gpu_td = &gpu_result.terrain_data[0];
-
-        // CPU generation
-        let cpu_td = generate_v2_voxels(coord, mean_radius, fce, &unified);
-
-        // Analyze classifications
-        let label = |v: &CachedVoxels| match v {
-            CachedVoxels::AllAir => "AllAir".to_string(),
-            CachedVoxels::AllSolid(m) => format!("AllSolid({})", m.0),
-            CachedVoxels::Mixed(_) => "Mixed".to_string(),
-        };
-        eprintln!("GPU classification: {}", label(&gpu_td.voxels));
-        eprintln!("CPU classification: {}", label(&cpu_td.voxels));
-
-        // Count materials for both
-        let gpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&gpu_td.voxels);
-        let cpu_voxels = crate::world::v2::terrain_gen::cached_voxels_to_vec(&cpu_td.voxels);
-
-        let count_materials = |voxels: &[Voxel]| -> Vec<(u16, usize)> {
-            let mut counts: std::collections::HashMap<u16, usize> =
-                std::collections::HashMap::new();
-            for v in voxels {
-                *counts.entry(v.material.0).or_default() += 1;
+        let mut saw_mixed = false;
+        for dl in -3..=3 {
+            let coord =
+                CubeSphereCoord::new_with_lod(CubeFace::PosX, half, half, surface_layer + dl, 0);
+            let report = parity_probe(&planet, &unified, &compute, coord);
+            eprintln!(
+                "dl={dl:+} cls=GPU:{} CPU:{} mismatches={} max_dd={:.3e}",
+                report.gpu_classification,
+                report.cpu_classification,
+                report.mismatches.len(),
+                report.max_density_delta,
+            );
+            if report.gpu_classification == "Mixed" {
+                saw_mixed = true;
             }
-            let mut sorted: Vec<_> = counts.into_iter().collect();
-            sorted.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-            sorted
-        };
-
-        eprintln!("GPU materials (top 5):");
-        for (mat, count) in count_materials(&gpu_voxels).iter().take(5) {
-            eprintln!(
-                "  mat {mat}: {count} voxels ({:.1}%)",
-                *count as f64 / CHUNK_VOLUME as f64 * 100.0
+            assert!(
+                report.passes_parity_contract(),
+                "parity contract failed at dl={dl:+}: {:#?}",
+                report,
             );
         }
-        eprintln!("CPU materials (top 5):");
-        for (mat, count) in count_materials(&cpu_voxels).iter().take(5) {
-            eprintln!(
-                "  mat {mat}: {count} voxels ({:.1}%)",
-                *count as f64 / CHUNK_VOLUME as f64 * 100.0
-            );
-        }
-
-        // The critical check: GPU and CPU must AGREE on classification.
-        assert_eq!(
-            label(&gpu_td.voxels),
-            label(&cpu_td.voxels),
-            "GPU and CPU classifications must match for layer {surface_layer}"
-        );
-
-        // Compare material distributions.
-        let gpu_air = gpu_voxels
-            .iter()
-            .filter(|v| v.material == MaterialId::AIR)
-            .count();
-        let gpu_solid = gpu_voxels.len() - gpu_air;
-        let cpu_air = cpu_voxels
-            .iter()
-            .filter(|v| v.material == MaterialId::AIR)
-            .count();
-        let cpu_solid = cpu_voxels.len() - cpu_air;
-        eprintln!(
-            "GPU: {gpu_air} air, {gpu_solid} solid ({:.1}% solid)",
-            gpu_solid as f64 / gpu_voxels.len() as f64 * 100.0
-        );
-        eprintln!(
-            "CPU: {cpu_air} air, {cpu_solid} solid ({:.1}% solid)",
-            cpu_solid as f64 / cpu_voxels.len() as f64 * 100.0
-        );
-
-        // Air/solid ratio should be close (allow f32 vs f64 drift).
-        let gpu_pct = gpu_solid as f64 / gpu_voxels.len() as f64;
-        let cpu_pct = cpu_solid as f64 / cpu_voxels.len() as f64;
-        let pct_diff = (gpu_pct - cpu_pct).abs();
-        eprintln!("Solid% diff: {pct_diff:.4}");
         assert!(
-            pct_diff < 0.10,
-            "GPU and CPU solid% differ too much: GPU {gpu_pct:.3} vs CPU {cpu_pct:.3}"
+            saw_mixed,
+            "expected at least one Mixed chunk in the layer sweep"
         );
     }
 
@@ -1769,7 +1672,7 @@ mod tests {
     // Re-enable once the GPU shader is updated to support planetary terrain.
     #[ignore]
     fn gpu_vs_cpu_parity_earth_scale_surface_chunk() {
-        let _guard = GPU_TEST_LOCK.lock().unwrap();
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::world::scene_presets::ScenePreset;
         use crate::world::terrain::UnifiedTerrainGenerator;
         use crate::world::v2::terrain_gen::generate_v2_voxels;
