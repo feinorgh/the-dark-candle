@@ -1732,4 +1732,230 @@ mod tests {
             "expected at least one Mixed chunk in the layer sweep"
         );
     }
+
+    // ─── Probe-matrix harness helpers ─────────────────────────────────────────
+
+    /// Run parity probes for a set of (label, lat, lon) locations across multiple
+    /// layers around the surface. Returns (location_label, layer_offset, report)
+    /// tuples for all failed probes.
+    ///
+    /// ## Arguments
+    /// - `planet`: Planet configuration
+    /// - `unified`: Unified terrain generator (auto-deref from Arc<UTG> works)
+    /// - `compute`: GPU compute pipeline
+    /// - `locations`: Array of (label, lat_rad, lon_rad) tuples
+    /// - `layer_offsets`: Layer offsets relative to surface (e.g., -3..=3)
+    ///
+    /// ## Returns
+    /// Vector of (location_label, dl, report) for all probes that fail the parity contract.
+    fn parity_probe_set<'a>(
+        planet: &crate::world::planet::PlanetConfig,
+        unified: &crate::world::terrain::UnifiedTerrainGenerator,
+        compute: &GpuVoxelCompute,
+        locations: &[(&'a str, f64, f64)],
+        layer_offsets: std::ops::RangeInclusive<i32>,
+    ) -> Vec<(&'a str, i32, crate::gpu::parity::ParityReport)> {
+        use crate::gpu::parity::parity_probe;
+        let fce = CubeSphereCoord::face_chunks_per_edge(planet.mean_radius);
+        let mut failures = Vec::new();
+
+        for &(label, lat, lon) in locations {
+            // Convert (lat, lon) to a CubeSphereCoord at the surface layer.
+            let coord = coord_for_lat_lon(lat, lon, planet.mean_radius, unified, fce);
+
+            eprintln!("\n──────────────────────────────────────────────────────────");
+            eprintln!(
+                "Probe location: {label} (lat={lat:.2}° lon={lon:.2}°)",
+                lat = lat.to_degrees(),
+                lon = lon.to_degrees()
+            );
+            eprintln!(
+                "  surface_coord: face={:?} u={} v={} layer={}",
+                coord.face, coord.u, coord.v, coord.layer
+            );
+
+            let mut saw_mixed = false;
+            for dl in layer_offsets.clone() {
+                let probe_coord = coord.with_layer_offset(dl);
+                let report = parity_probe(planet, unified, compute, probe_coord);
+
+                eprintln!(
+                    "  {label} dl={dl:+2} cls=GPU:{:9} CPU:{:9} mismatches={:4} max_dd={:.3e}",
+                    report.gpu_classification,
+                    report.cpu_classification,
+                    report.mismatches.len(),
+                    report.max_density_delta,
+                );
+
+                if report.gpu_classification == "Mixed" {
+                    saw_mixed = true;
+                }
+
+                if !report.passes_parity_contract() {
+                    failures.push((label, dl, report));
+                }
+            }
+
+            if !saw_mixed {
+                eprintln!("  WARNING: {label} saw no Mixed chunk in layer sweep");
+            }
+        }
+
+        failures
+    }
+
+    /// Convert (lat, lon) in radians to a surface-layer CubeSphereCoord.
+    ///
+    /// Uses `lat_lon_to_pos` to get a unit-sphere direction, then
+    /// `from_world_dir_at_lod` to map to integer chunk coordinates.
+    fn coord_for_lat_lon(
+        lat: f64,
+        lon: f64,
+        mean_radius: f64,
+        unified: &crate::world::terrain::UnifiedTerrainGenerator,
+        _fce: f64,
+    ) -> CubeSphereCoord {
+        let dir = crate::planet::detail::lat_lon_to_pos(lat, lon);
+        let surface_r = unified.sample_surface_radius_at(lat, lon);
+        let surface_layer =
+            ((surface_r - mean_radius) / crate::world::chunk::CHUNK_SIZE as f64).round() as i32;
+
+        // Map dir to (face, u, v) at LOD 0, then set the correct layer.
+        let mut coord = CubeSphereCoord::from_world_dir_at_lod(dir, mean_radius, surface_layer, 0);
+        // Double-check the layer assignment is correct (rounding artifact guard).
+        coord.layer = surface_layer;
+        coord
+    }
+
+    // ─── Probe-matrix tests ───────────────────────────────────────────────────
+
+    /// Probe-matrix parity test for the small-planet preset at 4 strategic locations:
+    /// face_center (PosX, equator/prime-meridian), north_pole, south_pole, antimeridian.
+    ///
+    /// Each location is probed across layers `[surface-3, surface+3]` to capture
+    /// strata, caves, and surface-crossing voxels.
+    #[test]
+    fn gpu_vs_cpu_parity_small_planet_probe_matrix() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
+        use crate::world::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
+
+        let noise_config = NoiseConfig::default();
+
+        let planet = crate::world::planet::PlanetConfig {
+            mean_radius: 32_000.0,
+            sea_level_radius: 32_000.0,
+            height_scale: 4_000.0,
+            seed: 42,
+            noise: Some(noise_config.clone()),
+            ..Default::default()
+        };
+
+        let Some(compute) = GpuVoxelCompute::try_new(
+            planet.noise.as_ref().expect("preset must have noise"),
+            planet.seed,
+            planet.mean_radius,
+            planet.height_scale,
+        ) else {
+            eprintln!("skipping small-planet probe-matrix: no GPU adapter");
+            return;
+        };
+
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 4,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
+
+        let (elev, rough, ocean) = bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
+        assert!(compute.is_heightmap_ready());
+
+        // Four probe locations (label, lat_radians, lon_radians):
+        let locations = [
+            ("face_center", 0.0, std::f64::consts::FRAC_PI_2),
+            ("north_pole", std::f64::consts::FRAC_PI_2, 0.0),
+            ("south_pole", -std::f64::consts::FRAC_PI_2, 0.0),
+            ("antimeridian", 0.0, std::f64::consts::PI),
+        ];
+
+        let failures = parity_probe_set(&planet, &unified, &compute, &locations, -3..=3);
+
+        if !failures.is_empty() {
+            eprintln!("\n════════════════════════════════════════════════════════════");
+            eprintln!("PARITY CONTRACT VIOLATIONS (small-planet):");
+            for (label, dl, report) in &failures {
+                eprintln!("  {label} dl={dl:+}: {:#?}", report);
+            }
+            panic!(
+                "small-planet probe-matrix: {} parity contract violations",
+                failures.len()
+            );
+        }
+
+        eprintln!("\n✓ small-planet probe-matrix: all probes passed parity contract");
+    }
+
+    /// Probe-matrix parity test for Earth-scale preset at 4 strategic locations:
+    /// face_center (PosX, equator/prime-meridian), north_pole, south_pole, antimeridian.
+    ///
+    /// Each location is probed across layers `[surface-3, surface+3]` to capture
+    /// strata, caves, and surface-crossing voxels. This exercises the Earth-scale
+    /// f32 precision challenges in the GPU shader.
+    #[test]
+    fn gpu_vs_cpu_parity_earth_scale_probe_matrix() {
+        let _guard = GPU_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::planet::gpu_heightmap::bake_elevation_roughness_ocean;
+        use crate::world::scene_presets::ScenePreset;
+        use crate::world::terrain::UnifiedTerrainGenerator;
+        use std::sync::Arc;
+
+        let planet = ScenePreset::SphericalPlanet.planet_config();
+        let noise = planet.noise.as_ref().expect("preset must carry noise");
+
+        let Some(compute) =
+            GpuVoxelCompute::try_new(noise, planet.seed, planet.mean_radius, planet.height_scale)
+        else {
+            eprintln!("skipping earth-scale probe-matrix: no GPU adapter");
+            return;
+        };
+
+        let gen_cfg = crate::planet::PlanetConfig {
+            seed: planet.seed as u64,
+            grid_level: 4,
+            ..Default::default()
+        };
+        let pd = Arc::new(crate::planet::PlanetData::new(gen_cfg));
+        let unified = Arc::new(UnifiedTerrainGenerator::new(pd, planet.clone()));
+
+        let (elev, rough, ocean) = bake_elevation_roughness_ocean(&unified.0);
+        compute.set_heightmap_data(&elev, &rough, &ocean, planet.seed as u64);
+
+        // Four probe locations (label, lat_radians, lon_radians):
+        let locations = [
+            ("face_center", 0.0, std::f64::consts::FRAC_PI_2),
+            ("north_pole", std::f64::consts::FRAC_PI_2, 0.0),
+            ("south_pole", -std::f64::consts::FRAC_PI_2, 0.0),
+            ("antimeridian", 0.0, std::f64::consts::PI),
+        ];
+
+        let failures = parity_probe_set(&planet, &unified, &compute, &locations, -3..=3);
+
+        if !failures.is_empty() {
+            eprintln!("\n════════════════════════════════════════════════════════════");
+            eprintln!("PARITY CONTRACT VIOLATIONS (earth-scale):");
+            for (label, dl, report) in &failures {
+                eprintln!("  {label} dl={dl:+}: {:#?}", report);
+            }
+            panic!(
+                "earth-scale probe-matrix: {} parity contract violations",
+                failures.len()
+            );
+        }
+
+        eprintln!("\n✓ earth-scale probe-matrix: all probes passed parity contract");
+    }
 }

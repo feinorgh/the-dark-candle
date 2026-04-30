@@ -380,6 +380,64 @@ impl CubeSphereCoord {
         CubeSphereCoord::new_with_lod(self.face, self.u / 2, self.v / 2, self.layer, self.lod + 1)
     }
 
+    /// Returns a new coordinate with a layer offset applied.
+    ///
+    /// Useful for probing radial neighbors during parity testing.
+    pub fn with_layer_offset(self, dl: i32) -> Self {
+        CubeSphereCoord::new_with_lod(self.face, self.u, self.v, self.layer + dl, self.lod)
+    }
+
+    /// Construct a CubeSphereCoord from a world-space unit direction at a given LOD.
+    ///
+    /// Determines the dominant face based on the largest absolute component,
+    /// then projects the direction onto that face's (u, v) grid.
+    ///
+    /// This is the inverse of `unit_sphere_dir(fce)` up to integer rounding.
+    pub fn from_world_dir_at_lod(dir: DVec3, mean_radius: f64, layer: i32, lod: u8) -> Self {
+        let face = CubeFace::from_unit_dir(dir);
+        let fce = Self::face_chunks_per_edge_lod(mean_radius, lod);
+
+        // Extract the tangent-plane (u, v) coordinates on this face.
+        // `unit_sphere_dir` computes:
+        //   cube_point = normal + right * nu + up * nv
+        //   dir = cube_point.normalize()
+        // where nu and nv are in [-1, 1]. We invert this:
+        //   1. Dot with normal, right, up to get cube-face coords.
+        //   2. Solve for nu, nv from the projection.
+        let normal = face.normal();
+        let (right, up) = face.tangent_axes();
+
+        let d_dot_n = dir.dot(normal);
+        let d_dot_r = dir.dot(right);
+        let d_dot_u = dir.dot(up);
+
+        // The cube-face point before normalization is:
+        //   cube = (d / d_dot_n) * |d_dot_n|  (scale dir so that its normal component = 1)
+        // Then nu = dot(cube, right), nv = dot(cube, up).
+        // But since `cube = k * dir` for some k, and right/up are orthogonal to normal,
+        // we have nu = k * d_dot_r, nv = k * d_dot_u.
+        // To find k: dot(cube, normal) = 1 => k * d_dot_n = 1 => k = 1 / d_dot_n.
+        // But d_dot_n can be negative (wrong side of the face), so we use abs:
+        let k = 1.0 / d_dot_n.abs();
+        let nu = k * d_dot_r;
+        let nv = k * d_dot_u;
+
+        // Map nu, nv from [-1, 1] back to integer chunk indices [0, fce).
+        // `unit_sphere_dir` uses:
+        //   nu = (u + 0.5 - half) / half
+        // Solving for u:
+        //   u = nu * half + half - 0.5
+        // Since `unit_sphere_dir` returns the CENTER of chunk u, we round to nearest.
+        let half = fce / 2.0;
+        let u_f = nu * half + half - 0.5;
+        let v_f = nv * half + half - 0.5;
+
+        let u = u_f.round().max(0.0).min(fce - 1.0) as i32;
+        let v = v_f.round().max(0.0).min(fce - 1.0) as i32;
+
+        CubeSphereCoord::new_with_lod(face, u, v, layer, lod)
+    }
+
     /// Returns the single representative same-face neighbour at `target_lod` that
     /// lies just across `self`'s `dir` boundary.
     ///
@@ -1475,5 +1533,73 @@ mod tests {
             cross_face_incoming_dir(CubeFace::NegZ, ChunkDir::NegV),
             ChunkDir::PosV
         );
+    }
+
+    // ── from_world_dir_at_lod round-trip tests ───────────────────────────────
+
+    #[test]
+    fn from_world_dir_round_trip_pos_x() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::PosX, 5, 7, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::PosX, "face mismatch");
+        assert_eq!(recovered.u, 5, "u mismatch");
+        assert_eq!(recovered.v, 7, "v mismatch");
+    }
+
+    #[test]
+    fn from_world_dir_round_trip_neg_x() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::NegX, 11, 13, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::NegX, "face mismatch");
+        assert_eq!(recovered.u, 11, "u mismatch");
+        assert_eq!(recovered.v, 13, "v mismatch");
+    }
+
+    #[test]
+    fn from_world_dir_round_trip_pos_y() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::PosY, 17, 19, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::PosY, "face mismatch");
+        assert_eq!(recovered.u, 17, "u mismatch");
+        assert_eq!(recovered.v, 19, "v mismatch");
+    }
+
+    #[test]
+    fn from_world_dir_round_trip_neg_y() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::NegY, 23, 29, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::NegY, "face mismatch");
+        assert_eq!(recovered.u, 23, "u mismatch");
+        assert_eq!(recovered.v, 29, "v mismatch");
+    }
+
+    #[test]
+    fn from_world_dir_round_trip_pos_z() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::PosZ, 31, 37, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::PosZ, "face mismatch");
+        assert_eq!(recovered.u, 31, "u mismatch");
+        assert_eq!(recovered.v, 37, "v mismatch");
+    }
+
+    #[test]
+    fn from_world_dir_round_trip_neg_z() {
+        let fce = CubeSphereCoord::face_chunks_per_edge(TEST_RADIUS);
+        let original = CubeSphereCoord::new_with_lod(CubeFace::NegZ, 41, 43, 0, 0);
+        let dir = original.unit_sphere_dir(fce);
+        let recovered = CubeSphereCoord::from_world_dir_at_lod(dir, TEST_RADIUS, 0, 0);
+        assert_eq!(recovered.face, CubeFace::NegZ, "face mismatch");
+        assert_eq!(recovered.u, 41, "u mismatch");
+        assert_eq!(recovered.v, 43, "v mismatch");
     }
 }
