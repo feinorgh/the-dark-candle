@@ -193,7 +193,7 @@ For each `divergent` audit row:
 | 10 | sortable_encode / sortable_decode | `src/gpu/shaders/voxel_gen.wgsl:534-551` | n/a (GPU-only logic) | matches | no | no | Neg: \`~bits\`; non-neg: \`bits \| 0x80000000\`. Verified monotonic: -1.0→0x407FFFFF < -0.0→0x7FFFFFFF < +0.0→0x80000000 < +1.0→0xBF800000. No CPU counterpart (atomicMin/Max surface-pass). |
 | 11 | Classify-pass thresholds | `src/gpu/shaders/voxel_gen.wgsl:824-857` | `src/world/v2/terrain_gen.rs:189-219` | divergent | yes | yes | GPU `classify_pass` hard-codes `MAT_STONE` for AllSolid; CPU emits `AllSolid(actual_material)`. Uniform basalt/granite chunks misclassified as stone. AllSolid bypasses CPU downgrade (`voxel_compute.rs:941`). |
 | 12 | LOD support | `src/gpu/shaders/voxel_gen.wgsl:114,808-814`; `src/gpu/voxel_compute.rs:1009-1031` | `src/world/v2/cubed_sphere.rs:256,302`; `src/world/v2/terrain_gen.rs:102-108` | matches | no | yes | Both sides compute \`lod_scale = 1 << coord.lod\`. GPU \`ChunkDesc\` carries \`lod_scale\` field; shader scales radial extent + density gradient. CPU \`world_transform_scaled\` applies identical multiplier. Full LOD support on both sides; spec §3 restricts parity testing to LOD 0 only. |
-| 13 | Stale FBM-era TODOs \/ ignored tests \/ tech-debt entry | (search) | n/a | stale-doc | n/a | n/a | See sub-list below — 5 items total. |
+| 13 | Stale FBM-era TODOs / ignored tests / tech-debt entry | (search) | n/a | stale-doc | n/a | n/a | See sub-list below — 6 items total. |
 
 **Row 13 stale items (Phase 4 deletes):**
 
