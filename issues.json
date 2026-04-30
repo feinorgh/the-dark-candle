@@ -1205,7 +1205,7 @@
     ]
   },
   {
-    "id": "CHUNK-001",
+    "id": "CHUNK-002",
     "title": "Chunk coordinate overflow on extreme altitudes (±5000 km+)",
     "category": "world",
     "severity": "high",
