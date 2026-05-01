@@ -1,5 +1,5 @@
 StressScenario(
-    description: "20 random-ish teleports across the planet within ~2 simulated seconds",
+    description: "20 random-ish teleports across the planet within ~2 simulated seconds. LoadRate invariant intentionally omitted: the current rate metric measures net change in V2ChunkMap.loaded_count(), which is ~0 for relocation-heavy scenarios where loads and unloads roughly balance. Burst exercises panic/finite/overflow/cache invariants instead.",
     seed: 303,
     planet: SmallPlanet,
     warmup_ticks: 30,
@@ -25,6 +25,6 @@ StressScenario(
         Teleport(lat:  -65.0, lon: -170.0, altitude_m:  0.0, then_tick: 6),
         Teleport(lat:   75.0, lon:  175.0, altitude_m:  0.0, then_tick: 6),
     ],
-    invariants: [Panics, Finite, NoOverflow, ChunkCache, LoadRate],
-    chunk_load_rate_min: Some(0.1),
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
 )
