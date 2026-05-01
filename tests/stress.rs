@@ -102,6 +102,13 @@ fn run_scenario(scenario: &StressScenario, path: &std::path::Path) -> Result<(),
 
 #[test]
 fn run_all_stress_scenarios() {
+    let only_fast = std::env::var("STRESS_FAST").is_ok();
+    const FAST_SUBSET: &[&str] = &["pole_north", "pole_south", "antimeridian"];
+
+    if only_fast {
+        eprintln!("[stress] STRESS_FAST=1 — running subset: {FAST_SUBSET:?}");
+    }
+
     let pattern = "tests/cases/stress/*.stress.ron";
     let entries: Vec<_> = glob::glob(pattern).expect("invalid glob pattern").collect();
 
@@ -113,6 +120,15 @@ fn run_all_stress_scenarios() {
     let mut errors = Vec::new();
     for entry in entries {
         let path = entry.expect("glob entry");
+
+        // Skip non-matching files in fast mode
+        if only_fast {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if !FAST_SUBSET.iter().any(|name| stem.starts_with(name)) {
+                continue;
+            }
+        }
+
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
         let scenario: StressScenario =
