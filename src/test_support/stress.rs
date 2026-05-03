@@ -225,15 +225,19 @@ impl StressApp {
         }
 
         let planet = match preset {
-            PlanetPreset::SmallPlanet => PlanetConfig::default(),
+            PlanetPreset::SmallPlanet => PlanetConfig {
+                seed: seed as u32,
+                ..PlanetConfig::default()
+            },
             PlanetPreset::Earth => PlanetConfig {
                 mean_radius: 6_371_000.0,
                 sea_level_radius: 6_371_000.0,
+                seed: seed as u32,
                 ..Default::default()
             },
         };
 
-        // Build terrain generator following the pattern from chunk_manager.rs:1589-1599
+        // `gen_cfg.seed` picks up `planet.seed` which was set from the harness `seed` parameter above.
         let tgen = {
             let gen_cfg = crate::planet::PlanetConfig {
                 seed: planet.seed as u64,
@@ -279,8 +283,6 @@ impl StressApp {
             horizontal: 2,
             vertical: 1,
         });
-
-        let _ = seed; // Will use seed later when needed
 
         app.add_plugins((
             FloatingOriginPlugin,
@@ -336,12 +338,19 @@ impl StressApp {
     /// metres above the planet's `sea_level_radius`.
     ///
     /// `lat_deg` is clamped to `[-89.99, +89.99]` to avoid pole singularities.
-    /// `lon_deg` is normalized to `(-180, +180]`.
+    /// `lon_deg` is normalized to `(-180, +180]` (matching `atan2` convention).
     pub fn teleport(&mut self, lat_deg: f64, lon_deg: f64, altitude_m: f64) {
         use bevy::math::DVec3;
 
         let lat = lat_deg.clamp(-89.99, 89.99).to_radians();
-        let lon = ((lon_deg + 540.0) % 360.0 - 180.0).to_radians();
+        // Normalize to (-180, +180]: rem_euclid gives [-180, 180); remap -180 → +180.
+        let lon_norm = ((lon_deg + 180.0).rem_euclid(360.0)) - 180.0;
+        let lon = if lon_norm == -180.0 {
+            180.0_f64
+        } else {
+            lon_norm
+        }
+        .to_radians();
 
         let cos_lat = lat.cos();
         let dir = DVec3::new(cos_lat * lon.sin(), lat.sin(), cos_lat * lon.cos());
@@ -528,7 +537,8 @@ mod tests {
         app.teleport(0.0, 0.0, 100.0); // equator, prime meridian, 100 m above sea level
         app.tick_n(1);
 
-        // Player should now be at radius = sea_level + 100 m, in the +X direction.
+        // Player should now be at radius = sea_level + 100 m, in the +Z direction.
+        // lat/lon convention: lon = atan2(x, z), so lon=0 → x=0, z=1 → +Z.
         let world = app.app.world_mut();
         let mut q = world.query_filtered::<&WorldPosition, With<FpsCamera>>();
         let pos = q.iter(world).next().expect("camera entity exists").0;
@@ -541,8 +551,8 @@ mod tests {
         );
         let normalized = pos.normalize();
         assert!(
-            (normalized - DVec3::X).length() < 1.0e-3,
-            "expected +X direction, got {normalized:?}"
+            (normalized - DVec3::Z).length() < 1.0e-3,
+            "expected +Z direction, got {normalized:?}"
         );
     }
 
