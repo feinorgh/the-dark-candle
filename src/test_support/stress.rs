@@ -228,13 +228,25 @@ impl StressApp {
             PlanetPreset::SmallPlanet => PlanetConfig {
                 // `seed` is u64 but PlanetConfig.seed is u32; scenario seeds are small
                 // values (< 2^32), so the low-32-bit truncation is intentional and safe.
-                seed: seed as u32,
+                seed: {
+                    debug_assert!(
+                        seed <= u32::MAX as u64,
+                        "scenario seed {seed} exceeds u32::MAX and will be truncated"
+                    );
+                    seed as u32
+                },
                 ..PlanetConfig::default()
             },
             PlanetPreset::Earth => PlanetConfig {
                 mean_radius: 6_371_000.0,
                 sea_level_radius: 6_371_000.0,
-                seed: seed as u32, // same truncation as SmallPlanet above
+                seed: {
+                    debug_assert!(
+                        seed <= u32::MAX as u64,
+                        "scenario seed {seed} exceeds u32::MAX and will be truncated"
+                    );
+                    seed as u32
+                },
                 ..Default::default()
             },
         };
@@ -347,7 +359,7 @@ impl StressApp {
 
         let lat = lat_deg.clamp(-89.99, 89.99).to_radians();
         // rem_euclid normalizes to [0, 360), then shift to [-180, 180).
-        // ±180° give identical trig values (sin(±π)≈0, cos(±π)=−1) so no
+        // ±180° give identical trig values (sin(±π)=0, cos(±π)=−1) so no
         // special case is needed for the antimeridian boundary.
         let lon = (((lon_deg + 180.0).rem_euclid(360.0)) - 180.0).to_radians();
 
