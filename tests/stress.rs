@@ -72,11 +72,30 @@ fn invariants_to_set(specs: &[InvariantSpec]) -> InvariantSet {
 
 fn run_scenario(scenario: &StressScenario, path: &std::path::Path) -> Result<(), String> {
     let mut app = StressApp::new(scenario.seed, preset_to_harness(scenario.planet));
-    app.tick_n(scenario.warmup_ticks);
 
-    for tp in &scenario.teleports {
-        app.teleport(tp.lat, tp.lon, tp.altitude_m);
-        app.tick_n(tp.then_tick);
+    // Wrap execution in catch_unwind so a panic during tick_n / teleport is captured
+    // and reported as a failure rather than aborting the whole scenario runner.
+    let unwind_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.tick_n(scenario.warmup_ticks);
+        for tp in &scenario.teleports {
+            app.teleport(tp.lat, tp.lon, tp.altitude_m);
+            app.tick_n(tp.then_tick);
+        }
+    }));
+
+    // If execution panicked, drain the captured panic details and return early so the
+    // caller's error list gets an entry without running assertions on a corrupt app state.
+    if unwind_result.is_err() {
+        let detail = app
+            .take_panic()
+            .map(|p| format!("  at {}: {}", p.location, p.message))
+            .unwrap_or_else(|| "  (no panic details captured)".to_string());
+        return Err(format!(
+            "Scenario panicked: {}\n  description: {}\n{}",
+            path.display(),
+            scenario.description,
+            detail,
+        ));
     }
 
     let which = invariants_to_set(&scenario.invariants);
