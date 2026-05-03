@@ -24,7 +24,7 @@ NC='\033[0m'
 echo -e "${YELLOW}[pre-commit]${NC} Running checks..."
 
 # 1. Format check
-echo -e "${YELLOW}[1/3]${NC} cargo fmt --check"
+echo -e "${YELLOW}[1/4]${NC} cargo fmt --check"
 if ! cargo fmt --check 2>&1; then
     echo -e "${RED}✗ Formatting issues found. Run 'cargo fmt' to fix.${NC}"
     exit 1
@@ -32,7 +32,7 @@ fi
 echo -e "${GREEN}  ✓ Formatting OK${NC}"
 
 # 2. Clippy lint
-echo -e "${YELLOW}[2/3]${NC} cargo clippy"
+echo -e "${YELLOW}[2/4]${NC} cargo clippy"
 if ! cargo clippy --all-targets -- -D warnings 2>&1; then
     echo -e "${RED}✗ Clippy warnings found. Fix them before committing.${NC}"
     exit 1

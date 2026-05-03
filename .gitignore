@@ -20,3 +20,7 @@ Thumbs.db
 *.dll
 test_output/
 assets/data/planets/
+
+# Captured local test/build logs (ephemeral, not tracked)
+test_output.txt
+test_output_final.txt

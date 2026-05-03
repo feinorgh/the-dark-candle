@@ -6,9 +6,7 @@
 
 use serde::Deserialize;
 
-use the_dark_candle::test_support::stress::{
-    InvariantFailure, InvariantSet, PlanetPreset, StressApp,
-};
+use the_dark_candle::test_support::stress::{InvariantSet, PlanetPreset, StressApp};
 
 #[derive(Deserialize, Debug)]
 struct StressScenario {
@@ -146,11 +144,6 @@ fn run_all_stress_scenarios() {
         errors.join("\n\n")
     );
 }
-
-// Suppress dead-code warnings for InvariantFailure variants pulled into scope
-// (they appear inside formatted failure strings via Debug).
-#[allow(dead_code)]
-fn _import_used(_f: &InvariantFailure) {}
 
 #[cfg(test)]
 mod proptests {

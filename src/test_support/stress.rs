@@ -293,13 +293,14 @@ impl StressApp {
             ProcgenPlugin,
         ));
 
-        // Spawn a camera entity with FpsCamera, WorldPosition, and Transform.
-        // This is required for V2WorldPlugin's v2_update_chunks system.
+        // Spawn a camera entity with FpsCamera, WorldPosition, Transform, and Camera3d.
+        // Camera3d is required for FloatingOriginPlugin's rebasing queries (With<Camera>).
         let cam_world = DVec3::new(planet_radius, 0.0, 0.0);
         app.world_mut().spawn((
             FpsCamera::default(),
             WorldPosition::from_dvec3(cam_world),
             Transform::from_translation(Vec3::ZERO),
+            Camera3d::default(),
         ));
         app.insert_resource(RenderOrigin(cam_world));
 
@@ -342,7 +343,8 @@ impl StressApp {
         let lat = lat_deg.clamp(-89.99, 89.99).to_radians();
         let lon = ((lon_deg + 540.0) % 360.0 - 180.0).to_radians();
 
-        let dir = DVec3::new(lat.cos() * lon.cos(), lat.sin(), -lat.cos() * lon.sin());
+        let cos_lat = lat.cos();
+        let dir = DVec3::new(cos_lat * lon.sin(), lat.sin(), cos_lat * lon.cos());
 
         let radius = self
             .app

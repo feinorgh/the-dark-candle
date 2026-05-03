@@ -1217,7 +1217,7 @@
     "suspected_files": [
       "src/world/v2/chunk_manager.rs"
     ],
-    "suspected_cause": "Chunk coordinate calculation likely uses i32 or i64 multiplication/division that overflows when converting extreme altitude values to chunk indices. Altitude of 5,000,000 m (5000 km) is ~78,000 times Earth's radius, causing coordinate calculations to exceed integer bounds.",
+    "suspected_cause": "Chunk coordinate calculation likely uses i32 or i64 multiplication/division that overflows when converting extreme altitude values to chunk indices. Altitude of 5,000,000 m (5000 km) is ~0.78× Earth's radius, causing coordinate calculations to exceed integer bounds.",
     "related_commits": [],
     "resolution": "",
     "notes": [
