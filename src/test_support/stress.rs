@@ -52,6 +52,15 @@ pub(crate) struct PanicSlot(Mutex<Option<CapturedPanic>>);
 
 static PANIC_SLOT: std::sync::OnceLock<Arc<PanicSlot>> = std::sync::OnceLock::new();
 
+/// Global mutex that serializes `StressApp` instances.
+///
+/// Rust test threads run in parallel by default, so without this lock two
+/// concurrent stress tests could race on the shared `PANIC_SLOT`: one test's
+/// `StressApp::new` might clear the slot just as another test's panic hook
+/// tries to write into it.  Holding this lock for the entire lifetime of a
+/// `StressApp` ensures that only one harness is active at a time.
+static STRESS_SERIALIZER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn install_panic_hook() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
@@ -167,6 +176,9 @@ pub struct StressApp {
     pub(crate) seed: u64, // fields populated across plan tasks 3-8
     pub(crate) load_rate: LoadRateTracker,
     pub(crate) sim_time: f64,
+    /// Held for the entire lifetime of this harness to prevent concurrent
+    /// stress tests from racing on the shared `PANIC_SLOT`.
+    _guard: std::sync::MutexGuard<'static, ()>,
 }
 
 const FIXED_DT_SECS: f64 = 1.0 / 60.0;
@@ -215,6 +227,13 @@ impl StressApp {
 
         // Import camera components
         use crate::camera::FpsCamera;
+
+        // Serialize all StressApp instances so the global PANIC_SLOT can't be
+        // raced by concurrent test threads.  The guard is moved into `Self` and
+        // dropped when the `StressApp` is dropped, releasing the lock.
+        let _guard = STRESS_SERIALIZER
+            .lock()
+            .expect("STRESS_SERIALIZER poisoned; a previous stress test panicked without recovery");
 
         install_panic_hook();
         // Clear any leftover panic from a previous test in this process.
@@ -329,6 +348,7 @@ impl StressApp {
             seed,
             load_rate: LoadRateTracker::default(),
             sim_time: 0.0,
+            _guard,
         }
     }
 
