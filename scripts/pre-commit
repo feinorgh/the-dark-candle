@@ -62,8 +62,8 @@ fi
 
 # 4. Stress test subset (opt-in)
 if [ "${FULL_TESTS:-0}" = "1" ]; then
-    echo -e "${YELLOW}[4/4]${NC} cargo test --features test-support --test stress (full suite)"
-    if ! cargo test --features test-support --test stress 2>&1; then
+    echo -e "${YELLOW}[4/4]${NC} cargo test --features test-support (lib + full stress suite)"
+    if ! cargo test --features test-support 2>&1; then
         echo -e "${RED}✗ Stress tests failed.${NC}"
         exit 1
     fi
