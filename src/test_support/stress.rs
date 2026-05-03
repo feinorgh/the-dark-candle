@@ -413,7 +413,7 @@ impl StressApp {
             self.check_chunk_cache(&mut failures);
         }
 
-        // LOAD_RATE handled in Task 8.
+        // LOAD_RATE is only checked by assert_invariants_with_min_rate when a minimum is provided.
 
         failures
     }

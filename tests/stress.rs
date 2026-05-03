@@ -71,6 +71,20 @@ fn invariants_to_set(specs: &[InvariantSpec]) -> InvariantSet {
 }
 
 fn run_scenario(scenario: &StressScenario, path: &std::path::Path) -> Result<(), String> {
+    // Guard: LoadRate invariant is meaningless without a minimum threshold — fail fast so
+    // misconfigured scenarios don't silently pass without enforcing the intended check.
+    if scenario
+        .invariants
+        .iter()
+        .any(|i| matches!(i, InvariantSpec::LoadRate))
+        && scenario.chunk_load_rate_min.is_none()
+    {
+        return Err(format!(
+            "Scenario misconfigured: {}\n  `LoadRate` invariant requires `chunk_load_rate_min` to be set",
+            path.display(),
+        ));
+    }
+
     let mut app = StressApp::new(scenario.seed, preset_to_harness(scenario.planet));
 
     // Wrap execution in catch_unwind so a panic during tick_n / teleport is captured
