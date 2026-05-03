@@ -226,13 +226,15 @@ impl StressApp {
 
         let planet = match preset {
             PlanetPreset::SmallPlanet => PlanetConfig {
+                // `seed` is u64 but PlanetConfig.seed is u32; scenario seeds are small
+                // values (< 2^32), so the low-32-bit truncation is intentional and safe.
                 seed: seed as u32,
                 ..PlanetConfig::default()
             },
             PlanetPreset::Earth => PlanetConfig {
                 mean_radius: 6_371_000.0,
                 sea_level_radius: 6_371_000.0,
-                seed: seed as u32,
+                seed: seed as u32, // same truncation as SmallPlanet above
                 ..Default::default()
             },
         };
@@ -338,19 +340,16 @@ impl StressApp {
     /// metres above the planet's `sea_level_radius`.
     ///
     /// `lat_deg` is clamped to `[-89.99, +89.99]` to avoid pole singularities.
-    /// `lon_deg` is normalized to `(-180, +180]` (matching `atan2` convention).
+    /// `lon_deg` is normalized to `[-180, 180)`.  Note that ±180° map to the
+    /// same physical direction on the sphere, so no special-casing is needed.
     pub fn teleport(&mut self, lat_deg: f64, lon_deg: f64, altitude_m: f64) {
         use bevy::math::DVec3;
 
         let lat = lat_deg.clamp(-89.99, 89.99).to_radians();
-        // Normalize to (-180, +180]: rem_euclid gives [-180, 180); remap -180 → +180.
-        let lon_norm = ((lon_deg + 180.0).rem_euclid(360.0)) - 180.0;
-        let lon = if lon_norm == -180.0 {
-            180.0_f64
-        } else {
-            lon_norm
-        }
-        .to_radians();
+        // rem_euclid normalizes to [0, 360), then shift to [-180, 180).
+        // ±180° give identical trig values (sin(±π)≈0, cos(±π)=−1) so no
+        // special case is needed for the antimeridian boundary.
+        let lon = (((lon_deg + 180.0).rem_euclid(360.0)) - 180.0).to_radians();
 
         let cos_lat = lat.cos();
         let dir = DVec3::new(cos_lat * lon.sin(), lat.sin(), cos_lat * lon.cos());
