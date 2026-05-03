@@ -245,12 +245,12 @@ impl StressApp {
 
         let planet = match preset {
             PlanetPreset::SmallPlanet => PlanetConfig {
-                // `seed` is u64 but PlanetConfig.seed is u32; scenario seeds are small
-                // values (< 2^32), so the low-32-bit truncation is intentional and safe.
+                // `seed` is u64 but PlanetConfig.seed is u32; only u32-range seeds are
+                // supported. Panics in both debug and release builds if seed is out of range.
                 seed: {
-                    debug_assert!(
+                    assert!(
                         seed <= u32::MAX as u64,
-                        "scenario seed {seed} exceeds u32::MAX and will be truncated"
+                        "scenario seed {seed} exceeds u32::MAX (only u32-range seeds are supported)"
                     );
                     seed as u32
                 },
@@ -260,9 +260,9 @@ impl StressApp {
                 mean_radius: 6_371_000.0,
                 sea_level_radius: 6_371_000.0,
                 seed: {
-                    debug_assert!(
+                    assert!(
                         seed <= u32::MAX as u64,
-                        "scenario seed {seed} exceeds u32::MAX and will be truncated"
+                        "scenario seed {seed} exceeds u32::MAX (only u32-range seeds are supported)"
                     );
                     seed as u32
                 },

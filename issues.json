@@ -1213,7 +1213,7 @@
     "status": "open",
     "reported": "2026-05-01",
     "description": "When a player teleports to extremely high altitudes (e.g., 5,000,000 m above sea level), the chunk manager panics with an integer overflow in src/world/v2/chunk_manager.rs:648:35 during coordinate calculations. This occurs when converting world coordinates to chunk indices for very large altitude values.",
-    "reproduction": "Run stress test scenario `high_altitude.stress.ron` which teleports to altitudes of 50 km, 500 km, and 5000 km. Observe panic: 'attempt to multiply with overflow' in chunk_manager.rs:648:35.",
+    "reproduction": "The scenario file is committed as `tests/cases/stress/high_altitude.stress.ron.skip` to prevent the suite from running it automatically. To reproduce: rename it to `high_altitude.stress.ron`, then run `cargo test --features test-support --test stress run_all_stress_scenarios`. The scenario teleports to altitudes of 50 km, 500 km, and 5000 km; observe panic: 'attempt to multiply with overflow' in chunk_manager.rs:648:35.",
     "suspected_files": [
       "src/world/v2/chunk_manager.rs"
     ],

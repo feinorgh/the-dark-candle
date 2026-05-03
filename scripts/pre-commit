@@ -41,7 +41,7 @@ echo -e "${GREEN}  ✓ Clippy OK${NC}"
 
 # 3. Tests
 if [ "${FULL_TESTS:-0}" = "1" ]; then
-    echo -e "${YELLOW}[3/4]${NC} cargo test (full suite)"
+    echo -e "${YELLOW}[3/4]${NC} cargo test (all tests, no feature flag)"
     if ! cargo test 2>&1; then
         echo -e "${RED}✗ Tests failed.${NC}"
         exit 1
@@ -62,8 +62,8 @@ fi
 
 # 4. Stress test subset (opt-in)
 if [ "${FULL_TESTS:-0}" = "1" ]; then
-    echo -e "${YELLOW}[4/4]${NC} cargo test --features test-support (lib + full stress suite)"
-    if ! cargo test --features test-support 2>&1; then
+    echo -e "${YELLOW}[4/4]${NC} cargo test --features test-support --test stress (full stress suite)"
+    if ! cargo test --features test-support --test stress 2>&1; then
         echo -e "${RED}✗ Stress tests failed.${NC}"
         exit 1
     fi
