@@ -140,9 +140,11 @@ fn run_all_stress_scenarios() {
         eprintln!("[stress] STRESS_FAST=1 — running subset: {FAST_SUBSET:?}");
     }
 
+    // Exclude underscore-prefixed files (e.g. _smoke.stress.ron) — those are
+    // local smoke/scratch scenarios and are not part of the official suite.
     let pattern = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/cases/stress/*.stress.ron"
+        "/tests/cases/stress/[!_]*.stress.ron"
     );
     let entries: Vec<_> = glob::glob(pattern).expect("invalid glob pattern").collect();
 
