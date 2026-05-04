@@ -85,7 +85,21 @@ fn run_scenario(scenario: &StressScenario, path: &std::path::Path) -> Result<(),
         ));
     }
 
-    let mut app = StressApp::new(scenario.seed, preset_to_harness(scenario.planet));
+    // Wrap construction in its own catch_unwind so a panic inside StressApp::new
+    // (e.g. due to plugin/resource setup changes) is reported as a single-scenario
+    // failure rather than aborting the entire runner.
+    let mut app = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        StressApp::new(scenario.seed, preset_to_harness(scenario.planet))
+    })) {
+        Ok(app) => app,
+        Err(_) => {
+            return Err(format!(
+                "Scenario panicked during harness construction: {}\n  description: {}",
+                path.display(),
+                scenario.description,
+            ));
+        }
+    };
 
     // Wrap execution in catch_unwind so a panic during tick_n / teleport is captured
     // and reported as a failure rather than aborting the whole scenario runner.
