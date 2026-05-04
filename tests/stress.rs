@@ -140,7 +140,10 @@ fn run_all_stress_scenarios() {
         eprintln!("[stress] STRESS_FAST=1 — running subset: {FAST_SUBSET:?}");
     }
 
-    let pattern = "tests/cases/stress/*.stress.ron";
+    let pattern = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/cases/stress/*.stress.ron"
+    );
     let entries: Vec<_> = glob::glob(pattern).expect("invalid glob pattern").collect();
 
     assert!(
@@ -188,7 +191,7 @@ mod proptests {
             cases: 64,
             failure_persistence: Some(Box::new(
                 proptest::test_runner::FileFailurePersistence::Direct(
-                    "tests/cases/stress/proptest-regressions/random_teleport_invariants.txt"
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/cases/stress/proptest-regressions/random_teleport_invariants.txt")
                 ),
             )),
             ..ProptestConfig::default()
@@ -230,7 +233,7 @@ mod proptests {
             cases: 32,
             failure_persistence: Some(Box::new(
                 proptest::test_runner::FileFailurePersistence::Direct(
-                    "tests/cases/stress/proptest-regressions/random_teleport_sequence.txt"
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/cases/stress/proptest-regressions/random_teleport_sequence.txt")
                 ),
             )),
             ..ProptestConfig::default()
@@ -276,7 +279,7 @@ mod proptests {
             cases: 64,
             failure_persistence: Some(Box::new(
                 proptest::test_runner::FileFailurePersistence::Direct(
-                    "tests/cases/stress/proptest-regressions/random_altitude_extreme.txt"
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/cases/stress/proptest-regressions/random_altitude_extreme.txt")
                 ),
             )),
             ..ProptestConfig::default()
