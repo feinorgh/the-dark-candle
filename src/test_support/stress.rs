@@ -374,6 +374,16 @@ impl StressApp {
     /// `lat_deg` is clamped to `[-89.99, +89.99]` to avoid pole singularities.
     /// `lon_deg` is normalized to `[-180, 180)`.  Note that ±180° map to the
     /// same physical direction on the sphere, so no special-casing is needed.
+    ///
+    /// When the camera entity is already spawned the teleport is applied
+    /// immediately: `WorldPosition`, `RenderOrigin`, and `Transform` are all
+    /// updated atomically so `Transform.translation` stays near zero (matching
+    /// the in-game floating-origin behaviour).  A tick is *not* required for
+    /// the move to take effect.
+    ///
+    /// When the camera has not yet been spawned (early startup), the target is
+    /// stored in `PendingTeleport` and applied by `apply_pending_teleport` on
+    /// the next `Update` cycle.
     pub fn teleport(&mut self, lat_deg: f64, lon_deg: f64, altitude_m: f64) {
         use bevy::math::DVec3;
 
@@ -393,7 +403,35 @@ impl StressApp {
             .sea_level_radius
             + altitude_m;
 
-        self.app.world_mut().resource_mut::<PendingTeleport>().0 = Some(dir * radius);
+        let target = dir * radius;
+
+        // Try to find the camera entity first (read-only borrow, released before
+        // taking any mutable access below).
+        let world = self.app.world_mut();
+        let camera_entity = world
+            .query_filtered::<Entity, With<crate::camera::FpsCamera>>()
+            .iter(world)
+            .next();
+
+        if let Some(entity) = camera_entity {
+            // Immediate path: camera already exists.  Update WorldPosition and
+            // Transform via the entity handle, then rebase RenderOrigin so that
+            // the translation offset stays near zero (mirrors in-game behaviour).
+            let mut entity_mut = world.entity_mut(entity);
+            if let Some(mut wp) = entity_mut.get_mut::<crate::floating_origin::WorldPosition>() {
+                wp.0 = target;
+            }
+            if let Some(mut tf) = entity_mut.get_mut::<Transform>() {
+                tf.translation = Vec3::ZERO;
+            }
+            // entity_mut is dropped here; safe to access other resources now.
+            drop(entity_mut);
+            world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
+        } else {
+            // Deferred path: camera not yet spawned; apply_pending_teleport will
+            // handle this on the first Update after spawning.
+            world.resource_mut::<PendingTeleport>().0 = Some(target);
+        }
     }
 
     /// Take any panic that was captured by the harness panic hook.
@@ -559,21 +597,23 @@ mod tests {
     #[test]
     fn teleport_moves_player_to_requested_lat_lon_alt() {
         use crate::camera::FpsCamera;
-        use crate::floating_origin::WorldPosition;
+        use crate::floating_origin::{RenderOrigin, WorldPosition};
         use bevy::math::DVec3;
 
         let mut app = StressApp::new(0, PlanetPreset::SmallPlanet);
-        app.tick_n(5); // let any startup systems run
+        app.tick_n(5); // let startup systems run so the camera is spawned
 
         app.teleport(0.0, 0.0, 100.0); // equator, prime meridian, 100 m above sea level
-        app.tick_n(1);
 
-        // Player should now be at radius = sea_level + 100 m, in the +Z direction.
-        // lat/lon convention: lon = atan2(x, z), so lon=0 → x=0, z=1 → +Z.
+        // teleport() applies immediately (no tick required): WorldPosition,
+        // RenderOrigin, and Transform.translation must already reflect the
+        // new position.
         let world = app.app.world_mut();
         let sea_level_radius = world
             .resource::<crate::world::planet::PlanetConfig>()
             .sea_level_radius;
+
+        // WorldPosition must be updated immediately.
         let mut q = world.query_filtered::<&WorldPosition, With<FpsCamera>>();
         let pos = q.iter(world).next().expect("camera entity exists").0;
 
@@ -583,10 +623,30 @@ mod tests {
             (actual_radius - expected_radius).abs() < 1.0,
             "expected radius ≈ {expected_radius}, got {actual_radius}"
         );
+        // lat/lon convention: lon = atan2(x, z), so lon=0 → x=0, z=1 → +Z.
         let normalized = pos.normalize();
         assert!(
             (normalized - DVec3::Z).length() < 1.0e-3,
             "expected +Z direction, got {normalized:?}"
+        );
+
+        // RenderOrigin must have been rebased to the new position.
+        let origin = world.resource::<RenderOrigin>().0;
+        assert!(
+            (origin - pos).length() < 1.0e-3,
+            "RenderOrigin should match new WorldPosition after teleport; got {origin:?}"
+        );
+
+        // Transform.translation must be near zero (offset from the rebased origin).
+        let mut tq = world.query_filtered::<&Transform, With<FpsCamera>>();
+        let tf_translation = tq
+            .iter(world)
+            .next()
+            .expect("camera entity exists")
+            .translation;
+        assert!(
+            tf_translation.length() < 1.0,
+            "Transform.translation should be near zero after teleport; got {tf_translation:?}"
         );
     }
 
