@@ -47,7 +47,7 @@ if [ "${FULL_TESTS:-0}" = "1" ]; then
         exit 1
     fi
     echo -e "${GREEN}  ✓ All tests OK${NC}"
-    echo -e "${YELLOW}[3/4+]${NC} cargo test --features test-support --lib (harness unit tests)"
+    echo -e "${YELLOW}[3b/4]${NC} cargo test --features test-support --lib (harness unit tests)"
     if ! cargo test --features test-support --lib 2>&1; then
         echo -e "${RED}✗ test-support lib tests failed.${NC}"
         exit 1
