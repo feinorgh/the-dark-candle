@@ -571,10 +571,13 @@ mod tests {
         // Player should now be at radius = sea_level + 100 m, in the +Z direction.
         // lat/lon convention: lon = atan2(x, z), so lon=0 → x=0, z=1 → +Z.
         let world = app.app.world_mut();
+        let sea_level_radius = world
+            .resource::<crate::world::planet::PlanetConfig>()
+            .sea_level_radius;
         let mut q = world.query_filtered::<&WorldPosition, With<FpsCamera>>();
         let pos = q.iter(world).next().expect("camera entity exists").0;
 
-        let expected_radius = 32_000.0_f64 + 100.0;
+        let expected_radius = sea_level_radius + 100.0;
         let actual_radius = pos.length();
         assert!(
             (actual_radius - expected_radius).abs() < 1.0,
