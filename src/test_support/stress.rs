@@ -194,13 +194,22 @@ fn apply_pending_teleport(
     let Some(target) = pending.0.take() else {
         return;
     };
-    let Ok((mut wp, mut tf)) = q.single_mut() else {
-        // Camera not yet spawned; put target back and try next frame.
-        pending.0 = Some(target);
-        return;
-    };
-    wp.0 = target;
-    tf.translation = wp.render_offset(&origin);
+    match q.single_mut() {
+        Ok((mut wp, mut tf)) => {
+            wp.0 = target;
+            tf.translation = wp.render_offset(&origin);
+        }
+        Err(bevy::ecs::query::QuerySingleError::NoEntities(_)) => {
+            // Camera not yet spawned; put target back and try next frame.
+            pending.0 = Some(target);
+        }
+        Err(bevy::ecs::query::QuerySingleError::MultipleEntities(_)) => {
+            panic!(
+                "apply_pending_teleport: multiple FpsCamera entities found \
+                 — misconfigured harness; expected exactly one camera entity"
+            );
+        }
+    }
 }
 
 impl StressApp {
@@ -417,15 +426,17 @@ impl StressApp {
             // Immediate path: camera already exists.  Update WorldPosition and
             // Transform via the entity handle, then rebase RenderOrigin so that
             // the translation offset stays near zero (mirrors in-game behaviour).
-            let mut entity_mut = world.entity_mut(entity);
-            if let Some(mut wp) = entity_mut.get_mut::<crate::floating_origin::WorldPosition>() {
-                wp.0 = target;
+            // Use a block to ensure entity_mut is released before accessing
+            // RenderOrigin (which borrows from the same World).
+            {
+                let mut entity_mut = world.entity_mut(entity);
+                if let Some(mut wp) = entity_mut.get_mut::<crate::floating_origin::WorldPosition>() {
+                    wp.0 = target;
+                }
+                if let Some(mut tf) = entity_mut.get_mut::<Transform>() {
+                    tf.translation = Vec3::ZERO;
+                }
             }
-            if let Some(mut tf) = entity_mut.get_mut::<Transform>() {
-                tf.translation = Vec3::ZERO;
-            }
-            // entity_mut is dropped here; safe to access other resources now.
-            drop(entity_mut);
             world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
         } else {
             // Deferred path: camera not yet spawned; apply_pending_teleport will
