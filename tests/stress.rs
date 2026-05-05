@@ -92,11 +92,17 @@ fn run_scenario(scenario: &StressScenario, path: &std::path::Path) -> Result<(),
         StressApp::new(scenario.seed, preset_to_harness(scenario.planet))
     })) {
         Ok(app) => app,
-        Err(_) => {
+        Err(payload) => {
+            let panic_msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "(non-string panic payload)".to_string());
             return Err(format!(
-                "Scenario panicked during harness construction: {}\n  description: {}",
+                "Scenario panicked during harness construction: {}\n  description: {}\n  panic: {}",
                 path.display(),
                 scenario.description,
+                panic_msg,
             ));
         }
     };
