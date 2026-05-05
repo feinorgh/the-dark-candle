@@ -244,9 +244,16 @@ impl StressApp {
         // Serialize all StressApp instances so the global PANIC_SLOT can't be
         // raced by concurrent test threads.  The guard is moved into `Self` and
         // dropped when the `StressApp` is dropped, releasing the lock.
-        let _guard = STRESS_SERIALIZER
-            .lock()
-            .expect("STRESS_SERIALIZER poisoned; a previous stress test panicked without recovery");
+        //
+        // If a previous harness panicked (poisoning the mutex), we recover the
+        // inner guard rather than propagating the poison — this lets the suite
+        // continue to aggregate failures instead of aborting on the first panic.
+        let _guard = STRESS_SERIALIZER.lock().unwrap_or_else(|e| {
+            eprintln!(
+                "[stress] STRESS_SERIALIZER was poisoned by a previous harness panic; recovering"
+            );
+            e.into_inner()
+        });
 
         install_panic_hook();
         // Clear any leftover panic from a previous test in this process.
