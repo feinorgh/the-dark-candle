@@ -185,7 +185,7 @@ const FIXED_DT_SECS: f64 = 1.0 / 60.0;
 
 fn apply_pending_teleport(
     mut pending: ResMut<PendingTeleport>,
-    origin: Res<crate::floating_origin::RenderOrigin>,
+    mut origin: ResMut<crate::floating_origin::RenderOrigin>,
     mut q: Query<
         (&mut crate::floating_origin::WorldPosition, &mut Transform),
         With<crate::camera::FpsCamera>,
@@ -196,8 +196,12 @@ fn apply_pending_teleport(
     };
     match q.single_mut() {
         Ok((mut wp, mut tf)) => {
+            // Mirror the immediate `teleport()` path: rebase RenderOrigin to
+            // the new world position so the f32 render offset stays near zero
+            // and does not produce spurious FINITE / NO_OVERFLOW failures.
             wp.0 = target;
-            tf.translation = wp.render_offset(&origin);
+            origin.0 = target;
+            tf.translation = Vec3::ZERO;
         }
         Err(bevy::ecs::query::QuerySingleError::NoEntities(_)) => {
             // Camera not yet spawned; put target back and try next frame.
