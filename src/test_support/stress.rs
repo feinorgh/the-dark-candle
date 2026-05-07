@@ -425,27 +425,40 @@ impl StressApp {
 
         let target = dir * radius;
 
-        // Collect all FpsCamera entities up-front (read-only borrow, released
-        // before any mutable access below).
+        // Iterate the FpsCamera query once without allocating a Vec: track the
+        // first entity seen and whether a second entity was encountered.
+        // Entity is Copy, so `first` and `has_more` don't borrow from the
+        // world; we wrap the iteration in a block so the QueryIter (and its
+        // immutable borrow of `world`) is dropped before the mutable accesses
+        // in the match arms below.
         let world = self.app.world_mut();
-        let camera_entities: Vec<Entity> = world
-            .query_filtered::<Entity, With<crate::camera::FpsCamera>>()
-            .iter(world)
-            .collect();
+        let (first, has_more) = {
+            let mut iter = world
+                .query_filtered::<Entity, With<crate::camera::FpsCamera>>()
+                .iter(world);
+            let first = iter.next();
+            let has_more = iter.next().is_some();
+            (first, has_more)
+        };
 
-        match camera_entities.len() {
-            0 => {
+        match (first, has_more) {
+            (None, _) => {
                 // Deferred path: camera not yet spawned; apply_pending_teleport
                 // will handle this on the first Update after spawning.
                 world.resource_mut::<PendingTeleport>().0 = Some(target);
             }
-            1 => {
+            (Some(_), true) => {
+                panic!(
+                    "StressApp::teleport: expected exactly one FpsCamera entity but found more \
+                     than one. Harness is misconfigured."
+                );
+            }
+            (Some(entity), false) => {
                 // Immediate path: camera already exists.  Update WorldPosition
                 // and Transform via the entity handle, then rebase RenderOrigin
                 // so the translation offset stays near zero (mirrors in-game
                 // behaviour).  Use a block scope to release entity_mut before
                 // borrowing RenderOrigin from the same World.
-                let entity = camera_entities[0];
                 {
                     let mut entity_mut = world.entity_mut(entity);
                     entity_mut
@@ -458,12 +471,6 @@ impl StressApp {
                         .translation = Vec3::ZERO;
                 }
                 world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
-            }
-            n => {
-                panic!(
-                    "StressApp::teleport: expected exactly one FpsCamera entity but found {n}. \
-                     Harness is misconfigured."
-                );
             }
         }
     }
