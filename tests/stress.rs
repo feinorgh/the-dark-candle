@@ -176,7 +176,13 @@ fn run_all_stress_scenarios() {
     let mut errors = Vec::new();
     let mut executed: usize = 0;
     for entry in entries {
-        let path = entry.expect("glob entry");
+        let path = match entry {
+            Ok(p) => p,
+            Err(e) => {
+                errors.push(format!("Glob error: {e}"));
+                continue;
+            }
+        };
 
         // Skip non-matching files in fast mode
         if only_fast {

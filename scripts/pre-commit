@@ -39,6 +39,16 @@ if ! cargo clippy --all-targets -- -D warnings 2>&1; then
 fi
 echo -e "${GREEN}  ✓ Clippy OK${NC}"
 
+# 2b. Additional clippy pass with test-support feature in opt-in modes
+if [ "${FULL_TESTS:-0}" = "1" ] || [ "${STRESS_PRECOMMIT:-0}" = "1" ]; then
+    echo -e "${YELLOW}[2b/4]${NC} cargo clippy --features test-support"
+    if ! cargo clippy --all-targets --features test-support -- -D warnings 2>&1; then
+        echo -e "${RED}✗ Clippy (test-support) warnings found. Fix them before committing.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ Clippy (test-support) OK${NC}"
+fi
+
 # 3. Tests
 if [ "${FULL_TESTS:-0}" = "1" ]; then
     echo -e "${YELLOW}[3/4]${NC} cargo test (all tests, no feature flag)"
