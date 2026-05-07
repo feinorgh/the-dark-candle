@@ -174,6 +174,7 @@ fn run_all_stress_scenarios() {
     );
 
     let mut errors = Vec::new();
+    let mut executed: usize = 0;
     for entry in entries {
         let path = entry.expect("glob entry");
 
@@ -185,6 +186,7 @@ fn run_all_stress_scenarios() {
             }
         }
 
+        executed += 1;
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
         let scenario: StressScenario =
@@ -193,6 +195,17 @@ fn run_all_stress_scenarios() {
         if let Err(msg) = run_scenario(&scenario, &path) {
             errors.push(msg);
         }
+    }
+
+    if only_fast {
+        assert_eq!(
+            executed,
+            FAST_SUBSET.len(),
+            "STRESS_FAST ran {executed} scenario(s) but expected {} ({}). \
+             Check that FAST_SUBSET names still match scenario file stems.",
+            FAST_SUBSET.len(),
+            FAST_SUBSET.join(", ")
+        );
     }
 
     assert!(

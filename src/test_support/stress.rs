@@ -425,34 +425,46 @@ impl StressApp {
 
         let target = dir * radius;
 
-        // Try to find the camera entity first (read-only borrow, released before
-        // taking any mutable access below).
+        // Collect all FpsCamera entities up-front (read-only borrow, released
+        // before any mutable access below).
         let world = self.app.world_mut();
-        let camera_entity = world
+        let camera_entities: Vec<Entity> = world
             .query_filtered::<Entity, With<crate::camera::FpsCamera>>()
             .iter(world)
-            .next();
+            .collect();
 
-        if let Some(entity) = camera_entity {
-            // Immediate path: camera already exists.  Update WorldPosition and
-            // Transform via the entity handle, then rebase RenderOrigin so that
-            // the translation offset stays near zero (mirrors in-game behaviour).
-            // Use a block to ensure entity_mut is released before accessing
-            // RenderOrigin (which borrows from the same World).
-            {
-                let mut entity_mut = world.entity_mut(entity);
-                if let Some(mut wp) = entity_mut.get_mut::<crate::floating_origin::WorldPosition>() {
-                    wp.0 = target;
-                }
-                if let Some(mut tf) = entity_mut.get_mut::<Transform>() {
-                    tf.translation = Vec3::ZERO;
-                }
+        match camera_entities.len() {
+            0 => {
+                // Deferred path: camera not yet spawned; apply_pending_teleport
+                // will handle this on the first Update after spawning.
+                world.resource_mut::<PendingTeleport>().0 = Some(target);
             }
-            world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
-        } else {
-            // Deferred path: camera not yet spawned; apply_pending_teleport will
-            // handle this on the first Update after spawning.
-            world.resource_mut::<PendingTeleport>().0 = Some(target);
+            1 => {
+                // Immediate path: camera already exists.  Update WorldPosition
+                // and Transform via the entity handle, then rebase RenderOrigin
+                // so the translation offset stays near zero (mirrors in-game
+                // behaviour).  Use a block scope to release entity_mut before
+                // borrowing RenderOrigin from the same World.
+                let entity = camera_entities[0];
+                {
+                    let mut entity_mut = world.entity_mut(entity);
+                    entity_mut
+                        .get_mut::<crate::floating_origin::WorldPosition>()
+                        .expect("FpsCamera entity is missing WorldPosition component")
+                        .0 = target;
+                    entity_mut
+                        .get_mut::<Transform>()
+                        .expect("FpsCamera entity is missing Transform component")
+                        .translation = Vec3::ZERO;
+                }
+                world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
+            }
+            n => {
+                panic!(
+                    "StressApp::teleport: expected exactly one FpsCamera entity but found {n}. \
+                     Harness is misconfigured."
+                );
+            }
         }
     }
 
