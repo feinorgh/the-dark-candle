@@ -187,10 +187,20 @@ fn run_all_stress_scenarios() {
         }
 
         executed += 1;
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-        let scenario: StressScenario =
-            ron::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(format!("I/O error reading {}: {}", path.display(), e));
+                continue;
+            }
+        };
+        let scenario: StressScenario = match ron::from_str(&text) {
+            Ok(s) => s,
+            Err(e) => {
+                errors.push(format!("Parse error in {}: {}", path.display(), e));
+                continue;
+            }
+        };
 
         if let Err(msg) = run_scenario(&scenario, &path) {
             errors.push(msg);
