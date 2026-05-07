@@ -2,7 +2,7 @@
 //!
 //! Discovers `*.stress.ron` files under `tests/cases/stress/` and runs each as
 //! a `StressScenario` against the headless `StressApp` harness. Also hosts
-//! proptest-driven property generators (added in later tasks).
+//! proptest-driven property generators for random teleport and altitude coverage.
 
 use serde::Deserialize;
 
