@@ -470,7 +470,9 @@ impl StressApp {
                         .expect("FpsCamera entity is missing Transform component")
                         .translation = Vec3::ZERO;
                 }
-                world.resource_mut::<crate::floating_origin::RenderOrigin>().0 = target;
+                world
+                    .resource_mut::<crate::floating_origin::RenderOrigin>()
+                    .0 = target;
             }
         }
     }

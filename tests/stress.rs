@@ -184,10 +184,15 @@ fn run_all_stress_scenarios() {
             }
         };
 
-        // Skip non-matching files in fast mode
+        // Skip non-matching files in fast mode.  Compare the full file name
+        // (e.g. "pole_north.stress.ron") against "{name}.stress.ron" so that
+        // `pole_north_extra.stress.ron` is never accidentally included.
         if only_fast {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if !FAST_SUBSET.iter().any(|name| stem.starts_with(name)) {
+            let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !FAST_SUBSET
+                .iter()
+                .any(|name| file_name == format!("{name}.stress.ron"))
+            {
                 continue;
             }
         }
