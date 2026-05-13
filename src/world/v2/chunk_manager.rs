@@ -633,28 +633,37 @@ pub fn v2_update_chunks(
     // Compute sort keys ONCE per candidate (sample_surface_radius_at is
     // expensive — calling it inside `sort_unstable_by_key` re-runs it on
     // every comparison and tanks FPS during loading).
-    let mut keyed: Vec<(i32, CubeSphereCoord)> = to_dispatch
+    let mut keyed: Vec<(i64, CubeSphereCoord)> = to_dispatch
         .into_iter()
         .map(|c| {
-            let lod_penalty = (c.lod as i32) * 4_000_000;
+            // All terms below are accumulated as i64.  At Earth-scale the
+            // camera band can reach `c.layer` values in the hundreds of
+            // thousands, and `layer_dist * 50_000` overflowed i32 at
+            // altitudes ≳ 1500 km on a small planet (see CHUNK-002).
+            let lod_penalty: i64 = (c.lod as i64) * 4_000_000;
             let fce_lod = CubeSphereCoord::face_chunks_per_edge_lod(mean_radius, c.lod);
             let chunk_world_size = CHUNK_SIZE as f64 * (1u64 << c.lod) as f64;
             let dir = c.unit_sphere_dir(fce_lod);
             let (lat, lon) = crate::planet::detail::pos_to_lat_lon(dir);
             let surface_r = tgen_for_sort.sample_surface_radius_at(lat, lon);
             let surface_layer = ((surface_r - mean_radius) / chunk_world_size).round() as i32;
-            let layer_dist = (c.layer - surface_layer).abs();
+            let layer_dist = (c.layer as i64 - surface_layer as i64).abs();
             // Strong bias: surface-adjacent layers come first within each LOD.
-            let surface_penalty = layer_dist * 50_000;
-            let scale = 1i32 << c.lod;
-            let dist = if c.face == cam_coord_l0.face {
-                let du = c.u * scale - cam_coord_l0.u;
-                let dv = c.v * scale - cam_coord_l0.v;
+            let surface_penalty: i64 = layer_dist.saturating_mul(50_000);
+            let scale: i64 = 1i64 << c.lod;
+            let dist: i64 = if c.face == cam_coord_l0.face {
+                let du = c.u as i64 * scale - cam_coord_l0.u as i64;
+                let dv = c.v as i64 * scale - cam_coord_l0.v as i64;
                 du * du + dv * dv
             } else {
-                i32::MAX / 8
+                (i32::MAX / 8) as i64
             };
-            (lod_penalty + surface_penalty + dist, c)
+            (
+                lod_penalty
+                    .saturating_add(surface_penalty)
+                    .saturating_add(dist),
+                c,
+            )
         })
         .collect();
     keyed.sort_unstable_by_key(|&(k, _)| k);

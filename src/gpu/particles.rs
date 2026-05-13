@@ -406,7 +406,9 @@ mod tests {
 
     #[test]
     fn dead_particles_stay_dead() {
-        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
+        let _g = crate::gpu::GPU_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -440,7 +442,9 @@ mod tests {
 
     #[test]
     fn gravity_accelerates_downward() {
-        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
+        let _g = crate::gpu::GPU_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;
@@ -464,7 +468,9 @@ mod tests {
 
     #[test]
     fn rain_falls_faster_than_snow() {
-        let _g = crate::gpu::GPU_TEST_LOCK.lock().unwrap();
+        let _g = crate::gpu::GPU_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let Some(ctx) = try_gpu_context() else {
             eprintln!("skipping GPU test: no adapter");
             return;

@@ -433,9 +433,10 @@ impl StressApp {
         // in the match arms below.
         let world = self.app.world_mut();
         let (first, has_more) = {
-            let mut iter = world
-                .query_filtered::<Entity, With<crate::camera::FpsCamera>>()
-                .iter(world);
+            // QueryState must outlive the QueryIter that borrows from it, so
+            // bind it to a local rather than chaining `.iter(world)` directly.
+            let mut query = world.query_filtered::<Entity, With<crate::camera::FpsCamera>>();
+            let mut iter = query.iter(world);
             let first = iter.next();
             let has_more = iter.next().is_some();
             (first, has_more)

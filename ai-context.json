@@ -1803,7 +1803,7 @@
     ]
   },
   "meta": {
-    "generated_date": "2026-05-07",
+    "generated_date": "2026-05-13",
     "generated_from_commit": "51e76cb",
     "confidence": "high",
     "verified": true,
@@ -1816,7 +1816,7 @@
       "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled — basic latitude/altitude/proximity model only"
     ],
-    "last_updated": "2026-05-03",
+    "last_updated": "2026-05-13",
     "notes": [
       "Planetary generation milestone complete: all 7 phases (grid, tectonics, impacts, celestial, biomes/geology, globe renderer, map projections) implemented and committed.",
       "GPU-accelerated terrain projection renderer added (35x speedup at 4096px).",
@@ -1846,7 +1846,8 @@
       "RENDER-010 visual quality fixes (b9b79e2 / 018a1ca): stitch meshes now propagate per-vertex normals and colors from source ChunkMesh (previously all-white flat-shaded). T-junction axis consistency fixed: coarse chain axis used in both pairwise and corner stitches. BoundaryLoop struct extended with normals: Vec<[f32;3]> and colors: Vec<[f32;4]>. New helpers: clip_chain_with_attributes, clip_coarse_to_fine_extent_with_attrs, nearest_chain_endpoint_idx.",
       "GPU parity Task 16 Iter 1: Fixed cave tube 3D/2D perlin mismatch in voxel_gen.wgsl. GPU is_cave_gpu now correctly calls perlin2d() for tube noise (was calling perlin3d with zeroed third coord). Small planet parity test passes (645→4 mismatches at dl=-3). Earth-scale parity still fails (504 mismatches, f32 coordinate scaling precision issue, see GPUPARITY-002). New issues: GPUPARITY-001 (resolved), GPUPARITY-002 (open, f32 earth-scale), GPUPARITY-003 (open, strata n≈0 residual).",
       "GPU planetary-noise parity verified at small-planet (32 km). Spec: docs/superpowers/specs/2026-04-30-gpu-planetary-noise-parity-design.md. Earth-scale parity deferred under issue GPUPARITY-002 (f32 coord-precision divergence in noise inputs).",
-      "Gameplay stress / fuzzy test suite added (tests/stress.rs + tests/cases/stress/). Targets historic teleport-related f32 overflow class (CRASH-001). 9 hand-written RON scenarios + 3 proptest generators. Pre-commit hook supports STRESS_PRECOMMIT=1 (3-RON fast subset, ~2 min) and FULL_TESTS=1 (full suite). Already caught CHUNK-002 and STRESS-001."
+      "Gameplay stress / fuzzy test suite added (tests/stress.rs + tests/cases/stress/). Targets historic teleport-related f32 overflow class (CRASH-001). 9 hand-written RON scenarios + 3 proptest generators. Pre-commit hook supports STRESS_PRECOMMIT=1 (3-RON fast subset, ~2 min) and FULL_TESTS=1 (full suite). Already caught CHUNK-002 and STRESS-001.",
+      "CHUNK-002 resolved: chunk_manager.rs desired-chunks sort key promoted to i64 with saturating arithmetic to handle extreme altitudes (>1500 km on SmallPlanet, multi-thousand km on Earth). high_altitude.stress.ron now active and passing. Also fixed a pre-existing build break in src/test_support/stress.rs (QueryState lifetime) introduced by commit 3c7606d that blocked --features test-support builds."
     ],
     "known_issues_file": "issues.json",
     "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other), 39 V2 chunk tests, 21 GPU tests, 1681 total (lib + integration)"

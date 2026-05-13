@@ -1210,7 +1210,7 @@
     "title": "Chunk coordinate overflow on extreme altitudes (±5000 km+)",
     "category": "world",
     "severity": "high",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-05-01",
     "description": "When a player teleports to extremely high altitudes (e.g., 5,000,000 m above sea level), the chunk manager panics with an integer overflow in src/world/v2/chunk_manager.rs:648:35 during coordinate calculations. This occurs when converting world coordinates to chunk indices for very large altitude values.",
     "reproduction": "The scenario file is committed as `tests/cases/stress/high_altitude.stress.ron.skip` to prevent the suite from running it automatically. To reproduce: rename it to `high_altitude.stress.ron`, then run `cargo test --features test-support --test stress run_all_stress_scenarios`. The scenario teleports to altitudes of 50 km, 500 km, and 5000 km; observe panic: 'attempt to multiply with overflow' in chunk_manager.rs:648:35.",
@@ -1219,7 +1219,7 @@
     ],
     "suspected_cause": "Chunk coordinate calculation likely uses i32 or i64 multiplication/division that overflows when converting extreme altitude values to chunk indices. Altitude of 5,000,000 m (5000 km) is ~0.78× Earth's radius, causing coordinate calculations to exceed integer bounds.",
     "related_commits": [],
-    "resolution": "",
+    "resolution": "Fixed in chunk_manager.rs: promoted the desired-chunks sort-key arithmetic from i32 to i64 and used saturating_mul/saturating_add for the layer_dist * 50_000 term that was overflowing on extreme altitudes. The skipped high_altitude.stress.ron scenario is now enabled and passes (50 km / 500 km / 5000 km teleport sequence).",
     "notes": [
       "Test scenario temporarily renamed to high_altitude.stress.ron.skip to allow other stress tests to proceed.",
       "Only triggered at extreme altitudes far beyond gameplay scope; normal gameplay altitude range (<100 km) does not trigger this.",
