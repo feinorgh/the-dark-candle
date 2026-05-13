@@ -1812,8 +1812,8 @@
       "Line numbers are approximate — may drift with future edits",
       "WGSL shader internals not audited (only confirmed files exist and are referenced by Rust dispatch code)",
       "VoxelGrid/PerceptionGrid adapter for LOS-based perception not yet implemented (distance-only)",
-      "Creature movement is computed but not yet applied through physics solver (MovementIntent stored, not integrated)",
-      "Group behaviors (cooperative hunt, territory defense) have pure functions but no ECS wiring yet",
+      "GaitState.speed is synced from camera for the player but not from PhysicsBody.velocity for AI creatures (creatures currently lack Skeleton/GaitState components anyway, so this only matters once skeletal creatures are spawned)",
+      "Group behaviors (cooperative hunt, territory defense, food sharing, rally) have pure functions in src/social/group_behaviors.rs but are not yet called from any ECS system",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled — basic latitude/altitude/proximity model only"
     ],
     "last_updated": "2026-05-14",
@@ -1848,7 +1848,8 @@
       "GPU planetary-noise parity verified at small-planet (32 km). Spec: docs/superpowers/specs/2026-04-30-gpu-planetary-noise-parity-design.md. Earth-scale parity deferred under issue GPUPARITY-002 (f32 coord-precision divergence in noise inputs).",
       "Gameplay stress / fuzzy test suite added (tests/stress.rs + tests/cases/stress/). Targets historic teleport-related f32 overflow class (CRASH-001). 9 hand-written RON scenarios + 3 proptest generators. Pre-commit hook supports STRESS_PRECOMMIT=1 (3-RON fast subset, ~2 min) and FULL_TESTS=1 (full suite). Already caught CHUNK-002 and STRESS-001.",
       "CHUNK-002 resolved: chunk_manager.rs desired-chunks sort key promoted to i64 with saturating arithmetic to handle extreme altitudes (>1500 km on SmallPlanet, multi-thousand km on Earth). high_altitude.stress.ron now active and passing. Also fixed a pre-existing build break in src/test_support/stress.rs (QueryState lifetime) introduced by commit 3c7606d that blocked --features test-support builds.",
-      "INPUT-001 resolved: extracted shared diagnostics::spawn_screenshot helper; planet/render.rs and DiagnosticsPlugin both call it. Docs F-key table extended to the full F3/F5/F6/F7/F8/F9/F11/F12 set."
+      "INPUT-001 resolved: extracted shared diagnostics::spawn_screenshot helper; planet/render.rs and DiagnosticsPlugin both call it. Docs F-key table extended to the full F3/F5/F6/F7/F8/F9/F11/F12 set.",
+      "Verified MovementIntent → PhysicsBody.velocity wiring is live (execute_action_system in src/behavior/mod.rs lines 408-417); locked in with regression tests wander_action_drives_physics_body_velocity and idle_action_zeroes_horizontal_velocity. The earlier uncertain_area note claiming MovementIntent was not integrated was stale and has been removed."
     ],
     "known_issues_file": "issues.json",
     "test_count": "174 planet tests (49 tectonic, 16 biome, 109 other), 39 V2 chunk tests, 21 GPU tests, 1681 total (lib + integration)"

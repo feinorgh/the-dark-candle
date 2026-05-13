@@ -425,3 +425,119 @@ fn execute_action_system(
 
 /// `NeedsConfig` implements `Resource` for ECS injection.
 impl Resource for needs::NeedsConfig {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::biology::metabolism::Metabolism;
+    use crate::data::{BodySize, Diet};
+    use crate::physics::gravity::PhysicsBody;
+    use crate::procgen::creatures::Creature;
+    use crate::social::SocialActionMessage;
+
+    fn make_test_creature(speed: f32) -> Creature {
+        Creature {
+            species: "test".into(),
+            display_name: "Test".into(),
+            health: 100.0,
+            max_health: 100.0,
+            speed,
+            attack: 5.0,
+            body_size: BodySize::Medium,
+            diet: Diet::Herbivore,
+            color: [0.5, 0.5, 0.5],
+            hostile: false,
+            lifespan: None,
+            age: 0,
+        }
+    }
+
+    /// Locks in the behavior → physics wiring: a creature with a `Wander`
+    /// action must end the tick with a non-zero horizontal velocity on its
+    /// `PhysicsBody`.  Earlier `ai-context.json` notes claimed
+    /// `MovementIntent` was not integrated; this test exists to prove
+    /// otherwise and prevent regression.
+    #[test]
+    fn wander_action_drives_physics_body_velocity() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_message::<SocialActionMessage>();
+        app.init_resource::<needs::NeedsConfig>();
+        app.add_systems(Update, execute_action_system);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                make_test_creature(4.0),
+                needs::Needs::default(),
+                Metabolism::for_body_size(BodySize::Medium),
+                CurrentAction(utility::Action::Wander),
+                CreaturePath::default(),
+                PhysicsBody::default(),
+                Transform::from_xyz(0.0, 64.0, 0.0),
+            ))
+            .id();
+
+        app.update();
+
+        let body = app
+            .world()
+            .entity(entity)
+            .get::<PhysicsBody>()
+            .expect("PhysicsBody must still be present after the tick");
+        let horizontal = (body.velocity.x.powi(2) + body.velocity.z.powi(2)).sqrt();
+        assert!(
+            horizontal > 0.0,
+            "Wander must produce non-zero horizontal velocity; got {:?}",
+            body.velocity
+        );
+        // Wander uses speed_multiplier 0.5, so |v_xz| should not exceed
+        // creature.speed.  Allows a small slack for rounding.
+        assert!(
+            horizontal <= 4.0 + 1e-3,
+            "Wander velocity must respect creature.speed cap; got {horizontal}"
+        );
+    }
+
+    /// Idle must produce *zero* horizontal velocity (the friction branch
+    /// of `execute_action_system` zeroes x/z).  This guards the inverse
+    /// case so a future refactor can't accidentally leak movement.
+    #[test]
+    fn idle_action_zeroes_horizontal_velocity() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_message::<SocialActionMessage>();
+        app.init_resource::<needs::NeedsConfig>();
+        app.add_systems(Update, execute_action_system);
+
+        let body = PhysicsBody {
+            velocity: Vec3::new(2.5, -1.0, -3.0), // pre-existing motion
+            ..Default::default()
+        };
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                make_test_creature(4.0),
+                needs::Needs::default(),
+                Metabolism::for_body_size(BodySize::Medium),
+                CurrentAction(utility::Action::Idle),
+                CreaturePath::default(),
+                body,
+                Transform::from_xyz(0.0, 64.0, 0.0),
+            ))
+            .id();
+
+        app.update();
+
+        let body = app.world().entity(entity).get::<PhysicsBody>().unwrap();
+        assert_eq!(body.velocity.x, 0.0, "Idle must zero horizontal x velocity");
+        assert_eq!(body.velocity.z, 0.0, "Idle must zero horizontal z velocity");
+        // Vertical (gravity-axis) velocity must be preserved so gravity
+        // continues to integrate normally.
+        assert_eq!(
+            body.velocity.y, -1.0,
+            "Idle must preserve vertical velocity for gravity"
+        );
+    }
+}
