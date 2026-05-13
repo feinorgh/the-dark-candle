@@ -309,4 +309,133 @@ mod tests {
         // Rotation should differ from rest.
         assert!(tx.rotation.angle_between(rest_rotation) > 0.01);
     }
+
+    /// End-to-end pipeline smoke test:
+    /// `ai_gait_from_velocity` (PhysicsBody → GaitState.speed)
+    ///   → `advance_gait_phase` (dt-driven phase update + mode selection)
+    ///   → `animate_procedural_body` (GaitState → child Transform).
+    ///
+    /// Spawns a `Creature` with non-zero horizontal `PhysicsBody.velocity`
+    /// and a body parented child via `spawn_procedural_body`, runs the
+    /// chained schedule, and asserts at least one body part transform
+    /// deviates from rest. Verifies the AI animation pipeline end-to-end
+    /// without pulling in the full `BodiesPlugin` (which would load RON
+    /// assets and the player system).
+    #[test]
+    fn ai_creature_pipeline_animates_body_part_from_velocity() {
+        use crate::bodies::locomotion::{advance_gait_phase, ai_gait_from_velocity};
+        use crate::bodies::procedural_body::spawn_procedural_body;
+        use crate::data::{BodySize, Diet};
+        use crate::physics::gravity::PhysicsBody;
+        use crate::procgen::creatures::Creature;
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        // Need Assets<Mesh> / Assets<StandardMaterial> registered for
+        // spawn_procedural_body, and Assets<GaitData> for advance_gait_phase.
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<crate::bodies::locomotion::GaitData>>();
+
+        app.add_systems(
+            Update,
+            (
+                ai_gait_from_velocity,
+                advance_gait_phase.after(ai_gait_from_velocity),
+                animate_procedural_body.after(advance_gait_phase),
+            ),
+        );
+
+        let creature = Creature {
+            species: "test".into(),
+            display_name: "Test".into(),
+            health: 10.0,
+            max_health: 10.0,
+            speed: 2.0,
+            attack: 0.0,
+            body_size: BodySize::Medium,
+            diet: Diet::Herbivore,
+            color: [1.0, 1.0, 1.0],
+            hostile: false,
+            lifespan: None,
+            age: 0,
+        };
+        let physics = PhysicsBody {
+            velocity: Vec3::new(2.0, 0.0, 0.0),
+            ..PhysicsBody::default()
+        };
+
+        let creature_entity = app
+            .world_mut()
+            .spawn((
+                creature,
+                physics,
+                GaitState::default(),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+
+        // Spawn body parts directly via a one-shot exclusive system.
+        app.world_mut()
+            .run_system_once(
+                move |mut commands: Commands,
+                      mut meshes: ResMut<Assets<Mesh>>,
+                      mut materials: ResMut<Assets<StandardMaterial>>| {
+                    spawn_procedural_body(
+                        &mut commands,
+                        creature_entity,
+                        BodyPlan::Quadruped,
+                        (1.0, 0.8, 1.5),
+                        Color::WHITE,
+                        &mut meshes,
+                        &mut materials,
+                    );
+                },
+            )
+            .expect("run_system_once");
+
+        // Tick the schedule a few times so phase advances off zero.
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let world = app.world();
+        let children = world.get::<Children>(creature_entity).expect("body parts");
+        assert!(children.iter().count() > 0, "no body parts spawned");
+
+        let mut found_movement = false;
+        for child in children.iter() {
+            let Some(part) = world.get::<BodyPart>(child) else {
+                continue;
+            };
+            let Some(tx) = world.get::<Transform>(child) else {
+                continue;
+            };
+            let rot_delta = tx.rotation.angle_between(part.rest_rotation);
+            let trans_delta = (tx.translation - part.rest_translation).length();
+            if rot_delta > 1e-3 || trans_delta > 1e-4 {
+                found_movement = true;
+                break;
+            }
+        }
+        assert!(
+            found_movement,
+            "expected at least one BodyPart to deviate from rest after running the full \
+             ai_gait_from_velocity → advance_gait_phase → animate_procedural_body pipeline"
+        );
+
+        let gait = world.get::<GaitState>(creature_entity).unwrap();
+        assert!(
+            gait.speed > 1.5,
+            "ai_gait_from_velocity should have set GaitState.speed (got {})",
+            gait.speed
+        );
+        assert!(
+            !matches!(gait.mode, GaitMode::Idle),
+            "creature moving at 2 m/s should not be Idle (mode = {:?})",
+            gait.mode
+        );
+    }
 }

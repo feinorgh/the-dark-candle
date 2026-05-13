@@ -188,8 +188,9 @@ fn spawn_creatures(
 
             let color = Color::srgb(creature.color[0], creature.color[1], creature.color[2]);
             let (hx, hy, hz) = template.hitbox;
-            let body_plan =
-                crate::bodies::procedural_body::BodyPlan::default_for_size(template.body_size);
+            let body_plan = template.body_plan.unwrap_or_else(|| {
+                crate::bodies::procedural_body::BodyPlan::default_for_size(template.body_size)
+            });
             let gait_path = match body_plan {
                 crate::bodies::procedural_body::BodyPlan::Biped => &biped_gait_path.0,
                 _ => &quadruped_gait_path.0,

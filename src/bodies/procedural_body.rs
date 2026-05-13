@@ -32,7 +32,7 @@ use crate::data::BodySize;
 
 /// High-level body archetype. Selects how many parts are generated and where
 /// they attach.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
 pub enum BodyPlan {
     Quadruped,
     Biped,

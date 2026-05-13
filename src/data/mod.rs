@@ -410,6 +410,13 @@ pub struct CreatureData {
     /// Lifespan in simulation ticks (None = immortal).
     #[serde(default)]
     pub lifespan: Option<u32>,
+    /// Optional explicit body plan override for procedural animation.
+    /// When `None`, the plan is derived from `body_size` via
+    /// `BodyPlan::default_for_size`. Useful for species whose silhouette
+    /// shouldn't match the body-size default (e.g., a tiny serpent, or a
+    /// huge biped).
+    #[serde(default)]
+    pub body_plan: Option<crate::bodies::procedural_body::BodyPlan>,
 }
 
 fn default_variation() -> f32 {

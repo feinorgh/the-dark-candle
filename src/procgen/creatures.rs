@@ -182,6 +182,7 @@ mod tests {
             preferred_biomes: vec!["forest".into()],
             hostile: true,
             lifespan: Some(40000),
+            body_plan: None,
         }
     }
 
