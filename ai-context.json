@@ -1812,7 +1812,6 @@
       "Line numbers are approximate — may drift with future edits",
       "WGSL shader internals not audited (only confirmed files exist and are referenced by Rust dispatch code)",
       "VoxelGrid/PerceptionGrid adapter for LOS-based perception not yet implemented (distance-only)",
-      "GaitState.speed is synced from camera for the player but not from PhysicsBody.velocity for AI creatures (creatures currently lack Skeleton/GaitState components anyway, so this only matters once skeletal creatures are spawned)",
       "Group rally is wired (src/social/group_systems.rs) and opt-in via SocialGroupMember component, but no creature spawn-side code adds the component yet — the path is dormant until a creature template marks species as social. The other three group planners (cooperative hunt, territory defense, food sharing) remain unwired.",
       "Full atmospheric circulation (Hadley cells, ocean currents, seasonal variation) not yet modelled — basic latitude/altitude/proximity model only"
     ],
@@ -3150,5 +3149,6 @@
       "notes": "Targets the historic teleport-related f32 overflow crash class (CRASH-001). Test-support feature gate compiles harness only when --features test-support. high_altitude.stress.ron deferred (.skip) pending CHUNK-002 fix.",
       "uncertain": []
     }
-  ]
+  ],
+  "uncertain_areas": []
 }

@@ -223,24 +223,28 @@ fn find_foot_placement(world_pos: Vec3, chunks: &Query<&Chunk>) -> Option<Vec3> 
 // Locomotion system
 // ---------------------------------------------------------------------------
 
-/// Update gait phases, apply bone angle keyframes, place feet on terrain via IK,
-/// and accumulate metabolic energy costs.
+/// Update gait phases, mode, and metabolic cost for **all** entities with
+/// `GaitState`, regardless of whether they have a `Skeleton`.
 ///
-/// Should run in `FixedUpdate` after physics integration and before rendering.
-pub fn update_locomotion(
+/// Skeleton bone keyframing and IK foot placement are handled separately by
+/// [`apply_skeleton_gait_and_ik`] for entities that *do* have a `Skeleton`.
+/// Procedural-body creatures (no `Skeleton`) consume the advanced phase via
+/// [`super::procedural_body_anim::animate_procedural_body`].
+///
+/// Should run in `FixedUpdate` after the AI gait driver has set
+/// `GaitState.speed`, and before any consumer of the phase.
+pub fn advance_gait_phase(
     time: Res<Time>,
     gait_assets: Res<Assets<GaitData>>,
-    chunks: Query<&Chunk>,
     mut query: Query<(
         &mut GaitState,
-        &mut Skeleton,
         Option<&GaitDataHandle>,
         Option<&mut PendingMetabolicCost>,
     )>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut gait_state, mut skeleton, gait_handle, mut metabolic) in &mut query {
+    for (mut gait_state, gait_handle, mut metabolic) in &mut query {
         // ── 1. Update gait mode from speed ──────────────────────────────────
         gait_state.mode = select_gait_mode(gait_state.speed);
 
@@ -252,19 +256,44 @@ pub fn update_locomotion(
         let cycle_duration = cycle_opt.map(|c| c.cycle_duration_s).unwrap_or(0.6);
 
         // ── 3. Advance phase ─────────────────────────────────────────────────
-        if gait_state.speed > 0.0 {
-            gait_state.phase = (gait_state.phase + dt / cycle_duration).rem_euclid(1.0);
-        } else {
-            // Idle: reset phase toward 0 smoothly.
-            gait_state.phase = (gait_state.phase * (1.0 - dt * 4.0)).max(0.0);
-        }
+        // Phase advances even at zero speed so idle creatures can show
+        // breathing/sway driven by `procedural_body_anim`.
+        gait_state.phase = (gait_state.phase + dt / cycle_duration).rem_euclid(1.0);
 
-        // ── 4. Apply bone angle keyframes ────────────────────────────────────
+        // ── 4. Metabolic energy expenditure ──────────────────────────────────
+        if gait_state.speed > 0.0 {
+            let energy_cost_j_per_m = cycle_opt.map(|c| c.energy_cost_j_per_m).unwrap_or(80.0);
+            // Distance covered this tick × energy per metre → joules.
+            // Divide by 1000 to convert to kJ for the biology system.
+            let delta_energy = gait_state.speed * dt * energy_cost_j_per_m / 1000.0;
+            if let Some(ref mut cost) = metabolic {
+                cost.0 += delta_energy;
+            }
+        }
+    }
+}
+
+/// Apply gait bone keyframes and procedural IK foot placement for entities
+/// with a full `Skeleton`. Reads the already-advanced phase from
+/// [`advance_gait_phase`].
+///
+/// Should run in `FixedUpdate` after `advance_gait_phase`.
+pub fn apply_skeleton_gait_and_ik(
+    gait_assets: Res<Assets<GaitData>>,
+    chunks: Query<&Chunk>,
+    mut query: Query<(&GaitState, &mut Skeleton, Option<&GaitDataHandle>)>,
+) {
+    for (gait_state, mut skeleton, gait_handle) in &mut query {
+        let cycle_opt: Option<&GaitCycle> = gait_handle
+            .and_then(|h| gait_assets.get(&h.0))
+            .and_then(|data| find_cycle(&data.gaits, &gait_state.mode));
+
+        // Apply bone angle keyframes.
         if let Some(cycle) = cycle_opt {
             apply_gait_keyframes(&mut skeleton, cycle, gait_state.phase);
         }
 
-        // ── 5. Procedural IK foot placement ─────────────────────────────────
+        // Procedural IK foot placement.
         for i in 0..skeleton.bone_names.len() {
             let name = &skeleton.bone_names[i];
             if name.contains("foot") || name.contains("hoof") || name.contains("paw") {
@@ -274,15 +303,56 @@ pub fn update_locomotion(
                 }
             }
         }
+    }
+}
 
-        // ── 6. Metabolic energy expenditure ──────────────────────────────────
+/// Backward-compatible wrapper that runs both passes in sequence.
+///
+/// Kept so existing callers (and tests that schedule `update_locomotion`
+/// directly) continue to work. New code should schedule
+/// [`advance_gait_phase`] and [`apply_skeleton_gait_and_ik`] separately.
+#[deprecated(note = "Use advance_gait_phase + apply_skeleton_gait_and_ik instead")]
+pub fn update_locomotion(
+    time: Res<Time>,
+    gait_assets: Res<Assets<GaitData>>,
+    chunks: Query<&Chunk>,
+    mut phase_query: Query<(
+        &mut GaitState,
+        Option<&GaitDataHandle>,
+        Option<&mut PendingMetabolicCost>,
+    )>,
+    mut skel_query: Query<(&GaitState, &mut Skeleton, Option<&GaitDataHandle>)>,
+) {
+    let dt = time.delta_secs();
+    for (mut gait_state, gait_handle, mut metabolic) in &mut phase_query {
+        gait_state.mode = select_gait_mode(gait_state.speed);
+        let cycle_opt: Option<&GaitCycle> = gait_handle
+            .and_then(|h| gait_assets.get(&h.0))
+            .and_then(|data| find_cycle(&data.gaits, &gait_state.mode));
+        let cycle_duration = cycle_opt.map(|c| c.cycle_duration_s).unwrap_or(0.6);
+        gait_state.phase = (gait_state.phase + dt / cycle_duration).rem_euclid(1.0);
         if gait_state.speed > 0.0 {
             let energy_cost_j_per_m = cycle_opt.map(|c| c.energy_cost_j_per_m).unwrap_or(80.0);
-            // Distance covered this tick × energy per metre → joules.
-            // Divide by 1000 to convert to kJ for the biology system.
             let delta_energy = gait_state.speed * dt * energy_cost_j_per_m / 1000.0;
             if let Some(ref mut cost) = metabolic {
                 cost.0 += delta_energy;
+            }
+        }
+    }
+    for (gait_state, mut skeleton, gait_handle) in &mut skel_query {
+        let cycle_opt: Option<&GaitCycle> = gait_handle
+            .and_then(|h| gait_assets.get(&h.0))
+            .and_then(|data| find_cycle(&data.gaits, &gait_state.mode));
+        if let Some(cycle) = cycle_opt {
+            apply_gait_keyframes(&mut skeleton, cycle, gait_state.phase);
+        }
+        for i in 0..skeleton.bone_names.len() {
+            let name = &skeleton.bone_names[i];
+            if name.contains("foot") || name.contains("hoof") || name.contains("paw") {
+                let foot_world = skeleton.bone_transforms[i].translation;
+                if let Some(target) = find_foot_placement(foot_world, &chunks) {
+                    skeleton.ik_targets[i] = Some(target);
+                }
             }
         }
     }
@@ -323,6 +393,36 @@ fn apply_gait_keyframes(skeleton: &mut Skeleton, cycle: &GaitCycle, phase: f32) 
 
         skeleton.bone_transforms[bone_idx].rotation =
             Quat::from_euler(EulerRot::XYZ, euler.x, euler.y, euler.z);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AI gait driver
+// ---------------------------------------------------------------------------
+
+/// System: copy the horizontal speed of every AI creature's `PhysicsBody`
+/// into its `GaitState.speed` so that procedural-body animation responds to
+/// actual motion. Mode is selected via [`select_gait_mode`].
+///
+/// Runs after `BehaviorSet` (which writes `PhysicsBody.velocity`) and before
+/// [`advance_gait_phase`].
+///
+/// Excludes the player explicitly because the player's gait is driven from
+/// `FpsCamera.speed` by [`super::player::player_gait_from_velocity`].
+#[allow(clippy::type_complexity)]
+pub fn ai_gait_from_velocity(
+    mut query: Query<
+        (&mut GaitState, &crate::physics::gravity::PhysicsBody),
+        (
+            With<crate::procgen::creatures::Creature>,
+            Without<crate::hud::Player>,
+        ),
+    >,
+) {
+    for (mut gait, body) in &mut query {
+        let horizontal = Vec2::new(body.velocity.x, body.velocity.z).length();
+        gait.speed = horizontal;
+        gait.mode = select_gait_mode(horizontal);
     }
 }
 
@@ -410,5 +510,103 @@ mod tests {
         };
         assert_eq!(sk.bone_index("left_foot"), Some(1));
         assert_eq!(sk.bone_index("missing"), None);
+    }
+
+    #[test]
+    fn ai_gait_from_velocity_sets_speed_and_mode() {
+        use crate::physics::gravity::PhysicsBody;
+        use crate::procgen::creatures::Creature;
+
+        // Build a minimal world with a creature entity.
+        let mut app = App::new();
+        app.add_systems(Update, ai_gait_from_velocity);
+
+        let creature = Creature {
+            species: "test".into(),
+            display_name: "Test".into(),
+            health: 1.0,
+            max_health: 1.0,
+            speed: 1.0,
+            attack: 0.0,
+            body_size: crate::data::BodySize::Small,
+            diet: crate::data::Diet::Herbivore,
+            color: [1.0, 1.0, 1.0],
+            hostile: false,
+            lifespan: None,
+            age: 0,
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                creature,
+                GaitState::default(),
+                PhysicsBody {
+                    velocity: Vec3::new(3.0, 99.0, 4.0),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.update();
+
+        let g = app.world().get::<GaitState>(entity).unwrap();
+        // sqrt(3^2 + 4^2) = 5
+        assert!((g.speed - 5.0).abs() < 1e-4, "speed={}", g.speed);
+        // Vertical component (99) is ignored.
+        assert_eq!(g.mode, GaitMode::Run);
+    }
+
+    #[test]
+    fn ai_gait_from_velocity_skips_player() {
+        use crate::hud::Player;
+        use crate::physics::gravity::PhysicsBody;
+        use crate::procgen::creatures::Creature;
+
+        let mut app = App::new();
+        app.add_systems(Update, ai_gait_from_velocity);
+
+        let creature = Creature {
+            species: "p".into(),
+            display_name: "P".into(),
+            health: 1.0,
+            max_health: 1.0,
+            speed: 1.0,
+            attack: 0.0,
+            body_size: crate::data::BodySize::Small,
+            diet: crate::data::Diet::Herbivore,
+            color: [1.0, 1.0, 1.0],
+            hostile: false,
+            lifespan: None,
+            age: 0,
+        };
+        let entity = app
+            .world_mut()
+            .spawn((
+                creature,
+                Player,
+                GaitState::default(),
+                PhysicsBody {
+                    velocity: Vec3::new(3.0, 0.0, 4.0),
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.update();
+
+        let g = app.world().get::<GaitState>(entity).unwrap();
+        // Player must not have its speed overridden by the AI driver.
+        assert_eq!(g.speed, 0.0);
+    }
+
+    #[test]
+    fn advance_gait_phase_advances_even_when_idle() {
+        // Pure-function check that the phase math advances at zero speed
+        // (replicating the relevant arithmetic from advance_gait_phase).
+        let mut phase = 0.0_f32;
+        let dt = 0.016_f32;
+        let cycle_duration = 1.4_f32; // matches quadruped idle
+        for _ in 0..10 {
+            phase = (phase + dt / cycle_duration).rem_euclid(1.0);
+        }
+        assert!(phase > 0.0, "phase should advance even when idle");
     }
 }

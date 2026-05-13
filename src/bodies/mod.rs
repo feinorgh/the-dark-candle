@@ -13,6 +13,8 @@ pub mod locomotion;
 pub mod perception;
 pub mod plant;
 pub mod player;
+pub mod procedural_body;
+pub mod procedural_body_anim;
 pub mod skeleton;
 pub mod tissue;
 
@@ -24,7 +26,7 @@ use plant::TreeSkeletonData;
 use skeleton::SkeletonData;
 use tissue::BodyData;
 
-use player::{BipedGaitPath, HumanoidSkeletonPath};
+use player::{BipedGaitPath, HumanoidSkeletonPath, QuadrupedGaitPath};
 
 /// System-set label for all body-physics systems.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -45,7 +47,8 @@ impl Plugin for BodiesPlugin {
 
         // --- Resources ---
         app.init_resource::<HumanoidSkeletonPath>()
-            .init_resource::<BipedGaitPath>();
+            .init_resource::<BipedGaitPath>()
+            .init_resource::<QuadrupedGaitPath>();
 
         // --- Systems ---
         app.add_systems(
@@ -53,9 +56,18 @@ impl Plugin for BodiesPlugin {
             (
                 skeleton::init_skeletons,
                 skeleton::apply_skeleton_fk,
-                locomotion::update_locomotion,
                 player::attach_player_body,
                 player::player_gait_from_velocity,
+                // AI gait must run after BehaviorSet (writes velocity) and
+                // before phase advance.
+                locomotion::ai_gait_from_velocity
+                    .after(crate::behavior::BehaviorSet)
+                    .after(player::player_gait_from_velocity),
+                locomotion::advance_gait_phase
+                    .after(locomotion::ai_gait_from_velocity)
+                    .after(player::player_gait_from_velocity),
+                locomotion::apply_skeleton_gait_and_ik.after(locomotion::advance_gait_phase),
+                procedural_body_anim::animate_procedural_body.after(locomotion::advance_gait_phase),
             )
                 .in_set(BodiesSet),
         );

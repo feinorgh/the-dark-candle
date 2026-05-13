@@ -89,11 +89,15 @@ impl Plugin for ProcgenPlugin {
 /// When `ChunkBiomeData` is present (planetary terrain mode) it uses the
 /// generated climate data (temperature_k, precipitation_mm) to match a
 /// procgen `BiomeData`; otherwise falls back to the height-based heuristic.
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn spawn_creatures(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+    biped_gait_path: Res<crate::bodies::player::BipedGaitPath>,
+    quadruped_gait_path: Res<crate::bodies::player::QuadrupedGaitPath>,
     creature_registry: Res<creatures::CreatureRegistry>,
     biome_assets: Res<Assets<biomes::BiomeData>>,
     mut to_spawn: Query<
@@ -184,6 +188,14 @@ fn spawn_creatures(
 
             let color = Color::srgb(creature.color[0], creature.color[1], creature.color[2]);
             let (hx, hy, hz) = template.hitbox;
+            let body_plan =
+                crate::bodies::procedural_body::BodyPlan::default_for_size(template.body_size);
+            let gait_path = match body_plan {
+                crate::bodies::procedural_body::BodyPlan::Biped => &biped_gait_path.0,
+                _ => &quadruped_gait_path.0,
+            };
+            let gait_handle =
+                asset_server.load::<crate::bodies::locomotion::GaitData>(gait_path.clone());
 
             let creature_entity = commands
                 .spawn((
@@ -198,14 +210,22 @@ fn spawn_creatures(
                     crate::social::relationships::Relationships::default(),
                     crate::physics::gravity::PhysicsBody::default().with_foot_offset(hy * 0.5),
                     crate::physics::collision::Collider::new(hx, hy, hz),
-                    Mesh3d(meshes.add(Cuboid::new(hx, hy, hz))),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: color,
-                        ..default()
-                    })),
+                    crate::bodies::locomotion::GaitState::default(),
+                    crate::bodies::locomotion::GaitDataHandle(gait_handle),
                     Transform::from_translation(world_pos),
+                    Visibility::default(),
                 ))
                 .id();
+
+            crate::bodies::procedural_body::spawn_procedural_body(
+                &mut commands,
+                creature_entity,
+                body_plan,
+                (hx, hy, hz),
+                color,
+                &mut meshes,
+                &mut materials,
+            );
 
             chunk_creatures.entities.push(creature_entity);
         }

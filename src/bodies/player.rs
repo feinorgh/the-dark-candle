@@ -36,6 +36,17 @@ impl Default for BipedGaitPath {
     }
 }
 
+/// Path to the quadruped gait RON asset, used by procedurally-bodied AI
+/// quadrupeds purely for cycle-duration metadata (bone targets ignored).
+#[derive(Resource)]
+pub struct QuadrupedGaitPath(pub String);
+
+impl Default for QuadrupedGaitPath {
+    fn default() -> Self {
+        Self("data/gaits/quadruped.gait.ron".into())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
