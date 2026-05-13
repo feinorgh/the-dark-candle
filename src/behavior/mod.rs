@@ -75,7 +75,7 @@ fn tick_needs_system(
 /// Uses simple distance checks between creatures. Full line-of-sight through
 /// the voxel grid is deferred until a VoxelGrid adapter is implemented.
 // TODO: implement VoxelGrid adapter for LOS-based perception (tick-stagger for perf).
-fn perceive_and_select_action(
+pub(crate) fn perceive_and_select_action(
     mut actors: Query<(
         Entity,
         &Transform,
@@ -186,7 +186,8 @@ fn action_target(action: &utility::Action) -> Option<[i32; 3]> {
     match action {
         utility::Action::Eat { target }
         | utility::Action::Socialize { target }
-        | utility::Action::Attack { target } => Some(*target),
+        | utility::Action::Attack { target }
+        | utility::Action::RegroupAt { target } => Some(*target),
         utility::Action::Flee { from } => Some(*from),
         _ => None,
     }
@@ -204,7 +205,7 @@ fn target_distance(a: [i32; 3], b: [i32; 3]) -> f32 {
 /// Builds a [`WorldVoxelGrid`](pathfinding::WorldVoxelGrid) once per tick from
 /// loaded chunks, then runs [`find_path`](pathfinding::find_path) for up to
 /// [`MAX_PATHS_PER_TICK`] creatures that need re-planning.
-fn compute_paths(
+pub(crate) fn compute_paths(
     mut creatures: Query<(&Transform, &CurrentAction, &Creature, &mut CreaturePath)>,
     chunks: Query<(&Chunk, &ChunkCoord)>,
 ) {
@@ -283,7 +284,7 @@ fn compute_paths(
 /// restores energy. Item removal from `ChunkItems` tracking happens lazily when
 /// the chunk itself unloads.
 #[allow(clippy::type_complexity)]
-fn execute_action_system(
+pub(crate) fn execute_action_system(
     mut commands: Commands,
     mut query: Query<(
         Entity,
@@ -356,6 +357,9 @@ fn execute_action_system(
             }
             utility::Action::Attack { target } => {
                 behaviors::execute_attack(pos, effective_target(*target), 2.0)
+            }
+            utility::Action::RegroupAt { target } => {
+                behaviors::execute_regroup(pos, effective_target(*target), 2.0)
             }
         };
 

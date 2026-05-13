@@ -179,6 +179,37 @@ pub fn execute_attack(pos: [f32; 3], target: [i32; 3], attack_range: f32) -> Beh
     }
 }
 
+/// Execute regroup: move toward a group rally point.
+///
+/// Mechanically similar to `execute_socialize` but with distinct semantics —
+/// the target is a coordinated rally position selected by the social
+/// group-planning system, not an ally to socialise with.
+///
+/// `pos`: creature's current position.
+/// `rally`: rally point in voxel coordinates.
+/// `stop_range`: distance at which the creature considers itself "regrouped".
+pub fn execute_regroup(pos: [f32; 3], rally: [i32; 3], stop_range: f32) -> BehaviorOutput {
+    let dx = rally[0] as f32 - pos[0];
+    let dy = rally[1] as f32 - pos[1];
+    let dz = rally[2] as f32 - pos[2];
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+
+    if dist <= stop_range {
+        BehaviorOutput::default()
+    } else {
+        let inv = 1.0 / dist;
+        BehaviorOutput {
+            movement: MovementIntent {
+                direction: [dx * inv, dy * inv, dz * inv],
+                // Slightly faster than wander, slower than flee — coordinated
+                // movement, not panic.
+                speed_multiplier: 0.9,
+            },
+            ..Default::default()
+        }
+    }
+}
+
 /// Normalize a direction vector in-place.
 fn normalize(d: &mut [f32; 3]) {
     let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();

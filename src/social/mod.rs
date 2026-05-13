@@ -1,5 +1,6 @@
 pub mod factions;
 pub mod group_behaviors;
+pub mod group_systems;
 pub mod relationships;
 pub mod reputation;
 
@@ -40,6 +41,18 @@ impl Plugin for SocialPlugin {
                 )
                     .in_set(SocialSet)
                     .after(BehaviorSet),
+            )
+            // Group-coordination override: must run after action selection
+            // and before pathfinding so the rally target reaches `compute_paths`
+            // the same tick. Lives in `BehaviorSet`, not `SocialSet`, because
+            // it mutates `CurrentAction` (a behavior-layer component) and
+            // `SocialSet` runs *after* `BehaviorSet`.
+            .add_systems(
+                FixedUpdate,
+                group_systems::plan_group_rally_system
+                    .after(crate::behavior::perceive_and_select_action)
+                    .before(crate::behavior::compute_paths)
+                    .in_set(BehaviorSet),
             );
     }
 }

@@ -23,6 +23,10 @@ pub enum Action {
     Socialize { target: [i32; 3] },
     /// Attack a target creature or destructible.
     Attack { target: [i32; 3] },
+    /// Move toward a group rally point. Externally imposed by the social
+    /// group-coordination system; never produced by the per-creature utility
+    /// AI (deliberately omitted from `score_actions`).
+    RegroupAt { target: [i32; 3] },
 }
 
 /// An action paired with its computed utility score.
