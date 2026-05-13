@@ -1,0 +1,18 @@
+StressScenario(
+    description: "Teleport to all 8 cube-face corners (3-face junctions)",
+    seed: 200,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat:  35.264, lon:   45.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat:  35.264, lon:  135.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat:  35.264, lon: -135.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat:  35.264, lon:  -45.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat: -35.264, lon:   45.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat: -35.264, lon:  135.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat: -35.264, lon: -135.0, altitude_m: 0.0, then_tick: 30),
+        Teleport(lat: -35.264, lon:  -45.0, altitude_m: 0.0, then_tick: 30),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)

@@ -1,0 +1,11 @@
+StressScenario(
+    description: "Smoke test: build app, idle, teleport once, idle again",
+    seed: 1,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: 100.0, then_tick: 30),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)

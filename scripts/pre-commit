@@ -2,10 +2,15 @@
 # Pre-commit hook for The Dark Candle
 # Runs formatting check, linting, and fast tests before allowing a commit.
 #
-# By default, only lib (unit) tests and asset validation run (~1s).
-# Heavy integration tests (simulations, visual rendering, GPU) are skipped.
+# Behaviour is controlled by environment variables:
+#   (default)      lib + asset validation only (~1s). Stress tests skipped.
+#   STRESS_PRECOMMIT=1  runs 3-scenario stress subset (~2 min)
+#   FULL_TESTS=1   runs full suite: all tests + stress (~5+ min). Overrides STRESS_PRECOMMIT=1.
 #
-# To run the full test suite: FULL_TESTS=1 git commit ...
+# Examples:
+#   git commit                              # default: fmt + clippy + lib + assets
+#   STRESS_PRECOMMIT=1 git commit           # + 3-scenario stress subset
+#   FULL_TESTS=1 git commit                 # + full stress suite
 #
 # Install: ./scripts/install-hooks.sh
 
@@ -19,7 +24,7 @@ NC='\033[0m'
 echo -e "${YELLOW}[pre-commit]${NC} Running checks..."
 
 # 1. Format check
-echo -e "${YELLOW}[1/3]${NC} cargo fmt --check"
+echo -e "${YELLOW}[1/4]${NC} cargo fmt --check"
 if ! cargo fmt --check 2>&1; then
     echo -e "${RED}✗ Formatting issues found. Run 'cargo fmt' to fix.${NC}"
     exit 1
@@ -27,23 +32,39 @@ fi
 echo -e "${GREEN}  ✓ Formatting OK${NC}"
 
 # 2. Clippy lint
-echo -e "${YELLOW}[2/3]${NC} cargo clippy"
+echo -e "${YELLOW}[2/4]${NC} cargo clippy"
 if ! cargo clippy --all-targets -- -D warnings 2>&1; then
     echo -e "${RED}✗ Clippy warnings found. Fix them before committing.${NC}"
     exit 1
 fi
 echo -e "${GREEN}  ✓ Clippy OK${NC}"
 
+# 2b. Additional clippy pass with test-support feature in opt-in modes
+if [ "${FULL_TESTS:-0}" = "1" ] || [ "${STRESS_PRECOMMIT:-0}" = "1" ]; then
+    echo -e "${YELLOW}[2b/4]${NC} cargo clippy --features test-support"
+    if ! cargo clippy --all-targets --features test-support -- -D warnings 2>&1; then
+        echo -e "${RED}✗ Clippy (test-support) warnings found. Fix them before committing.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ Clippy (test-support) OK${NC}"
+fi
+
 # 3. Tests
 if [ "${FULL_TESTS:-0}" = "1" ]; then
-    echo -e "${YELLOW}[3/3]${NC} cargo test (full suite)"
+    echo -e "${YELLOW}[3/4]${NC} cargo test (all tests, no feature flag)"
     if ! cargo test 2>&1; then
         echo -e "${RED}✗ Tests failed.${NC}"
         exit 1
     fi
     echo -e "${GREEN}  ✓ All tests OK${NC}"
+    echo -e "${YELLOW}[3b/4]${NC} cargo test --features test-support --lib (harness unit tests)"
+    if ! cargo test --features test-support --lib 2>&1; then
+        echo -e "${RED}✗ test-support lib tests failed.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ test-support lib tests OK${NC}"
 else
-    echo -e "${YELLOW}[3/3]${NC} cargo test --lib + validate_assets (fast)"
+    echo -e "${YELLOW}[3/4]${NC} cargo test --lib + validate_assets (fast)"
     if ! cargo test --lib 2>&1; then
         echo -e "${RED}✗ Unit tests failed.${NC}"
         exit 1
@@ -52,7 +73,27 @@ else
         echo -e "${RED}✗ Asset validation failed.${NC}"
         exit 1
     fi
-    echo -e "${GREEN}  ✓ Fast tests OK (skip heavy integration; use FULL_TESTS=1 for all)${NC}"
+    echo -e "${GREEN}  ✓ Fast tests OK${NC}"
+fi
+
+# 4. Stress test subset (opt-in)
+if [ "${FULL_TESTS:-0}" = "1" ]; then
+    echo -e "${YELLOW}[4/4]${NC} cargo test --features test-support --test stress (full stress suite)"
+    if ! cargo test --features test-support --test stress 2>&1; then
+        echo -e "${RED}✗ Stress tests failed.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ All stress tests OK${NC}"
+elif [ "${STRESS_PRECOMMIT:-0}" = "1" ]; then
+    echo -e "${YELLOW}[4/4]${NC} STRESS_FAST=1 cargo test --features test-support --test stress (subset)"
+    if ! STRESS_FAST=1 cargo test --features test-support --test stress run_all_stress_scenarios --quiet 2>&1; then
+        echo -e "${RED}✗ Stress tests failed.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ Stress subset OK${NC}"
+else
+    echo -e "${YELLOW}[4/4]${NC} stress fast subset skipped"
+    echo -e "  ${YELLOW}⊘${NC} stress fast subset skipped (set STRESS_PRECOMMIT=1 to run, or FULL_TESTS=1 for full suite)"
 fi
 
 echo -e "${GREEN}[pre-commit] All checks passed.${NC}"

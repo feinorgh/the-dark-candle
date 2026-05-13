@@ -1,0 +1,17 @@
+StressScenario(
+    description: "Crawl along the +X/+Z face seam (lon=-45°) in small steps",
+    seed: 304,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: -30.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat: -20.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat: -10.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat:   0.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat:  10.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat:  20.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+        Teleport(lat:  30.0, lon: -45.0, altitude_m: 0.0, then_tick: 10),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)

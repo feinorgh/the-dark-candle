@@ -1,0 +1,11 @@
+StressScenario(
+    description: "Teleport to (0,0) at sea_level - 500 m (caves/strata zone)",
+    seed: 300,
+    planet: SmallPlanet,
+    warmup_ticks: 30,
+    teleports: [
+        Teleport(lat: 0.0, lon: 0.0, altitude_m: -500.0, then_tick: 120),
+    ],
+    invariants: [Panics, Finite, NoOverflow, ChunkCache],
+    chunk_load_rate_min: None,
+)
