@@ -230,11 +230,13 @@ replaced).
 | `src/bodies/skeleton.rs` | `SkeletonData` RON asset, `BoneData`, `SkeletonInstance`, FK propagation |
 | `src/bodies/tissue.rs` | `TissueLayer`, `BodyCollider`, compound AABB collider construction |
 | `src/bodies/ik.rs` | `IkChain`, FABRIK solver, foot/hand placement |
-| `src/bodies/locomotion.rs` | `GaitData` RON asset, `LocomotionState`, `AnimPhase` |
+| `src/bodies/locomotion.rs` | `GaitData` RON asset, `LocomotionState`, `AnimPhase`. Split into `advance_gait_phase` + `apply_skeleton_gait_and_ik` so skeleton-less creatures still advance phase. `ai_gait_from_velocity` copies `PhysicsBody.velocity.xz` → `GaitState.speed`. |
 | `src/bodies/perception.rs` | `EyeMount`, `EarMount`, `PerceptionEvent`, range-gated vision/hearing |
 | `src/bodies/injury.rs` | `InjuryRecord`, per-region severity (Bruised → Fractured → Severed), wound propagation |
 | `src/bodies/plant.rs` | `PlantBody`, `PlantJoint`, wind response, felling mechanics |
-| `src/bodies/player.rs` | `PlayerBody` — maps input to locomotion controller |
+| `src/bodies/player.rs` | `PlayerBody` — maps input to locomotion controller. Holds `BipedGaitPath` + `QuadrupedGaitPath` resources. |
+| `src/bodies/procedural_body.rs` | `BodyPlan` (Quadruped/Biped/Hexapod/Serpent), `BodyPart`, `body_part_specs()` pure layout, `spawn_procedural_body()` ECS spawner. Cheap multi-cuboid stand-in until creature glTF assets exist. |
+| `src/bodies/procedural_body_anim.rs` | `body_part_offset()` pure kinematics, `animate_procedural_body` system. Sine-wave leg swing, torso bob, tail sway driven by `GaitState`. Quadruped trot, biped alternating, hexapod tripod gait. |
 
 ### RON data files
 
@@ -248,4 +250,54 @@ replaced).
 
 ### Tests
 
-48 unit tests pass (`cargo test --lib -- bodies`).
+61 unit tests pass (`cargo test --lib -- bodies`).
+
+### Post-Phase 10 addition: procedural multi-part bodies for AI creatures
+
+The original Phase 10 plan assumed all visible creatures would use the
+data-driven `Skeleton` + IK pipeline. In practice, AI creatures spawned
+by `src/procgen/mod.rs` had no skeleton and rendered as a single
+sliding `Cuboid` — physically present but visually inert.
+
+To bridge the gap until glTF/skeletal creature assets exist, a parallel
+**procedural body** path was added:
+
+- `src/bodies/procedural_body.rs` — pure `body_part_specs(plan, hitbox)`
+  function maps a `BodyPlan` (`Quadruped`, `Biped`, `Hexapod`, `Serpent`)
+  + full-extent hitbox into a list of rest poses for child cuboid parts
+  (torso, head, legs, optional tail). `spawn_procedural_body()` parents
+  one `BodyPart`-tagged child entity per spec under the creature root.
+  `BodyPlan::default_for_size(BodySize)` picks Biped for tiny creatures
+  and Quadruped for everything else.
+- `src/bodies/procedural_body_anim.rs` — pure `body_part_offset()` returns
+  the per-tick delta `Transform` for a `BodyPart` given `GaitState`. Legs
+  swing forward/back on sine waves with phase offsets selected per plan
+  (quadruped trot = FL+BR / FR+BL, hexapod tripod = FL+MR+BL / FR+ML+BR,
+  biped alternating). Torso bobs vertically; tail sways yaw. Idle
+  creatures animate subtly (`IDLE_AMPLITUDE = 0.12`); amplitude scales
+  linearly with speed up to `FULL_SWING_SPEED = 4 m/s`.
+- `src/bodies/locomotion.rs` was split: `update_locomotion` previously
+  queried `&mut Skeleton`, silently skipping skeleton-less entities.
+  It now consists of `advance_gait_phase` (runs on every `GaitState`)
+  and `apply_skeleton_gait_and_ik` (`With<Skeleton>` only). Phase
+  advances even at zero speed, so idle creatures keep breathing.
+- A new `ai_gait_from_velocity` system syncs
+  `PhysicsBody.velocity.xz.length()` into `GaitState.speed` for every
+  `Creature` except the player (excluded explicitly because the player
+  is driven by `FpsCamera.speed`).
+- The creature spawn site in `src/procgen/mod.rs` no longer attaches a
+  single `Cuboid` mesh. Instead it inserts `GaitState::default()` +
+  `GaitDataHandle` (asset loaded from `BipedGaitPath` or
+  `QuadrupedGaitPath` based on the chosen plan) and calls
+  `spawn_procedural_body()` to spawn the parts.
+
+This is intentionally a temporary stop-gap. When glTF skeletal assets
+arrive, `procedural_body*.rs` and the AI creature `BodyPart` children
+can be retired in favor of the full `Skeleton` + tissue + IK pipeline
+described above. The split between `advance_gait_phase` and
+`apply_skeleton_gait_and_ik` keeps both paths additive.
+
+`assets/data/gaits/quadruped.gait.ron` and `biped.gait.ron` are reused
+unchanged. Bone-target fields are simply ignored by the procedural
+animator (which only consumes `GaitState.phase`/`speed`/`mode`).
+

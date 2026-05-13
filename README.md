@@ -136,7 +136,8 @@ projections with GPU-accelerated terrain detail.
 - **Forward kinematics** — pose propagates from root bone down the tree each tick
 - **FABRIK inverse kinematics** — `IkChain` solves foot/hand placement on uneven terrain in ≤10 iterations
 - **Tissue layers** — `TissueLayer` (skin, muscle, bone, organ) with material-derived density, elasticity, and failure thresholds; compound AABB colliders built from bone extents
-- **Locomotion gaits** — `.gait.ron` files define walk/run/sprint/trot/gallop cycle parameters; `LocomotionState` drives limb animation phases
+- **Locomotion gaits** — `.gait.ron` files define walk/run/sprint/trot/gallop cycle parameters; `LocomotionState` drives limb animation phases. `advance_gait_phase` advances every entity with a `GaitState` (even at rest, for idle breathing); `apply_skeleton_gait_and_ik` handles `Skeleton`-equipped creatures
+- **Procedural creature bodies** — AI creatures spawn as a parented set of torso/head/legs/(tail) cuboid `BodyPart`s with per-tick sine-wave animation (`procedural_body.rs` + `procedural_body_anim.rs`); supports quadruped/biped/hexapod/serpent body plans selected from `BodySize`. Stop-gap until glTF skeletal assets land
 - **Player embodiment** — player is a regular creature with `PlayerBody`; input maps to the same locomotion controller as AI creatures
 - **Perception** — `EyeMount` (cone-frustum visibility test) and `EarMount` (range + material attenuation) fire `PerceptionEvent` when conditions are met
 - **Per-region injury** — `InjuryRecord` tracks severity (Bruised → Fractured → Severed) per body region; wound effects propagate to locomotion and biology systems

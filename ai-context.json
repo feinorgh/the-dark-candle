@@ -1804,7 +1804,7 @@
   },
   "meta": {
     "generated_date": "2026-05-14",
-    "generated_from_commit": "3103dfa",
+    "generated_from_commit": "7213f97",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",

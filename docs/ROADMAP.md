@@ -344,6 +344,26 @@ Dual-mode map accessible via M key: local discovery map + global planet map.
 
 **Module:** `src/map/` (discovery.rs, local_map.rs, global_map.rs, ui.rs)
 
+### Procedural Creature Animation (visual polish) ✅
+
+AI creatures previously rendered as a single sliding `Cuboid` mesh
+even though `GaitState` and the full `Skeleton`/IK pipeline existed
+for the player. Added a temporary procedural multi-part body path
+(`src/bodies/procedural_body.rs` + `procedural_body_anim.rs`) that
+spawns torso/head/legs/(tail) cuboid children per creature and
+animates them from `GaitState` with sine-wave kinematics. Supports
+Quadruped, Biped, Hexapod, Serpent body plans selected from
+`CreatureData.body_size`. `update_locomotion` was split into
+`advance_gait_phase` (no `Skeleton` required) and
+`apply_skeleton_gait_and_ik`. New `ai_gait_from_velocity` system
+syncs `PhysicsBody.velocity.xz` into `GaitState.speed` for AI
+creatures. Reuses existing `assets/data/gaits/{biped,quadruped}.gait.ron`.
+This is a stop-gap until glTF skeletal creature assets exist; the
+full `Skeleton`/IK path remains the eventual target.
+
+Full design notes: **[entity-bodies.md](entity-bodies.md)** (see
+"Post-Phase 10 addition: procedural multi-part bodies").
+
 ### Coupling & Integration ✅
 
 Cross-model fluid coupling between the three physics solvers:
