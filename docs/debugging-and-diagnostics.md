@@ -11,6 +11,11 @@ How to debug, inspect, and diagnose issues in The Dark Candle — for both human
 | Run simulation tests | `cargo test --test simulations` | Scenario pass/fail |
 | Dump ECS state (in-game) | Press **F11** | `diagnostics/<timestamp>.dump.ron` |
 | Toggle performance overlay | Press **F3** | HUD with FPS, system timings, chunk stats |
+| Quick-save | Press **F5** | Writes the active save slot to disk |
+| Toggle chunk wireframe | Press **F6** | Overlay showing chunk boundaries |
+| Toggle atmosphere rendering | Press **F7** | Bypass scattering/clouds for terrain debug |
+| Toggle wireframe rendering | Press **F8** | Global wireframe pass |
+| Quick-load | Press **F9** | Restores the active save slot |
 | Capture screenshot | Press **F12** | `screenshots/<timestamp>.png` |
 | Produce simulation video | Add `emit_video` to `.simulation.ron` | MP4 video or PNG frames |
 | Run visual rendering tests | `cargo test --test visual_rendering` | MP4 videos in `test_output/` |
@@ -484,6 +489,11 @@ These are useful when manually debugging visual or physics issues:
 | **Space** | Jump (when grounded) |
 | **G** | Toggle gravity (fly mode) |
 | **F3** | Toggle performance overlay |
+| **F5** | Quick-save active slot |
+| **F6** | Toggle chunk wireframe overlay |
+| **F7** | Toggle atmosphere rendering |
+| **F8** | Toggle global wireframe |
+| **F9** | Quick-load active slot |
 | **F11** | Dump ECS state to `diagnostics/` |
 | **F12** | Capture screenshot to `screenshots/` |
 

@@ -32,7 +32,14 @@ use state_dump::{GridSummary, MaterialStats, RangeStats, StateDump};
 
 /// Bevy plugin that registers on-demand diagnostics systems.
 ///
+/// In-game keybindings (see `docs/debugging-and-diagnostics.md` for the
+/// full table):
 /// - **F3**: Toggle performance overlay (FPS, system timings, chunk stats)
+/// - **F5**: Quick-save (registered by the persistence plugin)
+/// - **F6**: Toggle chunk wireframe overlay
+/// - **F7**: Toggle atmosphere rendering
+/// - **F8**: Toggle global wireframe
+/// - **F9**: Quick-load (registered by the persistence plugin)
 /// - **F11**: Dump ECS world state to `diagnostics/<timestamp>.dump.ron`
 /// - **F12**: Capture a screenshot to `screenshots/<timestamp>.png`
 pub struct DiagnosticsPlugin;
@@ -260,27 +267,41 @@ fn format_material_id(id: crate::world::voxel::MaterialId) -> String {
     }
 }
 
-/// System triggered by F12 to capture a screenshot.
-fn screenshot_system(keyboard: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
-    if !keyboard.just_pressed(KeyCode::F12) {
-        return;
-    }
-
+/// Spawn a screenshot entity that writes the primary window to
+/// `screenshots/<prefix><unix-timestamp>.png`.  Shared by the in-game F12
+/// system and the worldgen globe viewer's F12 system so the two paths
+/// stay in lockstep (CHUNK/INPUT-001).
+///
+/// Returns the path that will be written (useful for logging at the call
+/// site).  Returns `None` if the `screenshots/` directory could not be
+/// created.
+pub fn spawn_screenshot(commands: &mut Commands, prefix: &str) -> Option<String> {
     if let Err(e) = std::fs::create_dir_all("screenshots") {
         error!("Failed to create screenshots/ directory: {e}");
-        return;
+        return None;
     }
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let path = format!("screenshots/{timestamp}.png");
+    let path = format!("screenshots/{prefix}{timestamp}.png");
 
     commands
         .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
         .observe(bevy::render::view::screenshot::save_to_disk(path.clone()));
-    info!("Screenshot capture triggered → {path}");
+    Some(path)
+}
+
+/// System triggered by F12 to capture a screenshot.
+fn screenshot_system(keyboard: Res<ButtonInput<KeyCode>>, mut commands: Commands) {
+    if !keyboard.just_pressed(KeyCode::F12) {
+        return;
+    }
+
+    if let Some(path) = spawn_screenshot(&mut commands, "") {
+        info!("Screenshot capture triggered → {path}");
+    }
 }
 
 #[cfg(test)]

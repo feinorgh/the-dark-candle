@@ -728,19 +728,9 @@ fn screenshot_system(keyboard: Res<ButtonInput<KeyCode>>, mut commands: Commands
     if !keyboard.just_pressed(KeyCode::F12) {
         return;
     }
-    if let Err(e) = std::fs::create_dir_all("screenshots") {
-        eprintln!("Failed to create screenshots/ directory: {e}");
-        return;
+    if let Some(path) = crate::diagnostics::spawn_screenshot(&mut commands, "globe_") {
+        println!("Screenshot → {path}");
     }
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let path = format!("screenshots/globe_{ts}.png");
-    commands
-        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-        .observe(bevy::render::view::screenshot::save_to_disk(path.clone()));
-    println!("Screenshot → {path}");
 }
 
 // ─── Time-lapse playback systems ──────────────────────────────────────────────

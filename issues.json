@@ -110,9 +110,9 @@
     "title": "Function keys not working or not matching documentation",
     "category": "input",
     "severity": "medium",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-01",
-    "description": "Function keys (F1–F12) either do not respond or produce unexpected behavior compared to what documentation describes. Known bindings: F3 (debug overlay), F5 (ECS state dump), F9 (toggle chunk borders), F11 (fullscreen), F12 (screenshot).",
+    "description": "Function keys did not match documentation. Actual bindings: F3 (perf overlay), F5 (quick-save), F6 (chunk wireframe), F7 (atmosphere toggle), F8 (wireframe toggle), F9 (quick-load), F11 (ECS dump), F12 (screenshot). Older docs and the original issue description listed stale assignments (e.g. F5=ECS dump, F9=chunk borders, F11=fullscreen).",
     "reproduction": "Run the game. Press F3, F5, F9, F11, F12 individually. Compare behavior to README.md and diagnostics docs.",
     "suspected_files": [
       "src/diagnostics/mod.rs",
@@ -120,14 +120,17 @@
       "src/main.rs"
     ],
     "suspected_cause": "Possible causes: (1) F12 has DUPLICATE screenshot_system functions — one in diagnostics/mod.rs:260 and one in planet/render.rs:615, which may cause conflicts, (2) Some F-key systems may only run in specific GameStates (e.g., only Playing, not WorldCreation), (3) Desktop environment (Wayland) may intercept certain F-keys before they reach the application, (4) DiagnosticsPlugin may not be registered or may have incorrect run conditions.",
-    "related_commits": [],
-    "resolution": null,
+    "related_commits": [
+      "be9c037"
+    ],
+    "resolution": "Deduplicated the F12 screenshot system by extracting `diagnostics::spawn_screenshot(commands, prefix)` and reusing it from both the in-game DiagnosticsPlugin and the worldgen globe viewer (src/planet/render.rs). Updated DiagnosticsPlugin docstring and docs/debugging-and-diagnostics.md F-key tables to list the correct, full set of bindings (F3/F5/F6/F7/F8/F9/F11/F12). The F12 \"duplicate\" was never a runtime conflict (worldgen is a separate binary). The remaining symptom — F-keys not reaching the app — is a Wayland compositor capture issue, not actionable in code; users can test with WINIT_UNIX_BACKEND=x11.",
     "notes": [
       "Code investigation confirmed: F3, F5, F9, F11 are all properly bound in diagnostics/mod.rs.",
       "F12 duplicate: NOT a runtime conflict. planet/render.rs::screenshot_system is only registered via run_globe_viewer() in src/bin/worldgen.rs — a separate binary. DiagnosticsPlugin is NOT added to the worldgen app. The two functions never coexist in the same running app. It is pure code duplication (cosmetic quality issue), not a functional bug.",
       "Wayland compositors (Sway, Hyprland, etc.) may capture F-keys for their own bindings — check compositor config.",
       "Test with WINIT_UNIX_BACKEND=x11 to rule out Wayland-specific key capture.",
-      "Remaining open concern: Wayland key capture. All F-key bindings in DiagnosticsPlugin look correct in code."
+      "Remaining open concern: Wayland key capture. All F-key bindings in DiagnosticsPlugin look correct in code.",
+      "2026-04 cleanup: extracted spawn_screenshot helper; corrected docs and DiagnosticsPlugin docstring to match actual code bindings."
     ]
   },
   {
