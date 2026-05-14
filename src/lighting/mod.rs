@@ -4,6 +4,7 @@
 // temperature, intensity, and ambient brightness. Exposes a SolarInsolation
 // resource for future solar heating integration.
 
+pub mod caustic_tile;
 pub mod caustics;
 pub mod clouds;
 pub mod light_map;
@@ -528,7 +529,10 @@ impl Plugin for LightingPlugin {
             )
             .add_systems(
                 PostUpdate,
-                sky_dome::anchor_sky_dome_to_camera
+                (
+                    sky_dome::anchor_sky_dome_to_camera,
+                    terrain_caustic_material::update_terrain_caustic_uniform,
+                )
                     .after(bevy::transform::TransformSystems::Propagate),
             );
     }

@@ -21,6 +21,10 @@ use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
+use crate::floating_origin::RenderOrigin;
+use crate::lighting::SunWorldDirection;
+use crate::world::planet::PlanetConfig;
+
 /// Asset path of the terrain caustic fragment shader.
 pub const TERRAIN_CAUSTIC_SHADER: &str = "shaders/terrain_caustic.wgsl";
 
@@ -115,12 +119,69 @@ pub fn make_stitch_material() -> TerrainCausticMaterial {
 /// Shared handles to the three terrain materials used by the chunk manager,
 /// pairwise stitches, and corner caps.  Stored as a resource so all three
 /// systems pick up the same material instance and so the
-/// `update_terrain_caustic_uniform` system has a single mutation point.
+/// [`update_terrain_caustic_uniform`] system has a single mutation point.
 #[derive(Resource, Default)]
 pub struct TerrainCausticHandles {
     pub chunk: Option<Handle<TerrainCausticMaterial>>,
     pub stitch: Option<Handle<TerrainCausticMaterial>>,
     pub corner: Option<Handle<TerrainCausticMaterial>>,
+}
+
+/// Nominal physical parameters for the underwater caustic effect.  Values
+/// are in SI units (metres / dimensionless cosine) and are documented in
+/// the WGSL `CausticUniform` block.
+pub const CAUSTIC_TILE_SIZE_M: f32 = 8.0;
+pub const CAUSTIC_DEPTH_FALLOFF_INV_M: f32 = 0.06;
+pub const CAUSTIC_STRENGTH: f32 = 1.0;
+
+/// Phase D: per-frame update of the caustic uniform on all three terrain
+/// materials.  Reads:
+///   - [`SunWorldDirection`] for the live solar direction,
+///   - [`RenderOrigin`] for the floating-origin offset (so we can express
+///     the planet centre in render-space, where shader fragments live),
+///   - [`PlanetConfig::sea_level_radius`] for the underwater mask boundary.
+///
+/// Must run in `PostUpdate` AFTER the floating-origin rebase, otherwise on
+/// rebase frames the planet centre lags by one frame and the underwater
+/// mask shimmers at the seam.
+pub fn update_terrain_caustic_uniform(
+    handles: Res<TerrainCausticHandles>,
+    sun: Res<SunWorldDirection>,
+    origin: Res<RenderOrigin>,
+    planet: Res<PlanetConfig>,
+    mut materials: ResMut<Assets<TerrainCausticMaterial>>,
+) {
+    // Sun direction in render-space is the same as world-space (rotation
+    // only; floating origin is a translation).  Convert f64 to f32 here.
+    let s = sun.0;
+    let sun_dir = Vec4::new(s.x as f32, s.y as f32, s.z as f32, 0.0);
+
+    // Planet centre is at the world origin (0,0,0); in render-space that
+    // becomes `-RenderOrigin`.
+    let pc = -origin.0;
+    let planet_center = Vec4::new(pc.x as f32, pc.y as f32, pc.z as f32, 0.0);
+
+    let params = Vec4::new(
+        planet.sea_level_radius as f32,
+        CAUSTIC_TILE_SIZE_M,
+        CAUSTIC_DEPTH_FALLOFF_INV_M,
+        CAUSTIC_STRENGTH,
+    );
+
+    for h in [
+        handles.chunk.as_ref(),
+        handles.stitch.as_ref(),
+        handles.corner.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(mat) = materials.get_mut(h) {
+            mat.extension.sun_dir = sun_dir;
+            mat.extension.planet_center = planet_center;
+            mat.extension.params = params;
+        }
+    }
 }
 
 #[cfg(test)]

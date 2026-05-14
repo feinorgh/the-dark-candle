@@ -1253,5 +1253,27 @@
       "The scenario is enabled as burst_teleport.stress.ron and runs as part of the full stress suite.",
       "The LoadRate invariant was removed from this scenario; chunk_load_rate_min is now None. A true load-event counter would be required to measure throughput for relocation-heavy scenarios."
     ]
+  },
+  {
+    "id": "CAUSTIC-001",
+    "title": "Underwater caustics not yet driven by physical photon trace",
+    "category": "rendering",
+    "severity": "low",
+    "status": "open",
+    "reported": "2026-05-14",
+    "description": "Underwater fragments now show a 2-octave procedural Worley caustic pattern via assets/shaders/terrain_caustic.wgsl, but the pattern is generated procedurally rather than baked from src/lighting/caustics.rs. The CPU caustic tracer currently models a flat refractive interface which produces no caustic web (only a uniform brightness boost). A physically-baked LUT would require adding wave-surface support (Gerstner / spectral / sine) to caustics.rs and uploading the result as a Bevy Image asset.",
+    "reproduction": "Visual: run agent capture and look at an underwater seabed; the pattern is statistically uniform Worley rather than the characteristic curving caustic filaments produced by light-bending through a wave-shaped water surface.",
+    "suspected_files": [
+      "src/lighting/caustics.rs",
+      "src/lighting/caustic_tile.rs",
+      "assets/shaders/terrain_caustic.wgsl"
+    ],
+    "suspected_cause": "trace_caustic_beam shoots a diverging cone through a FLAT interface \u2014 produces a smooth Gaussian density on the receiver, not a caustic web. Real caustic patterns require wave-surface curvature.",
+    "related_commits": [],
+    "resolution": null,
+    "notes": [
+      "Phase 3.3 hybrid plan: scaffolding + procedural pattern lands now; physical LUT deferred until caustics.rs gains wave-surface support.",
+      "Render-diagnostic helper to spawn camera below sea level would also help visually verify future iterations."
+    ]
   }
 ]
