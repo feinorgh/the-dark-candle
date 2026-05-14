@@ -556,8 +556,10 @@ pub fn v2_stitch_update(
     chunk_map: Res<V2ChunkMap>,
     chunk_q: Query<&ChunkBoundaryLoops, With<V2ChunkCoord>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
+    mut materials: ResMut<
+        Assets<crate::lighting::terrain_caustic_material::TerrainCausticMaterial>,
+    >,
+    mut handles: ResMut<crate::lighting::terrain_caustic_material::TerrainCausticHandles>,
     mut prev_stitch_count: Local<usize>,
     mut prev_coverage: Local<V2StitchCoverage>,
 ) {
@@ -567,14 +569,10 @@ pub fn v2_stitch_update(
     // Reset per-frame coverage counters.
     *coverage = V2StitchCoverage::default();
 
-    let stitch_material = cached_mat
+    let stitch_material = handles
+        .stitch
         .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                double_sided: true,
-                cull_mode: None,
-                ..default()
-            })
+            materials.add(crate::lighting::terrain_caustic_material::make_stitch_material())
         })
         .clone();
 
@@ -1016,21 +1014,19 @@ pub fn v2_corner_stitch_update(
     chunk_map: Res<V2ChunkMap>,
     chunk_q: Query<&ChunkBoundaryLoops, With<V2ChunkCoord>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
+    mut materials: ResMut<
+        Assets<crate::lighting::terrain_caustic_material::TerrainCausticMaterial>,
+    >,
+    mut handles: ResMut<crate::lighting::terrain_caustic_material::TerrainCausticHandles>,
     mut prev_count: Local<usize>,
 ) {
     let mean_radius = planet.mean_radius;
     let origin_pos = origin.0;
 
-    let corner_material = cached_mat
+    let corner_material = handles
+        .corner
         .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                double_sided: true,
-                cull_mode: None,
-                ..default()
-            })
+            materials.add(crate::lighting::terrain_caustic_material::make_stitch_material())
         })
         .clone();
 

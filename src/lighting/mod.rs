@@ -15,6 +15,7 @@ pub mod scattering;
 pub mod shadows;
 pub mod sky;
 pub mod sky_dome;
+pub mod terrain_caustic_material;
 
 use bevy::pbr::DistanceFog;
 use bevy::pbr::MaterialPlugin;
@@ -484,6 +485,14 @@ impl Plugin for LightingPlugin {
 
         // Register the sky dome material type.
         app.add_plugins(MaterialPlugin::<sky_dome::SkyMaterial>::default());
+
+        // Register the terrain caustic ExtendedMaterial.  Used by the v2
+        // chunk manager, pairwise LOD-seam stitches, and corner caps for the
+        // underwater caustic-light contribution.
+        app.add_plugins(MaterialPlugin::<
+            terrain_caustic_material::TerrainCausticMaterial,
+        >::default());
+        app.init_resource::<terrain_caustic_material::TerrainCausticHandles>();
 
         app.init_resource::<TimeOfDay>()
             .init_resource::<DayNightConfig>()

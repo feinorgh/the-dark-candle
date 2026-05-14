@@ -1127,23 +1127,23 @@ pub fn v2_collect_gpu_terrain(
 pub fn v2_collect_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<
+        Assets<crate::lighting::terrain_caustic_material::TerrainCausticMaterial>,
+    >,
+    mut handles: ResMut<crate::lighting::terrain_caustic_material::TerrainCausticHandles>,
     mut chunk_map: ResMut<V2ChunkMap>,
     mut pending_meshes: ResMut<V2PendingMeshes>,
     planet: Res<PlanetConfig>,
     origin: Res<RenderOrigin>,
-    mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
     mut task_q: Query<(Entity, &mut V2MeshTask)>,
 ) {
     let mean_radius = planet.mean_radius;
     let cs_half_f = CHUNK_SIZE as f32 / 2.0;
 
-    let chunk_material = cached_mat
+    let chunk_material = handles
+        .chunk
         .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                ..default()
-            })
+            materials.add(crate::lighting::terrain_caustic_material::make_chunk_material())
         })
         .clone();
 
@@ -1576,6 +1576,9 @@ mod tests {
         use bevy::pbr::StandardMaterial;
 
         use crate::floating_origin::RenderOrigin;
+        use crate::lighting::terrain_caustic_material::{
+            TerrainCausticHandles, TerrainCausticMaterial,
+        };
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
@@ -1585,6 +1588,8 @@ mod tests {
         app.init_asset::<Mesh>();
         app.init_asset::<Image>();
         app.init_asset::<StandardMaterial>();
+        app.init_asset::<TerrainCausticMaterial>();
+        app.init_resource::<TerrainCausticHandles>();
 
         // Small smooth planet for fast terrain gen.
         let planet = PlanetConfig {
