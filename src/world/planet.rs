@@ -94,6 +94,34 @@ pub struct PlanetConfig {
     #[serde(default)]
     pub libration_period: f64,
 
+    /// Offset of the magnetic north pole from geographic north, in degrees.
+    /// `[lat_offset_deg, lon_offset_deg]`. Default `[0.0, 0.0]` means the
+    /// magnetic pole coincides with the geographic pole — the simplest case
+    /// and the one that produces an Earth-like aurora oval centred on the
+    /// rotation axis. See `docs/superpowers/specs/2026-05-14-aurora-design.md`
+    /// for planned extensions (stronger / weaker / dynamic / non-dipolar
+    /// magnetic fields).
+    #[serde(default)]
+    pub magnetic_pole_offset_deg: [f64; 2],
+
+    /// Overall aurora brightness multiplier. `0.0` disables the aurora for
+    /// this planet (the entity is still spawned but contributes nothing to
+    /// the framebuffer). Default: `1.0`.
+    #[serde(default = "default_aurora_strength")]
+    pub aurora_strength: f64,
+
+    /// Magnetic latitude of the auroral oval centroid, in degrees.
+    /// Earth's auroral oval is centred around 67°. Stronger magnetic fields
+    /// would push this poleward (smaller value); weaker fields would push it
+    /// equatorward (larger value).
+    #[serde(default = "default_aurora_band_center_deg")]
+    pub aurora_band_center_deg: f64,
+
+    /// Half-width of the auroral oval in magnetic latitude, in degrees.
+    /// Default: `5.0` (oval spans roughly 62° to 72° magnetic latitude).
+    #[serde(default = "default_aurora_band_half_width_deg")]
+    pub aurora_band_half_width_deg: f64,
+
     /// Amplitude of surface displacement noise in meters.
     /// Terrain height varies from `mean_radius - height_scale` to
     /// `mean_radius + height_scale`.
@@ -148,6 +176,15 @@ pub struct PlanetConfig {
 fn default_rotation_axis() -> [f64; 3] {
     [0.0, 1.0, 0.0]
 }
+fn default_aurora_strength() -> f64 {
+    1.0
+}
+fn default_aurora_band_center_deg() -> f64 {
+    67.0
+}
+fn default_aurora_band_half_width_deg() -> f64 {
+    5.0
+}
 fn default_seed() -> u32 {
     42
 }
@@ -179,6 +216,10 @@ impl Default for PlanetConfig {
             axial_tilt: 0.0,
             libration_amplitude: 0.0,
             libration_period: 0.0,
+            magnetic_pole_offset_deg: [0.0, 0.0],
+            aurora_strength: 1.0,
+            aurora_band_center_deg: 67.0,
+            aurora_band_half_width_deg: 5.0,
             height_scale: 32.0,
             layers: default_layers(),
             seed: 42,
@@ -779,4 +820,19 @@ mod tests {
     }
 
     // --- Terrain mode ---
+
+    #[test]
+    fn planet_config_defaults_for_aurora_fields_load_from_minimal_ron() {
+        let ron = r#"(
+            mean_radius: 32000.0,
+            sea_level_radius: 31900.0,
+            surface_gravity: 9.80665,
+            height_scale: 32.0,
+        )"#;
+        let cfg: PlanetConfig = ron::from_str(ron).expect("parse minimal RON");
+        assert_eq!(cfg.magnetic_pole_offset_deg, [0.0, 0.0]);
+        assert!((cfg.aurora_strength - 1.0).abs() < 1e-6);
+        assert!((cfg.aurora_band_center_deg - 67.0).abs() < 1e-6);
+        assert!((cfg.aurora_band_half_width_deg - 5.0).abs() < 1e-6);
+    }
 }

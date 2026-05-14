@@ -87,6 +87,10 @@ fn base_flat_config() -> PlanetConfig {
         axial_tilt: 0.0,
         libration_amplitude: 0.0,
         libration_period: 0.0,
+        magnetic_pole_offset_deg: [0.0, 0.0],
+        aurora_strength: 1.0,
+        aurora_band_center_deg: 67.0,
+        aurora_band_half_width_deg: 5.0,
         height_scale: 32.0,
         layers: Vec::new(),
         seed: 42,
@@ -159,6 +163,10 @@ fn spherical_planet_preset() -> PlanetConfig {
         axial_tilt: 0.0,
         libration_amplitude: 0.0,
         libration_period: 0.0,
+        magnetic_pole_offset_deg: [0.0, 0.0],
+        aurora_strength: 1.0,
+        aurora_band_center_deg: 67.0,
+        aurora_band_half_width_deg: 5.0,
         height_scale: 8_848.0, // Everest-scale relief
         layers: vec![
             GeologicalLayer {
