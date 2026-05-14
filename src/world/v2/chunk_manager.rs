@@ -1260,6 +1260,7 @@ impl Plugin for V2WorldPlugin {
             .init_resource::<crate::world::v2::debug::ChunkDebugViz>()
             .init_resource::<crate::world::v2::stitch_mesh::V2StitchMap>()
             .init_resource::<crate::world::v2::stitch_mesh::V2CornerStitchMap>()
+            .init_resource::<crate::world::v2::stitch_mesh::V2StitchCoverage>()
             .add_systems(Startup, v2_init_terrain_gen)
             .add_systems(
                 Update,

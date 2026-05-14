@@ -97,6 +97,40 @@ pub struct V2CornerStitchMap {
     stitches: HashMap<CornerStitchKey, CornerStitchVal>,
 }
 
+/// Per-frame coverage statistics for the LOD-stitch system.
+///
+/// Used to audit RENDER-010 progress: every fine→coarse adjacency that could
+/// in principle need a stitch is tallied here, broken down by outcome.  When
+/// `suspicious_lod_jumps > 0`, the stitch algorithm (which only handles
+/// `lod_delta == 1`) is leaving a class of seams uncovered and the LOD ring
+/// scheduler should be reviewed.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V2StitchCoverage {
+    /// Tangential fine→coarse adjacencies where a coarse neighbor at `lod+1`
+    /// is loaded (the only case the stitch system handles).
+    pub candidates_lod_plus_1: usize,
+    /// Successfully stitched via `same_face_neighbor_at_lod`.
+    pub stitched_same_face: usize,
+    /// Successfully stitched via `cross_face_neighbor_at_lod`.
+    pub stitched_cross_face: usize,
+    /// Candidates skipped because one of the chunks reported no boundary
+    /// loops for the requested direction (mesh not built yet, or all-air).
+    pub missing_loops: usize,
+    /// Candidates rejected by the radial proximity filter (cross-hill
+    /// projection overlap with very different planet-radius means).
+    pub radial_proximity_rejects: usize,
+    /// Pairs where the coarse chain clipped to the fine extent ended up
+    /// with fewer than two vertices (no tangential overlap).
+    pub empty_clip_pairs: usize,
+    /// Candidates that produced no triangles for any (fine_chain, coarse_chain)
+    /// pair after clipping and triangulation.
+    pub no_triangulation: usize,
+    /// Tangential fine chunks where NO loaded coarse neighbor exists at
+    /// `lod+1` but ONE DOES exist at `lod+2` or deeper.  Each such case is
+    /// a class of seam the current stitch algorithm cannot cover.
+    pub suspicious_lod_jumps: usize,
+}
+
 // ── Core triangulation ────────────────────────────────────────────────────────
 
 /// Clip a loop of world-space vertices to the 1-D tangential interval `[t_min, t_max]`.
@@ -516,6 +550,7 @@ pub fn build_stitch_mesh(
 pub fn v2_stitch_update(
     mut commands: Commands,
     mut stitch_map: ResMut<V2StitchMap>,
+    mut coverage: ResMut<V2StitchCoverage>,
     planet: Res<PlanetConfig>,
     origin: Res<RenderOrigin>,
     chunk_map: Res<V2ChunkMap>,
@@ -524,9 +559,13 @@ pub fn v2_stitch_update(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cached_mat: Local<Option<Handle<StandardMaterial>>>,
     mut prev_stitch_count: Local<usize>,
+    mut prev_coverage: Local<V2StitchCoverage>,
 ) {
     let mean_radius = planet.mean_radius;
     let origin_pos = origin.0;
+
+    // Reset per-frame coverage counters.
+    *coverage = V2StitchCoverage::default();
 
     let stitch_material = cached_mat
         .get_or_insert_with(|| {
@@ -573,15 +612,47 @@ pub fn v2_stitch_update(
         };
 
         for (dir_idx, &dir) in ChunkDir::ALL.iter().enumerate() {
+            // Skip radial directions for tangential coverage counting — they
+            // never participate in cross-face or same-face stitching by design.
+            let is_tangential = !matches!(dir, ChunkDir::PosLayer | ChunkDir::NegLayer);
+
             // Look up the single representative coarse neighbor — same face first,
             // cross-face fallback (Phase 3).
-            let (coarse_coord, coarse_incoming_dir) =
+            let (coarse_coord, coarse_incoming_dir, via_cross_face) =
                 match fine_coord.same_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
-                    Some(c) => (c, dir.opposite()),
+                    Some(c) => (c, dir.opposite(), false),
                     None => {
                         match fine_coord.cross_face_neighbor_at_lod(dir, coarse_lod, mean_radius) {
-                            Some((c, incoming)) => (c, incoming),
-                            None => continue, // PosLayer/NegLayer — no cross-face
+                            Some((c, incoming)) => (c, incoming, true),
+                            None => {
+                                // No lod+1 neighbor at this direction; check if
+                                // there's a coarser neighbor (lod+2/+3) loaded —
+                                // such an adjacency would be an unstitched
+                                // multi-step LOD jump.
+                                if is_tangential {
+                                    for jump in 2u8..=3 {
+                                        if let Some(jcl) = fine_lod.checked_add(jump) {
+                                            let same = fine_coord.same_face_neighbor_at_lod(
+                                                dir,
+                                                jcl,
+                                                mean_radius,
+                                            );
+                                            let cross = fine_coord
+                                                .cross_face_neighbor_at_lod(dir, jcl, mean_radius)
+                                                .map(|(c, _)| c);
+                                            let neighbor = same.or(cross);
+                                            if let Some(nc) = neighbor
+                                                && chunk_map.get(&nc).is_some()
+                                                && nc.lod == jcl
+                                            {
+                                                coverage.suspicious_lod_jumps += 1;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
                         }
                     }
                 };
@@ -594,18 +665,36 @@ pub fn v2_stitch_update(
                 continue;
             }
 
+            // From here on this is a real coarse=lod+1 adjacency.
+            if is_tangential {
+                coverage.candidates_lod_plus_1 += 1;
+            }
+
             let real_key = (*fine_coord, coarse_coord, dir_idx as u8);
 
             // Already stitched and valid (checked in Step 1)
             if stitch_map.stitches.contains_key(&real_key) {
+                if is_tangential {
+                    if via_cross_face {
+                        coverage.stitched_cross_face += 1;
+                    } else {
+                        coverage.stitched_same_face += 1;
+                    }
+                }
                 continue;
             }
 
             // Get boundary loops for both chunks
             let Ok(fine_loops) = chunk_q.get(*fine_entity) else {
+                if is_tangential {
+                    coverage.missing_loops += 1;
+                }
                 continue;
             };
             let Ok(coarse_loops) = chunk_q.get(coarse_entity) else {
+                if is_tangential {
+                    coverage.missing_loops += 1;
+                }
                 continue;
             };
 
@@ -614,6 +703,9 @@ pub fn v2_stitch_update(
             let coarse_chains = &coarse_loops.loops[opposite_idx];
 
             if fine_chains.is_empty() || coarse_chains.is_empty() {
+                if is_tangential {
+                    coverage.missing_loops += 1;
+                }
                 continue;
             }
 
@@ -683,6 +775,9 @@ pub fn v2_stitch_update(
                             t_max,
                         );
                     if clipped_coarse_pos.len() < 2 {
+                        if is_tangential {
+                            coverage.empty_clip_pairs += 1;
+                        }
                         continue;
                     }
 
@@ -700,6 +795,9 @@ pub fn v2_stitch_update(
                         / clipped_coarse_pos.len() as f64;
                     let coarse_chunk_height = CHUNK_SIZE as f64 * (1u64 << coarse_coord.lod) as f64;
                     if (mean_r_fine - mean_r_coarse).abs() > coarse_chunk_height {
+                        if is_tangential {
+                            coverage.radial_proximity_rejects += 1;
+                        }
                         continue;
                     }
 
@@ -734,6 +832,9 @@ pub fn v2_stitch_update(
             }
 
             if all_indices.is_empty() {
+                if is_tangential {
+                    coverage.no_triangulation += 1;
+                }
                 continue;
             }
 
@@ -758,6 +859,14 @@ pub fn v2_stitch_update(
             stitch_map
                 .stitches
                 .insert(real_key, (stitch_entity, *fine_entity, coarse_entity));
+
+            if is_tangential {
+                if via_cross_face {
+                    coverage.stitched_cross_face += 1;
+                } else {
+                    coverage.stitched_same_face += 1;
+                }
+            }
         }
     }
 
@@ -768,6 +877,29 @@ pub fn v2_stitch_update(
             count, *prev_stitch_count
         );
         *prev_stitch_count = count;
+    }
+
+    if *coverage != *prev_coverage {
+        info!(
+            "[StitchCoverage] candidates={} same_face={} cross_face={} missing_loops={} empty_clip={} radial_reject={} no_tri={} lod_jumps={}",
+            coverage.candidates_lod_plus_1,
+            coverage.stitched_same_face,
+            coverage.stitched_cross_face,
+            coverage.missing_loops,
+            coverage.empty_clip_pairs,
+            coverage.radial_proximity_rejects,
+            coverage.no_triangulation,
+            coverage.suspicious_lod_jumps,
+        );
+        if coverage.suspicious_lod_jumps > 0
+            && prev_coverage.suspicious_lod_jumps != coverage.suspicious_lod_jumps
+        {
+            warn!(
+                "[StitchCoverage] {} tangential fine→coarse adjacencies have lod_delta>1; stitch system covers only delta=1",
+                coverage.suspicious_lod_jumps
+            );
+        }
+        *prev_coverage = *coverage;
     }
 }
 
