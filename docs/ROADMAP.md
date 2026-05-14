@@ -397,6 +397,27 @@ Audit at planet-level 7 coastline showed `suspicious_lod_jumps = 0`
 and `radial_proximity_rejects = 0`, confirming no class of seam is
 left uncovered.
 
+### Twilight Star Fade ✅ (SKY-007 resolved)
+
+`sky_params.x` (the night-brightness multiplier consumed by
+`assets/shaders/sky_dome.wgsl`) was previously hardcoded to `1.0`,
+which meant the additive star/host-galaxy/nebula contribution was at
+full strength at all times of day — only Rayleigh scattering masked
+it during the day. The result was visible star bleed near the horizon
+at twilight and a hard pop-in at dusk.
+
+`update_sky_material` now drives `sky_params.x` from solar altitude
+using a two-segment smoothstep tied to real-world twilight thresholds:
+
+- Sun above the horizon → 0 (stars fully suppressed)
+- Civil twilight (sun at −6°) → 0.25 (bright stars only)
+- Astronomical twilight (sun at −18°) → 1.0 (full astronomical night)
+
+The pure helper `night_brightness_from_solar_altitude(sin_alt)` lives
+in `src/lighting/sky_dome.rs` with four unit tests covering daytime
+suppression, full-night saturation, the smooth transition through
+civil twilight, and a unit-interval sweep across the whole range.
+
 ### Coupling & Integration ✅
 
 Cross-model fluid coupling between the three physics solvers:

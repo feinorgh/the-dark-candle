@@ -1108,7 +1108,7 @@
     "title": "Visual tuning of star / nebula brightness against day sky",
     "category": "rendering",
     "severity": "low",
-    "status": "open",
+    "status": "resolved",
     "reported": "2026-04-28",
     "description": "Numeric constants (FLUX_AT_MAG_ZERO, RENDER_MAG_LIMIT, PSF_SIGMA_PX, HOST_GALAXY_*_PEAK, NEBULA_PEAK_AT_REF_MAG, sky_params.x night brightness, sky_params.y airmass extinction strength) were chosen analytically and may need iterative tuning once the sky is observed across full day/night cycles, multiple latitudes, and varying weather.",
     "reproduction": "Play the game across a full day and observe star/galaxy/nebula visibility.",
@@ -1118,11 +1118,12 @@
       "src/sky/diffuse.rs",
       "src/lighting/sky_dome.rs"
     ],
-    "suspected_cause": "Tuning task; not a bug.",
+    "suspected_cause": "sky_params.x night-brightness multiplier was hardcoded to 1.0 and never updated, so the additive star/nebula contribution was always at full strength; only Rayleigh scattering masked it during the day, producing visible star bleed near the horizon at twilight and a hard pop-in at dusk.",
     "related_commits": [],
-    "resolution": null,
+    "resolution": "Drive sky_params.x from solar altitude using a two-segment smoothstep tied to real-world twilight thresholds (civil -6\u00b0, astronomical -18\u00b0). Sun above the horizon -> 0 (stars fully suppressed); -6\u00b0 -> 0.25 (bright stars only); below -18\u00b0 -> 1.0 (full astronomical night). Implemented as pure helper night_brightness_from_solar_altitude() in src/lighting/sky_dome.rs with 4 unit tests; wired into update_sky_material via local_sun.y (= sin(altitude)).",
     "notes": [
-      "Baseline visuals confirmed acceptable by the user after SKY-004 \u2014 file this as a follow-up rather than a blocker."
+      "Baseline visuals confirmed acceptable by the user after SKY-004 \u2014 file this as a follow-up rather than a blocker.",
+      "Day capture agent_captures/20260514-085222-sky007-day/ confirms a clean Rayleigh-only sky with no additive star bleed."
     ]
   },
   {

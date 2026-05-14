@@ -268,6 +268,16 @@ pub fn update_sky_material(
     mat.sun_direction = local_sun.extend(0.0);
     mat.observer_up = up_f32.extend(0.0);
 
+    // Drive star/nebula brightness from solar altitude (SKY-007).
+    // `local_sun.y` is sin(altitude) in the observer frame: 0 at horizon,
+    // negative below, +1 at zenith.  Real-world astronomical twilight ends
+    // (full night sky) when the sun is 18° below the horizon; stars become
+    // visible at civil twilight (≈ −6°).  The fade between matches
+    // observation: the sky still looks blue 5° below the horizon and stars
+    // only saturate well after −18°.
+    let night = night_brightness_from_solar_altitude(local_sun.y);
+    mat.sky_params = Vec4::new(night, mat.sky_params.y, mat.sky_params.z, mat.sky_params.w);
+
     // Body→celestial rotation: R_y(-rotation_angle) in the body frame.
     // Stored row-major so each Vec4 in the shader is one row.
     let theta = -orbital.rotation_angle as f32;
@@ -407,5 +417,109 @@ pub fn update_moon_positions(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+// ── Twilight fade helpers (SKY-007) ───────────────────────────────────────────
+
+/// Civil twilight starts when the sun is 6° below the horizon: stars of
+/// magnitude 0–1 begin to appear.  sin(-6°) ≈ -0.1045.
+const SIN_CIVIL_TWILIGHT: f32 = -0.104_528_46;
+/// Astronomical twilight ends when the sun is 18° below the horizon: the sky
+/// is fully dark, all stars saturate.  sin(-18°) ≈ -0.3090.
+const SIN_ASTRONOMICAL_TWILIGHT: f32 = -0.309_017;
+
+/// Maps the sun's altitude (`sin_alt = local_sun.y`) to a star-brightness
+/// multiplier in `[0, 1]`.
+///
+/// - Sun above the horizon (`sin_alt ≥ 0`): returns 0 — Rayleigh dominates,
+///   stars are invisible anyway, and additive bleed during the day is the
+///   main artefact this fade fixes.
+/// - Sun between 0° and −6° (civil twilight): smoothly ramps from 0 to a
+///   small visibility (first-magnitude stars).
+/// - Sun between −6° and −18°: ramps to full visibility.
+/// - Sun below −18°: 1.0 (full astronomical night).
+///
+/// The two-segment smoothstep matches the real-world progression where the
+/// horizon glow extinguishes long before astronomical night begins, so the
+/// brightest stars appear well before the Milky Way does.
+pub fn night_brightness_from_solar_altitude(sin_alt: f32) -> f32 {
+    if sin_alt >= 0.0 {
+        return 0.0;
+    }
+    // Segment 1: 0° → −6°  produces 0 → 0.25 (first-magnitude stars only)
+    let civil = smoothstep_neg(0.0, SIN_CIVIL_TWILIGHT, sin_alt);
+    // Segment 2: −6° → −18°  produces 0 → 1 (full sky)
+    let astronomical = smoothstep_neg(SIN_CIVIL_TWILIGHT, SIN_ASTRONOMICAL_TWILIGHT, sin_alt);
+    (0.25 * civil + 0.75 * astronomical).clamp(0.0, 1.0)
+}
+
+/// Smoothstep where `edge0` is the value that maps to 0 and `edge1` maps to 1,
+/// even if `edge1 < edge0` (as is the case for sin-altitude going negative).
+fn smoothstep_neg(edge0: f32, edge1: f32, x: f32) -> f32 {
+    if (edge1 - edge0).abs() < 1e-9 {
+        return 0.0;
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn night_brightness_zero_when_sun_above_horizon() {
+        assert_eq!(night_brightness_from_solar_altitude(1.0), 0.0);
+        assert_eq!(night_brightness_from_solar_altitude(0.5), 0.0);
+        assert_eq!(night_brightness_from_solar_altitude(0.01), 0.0);
+        assert_eq!(night_brightness_from_solar_altitude(0.0), 0.0);
+    }
+
+    #[test]
+    fn night_brightness_full_below_astronomical_twilight() {
+        // Sun at −20° (well below astronomical twilight) → full stars.
+        let sin20 = (-20.0_f32).to_radians().sin();
+        assert!((night_brightness_from_solar_altitude(sin20) - 1.0).abs() < 1e-3);
+        // Sun straight down.
+        assert!((night_brightness_from_solar_altitude(-1.0) - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn night_brightness_smooth_through_civil_twilight() {
+        let n_horizon = night_brightness_from_solar_altitude(0.0);
+        let n_civil_mid = night_brightness_from_solar_altitude(SIN_CIVIL_TWILIGHT * 0.5);
+        let n_civil = night_brightness_from_solar_altitude(SIN_CIVIL_TWILIGHT);
+        let n_nautical = night_brightness_from_solar_altitude(
+            (SIN_CIVIL_TWILIGHT + SIN_ASTRONOMICAL_TWILIGHT) * 0.5,
+        );
+        let n_astro = night_brightness_from_solar_altitude(SIN_ASTRONOMICAL_TWILIGHT);
+        // Monotone non-decreasing as sun drops.
+        assert!(n_horizon <= n_civil_mid);
+        assert!(n_civil_mid <= n_civil);
+        assert!(n_civil <= n_nautical);
+        assert!(n_nautical <= n_astro);
+        // At civil twilight only first-magnitude stars should be visible.
+        assert!(n_civil < 0.30);
+        assert!(n_civil > 0.20);
+        // At astronomical twilight stars are essentially saturated.
+        assert!(n_astro > 0.95);
+    }
+
+    #[test]
+    fn night_brightness_within_unit_interval() {
+        // Sweep sin_alt from -1.0 → +1.0; n should be in [0,1] and
+        // non-increasing (more sun = fewer stars).
+        let mut prev = 2.0; // > any valid n
+        for i in 0..=200 {
+            let sin_alt = -1.0 + (i as f32) * 0.01;
+            let n = night_brightness_from_solar_altitude(sin_alt);
+            assert!((0.0..=1.0).contains(&n), "n={n} sin_alt={sin_alt}");
+            assert!(
+                n <= prev + 1e-6,
+                "non-monotone at sin_alt={sin_alt}: {prev} -> {n}"
+            );
+            prev = n;
+        }
     }
 }
