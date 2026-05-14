@@ -66,6 +66,35 @@ pub fn magnetic_north_axis_f32(
     .as_vec3()
 }
 
+/// Smoothstep "band" mask in magnetic latitude space.
+///
+/// Returns `1.0` at `|lat_mag| == band_center_rad` and falls smoothly to `0.0`
+/// outside `[band_center_rad - 2·half_width, band_center_rad + 2·half_width]`.
+/// At the half-width edge the value is exactly `0.5`, mirroring a triangular
+/// `smoothstep` peak: `1 - smoothstep(0, 2·half_width, |delta|)` where
+/// `delta = |lat_mag| - band_center_rad`.
+pub fn aurora_band_mask(lat_mag_rad: f64, band_center_rad: f64, half_width_rad: f64) -> f64 {
+    let delta = (lat_mag_rad.abs() - band_center_rad).abs();
+    let edge1 = 2.0 * half_width_rad;
+    let t = (delta / edge1).clamp(0.0, 1.0);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    1.0 - smooth
+}
+
+/// Day-side gate: `0.0` when the sun is overhead, `1.0` when the sun is below
+/// the local horizon by a few degrees. Soft ramp around the horizon.
+///
+/// Linear ramp: `0` at `cos_zenith = 0.1` (sun ~5.7° above horizon),
+/// `0.5` at `cos_zenith = 0` (sun on horizon), and `1` at `cos_zenith = -0.1`
+/// (sun ~5.7° below horizon). Implements `f(c) = 0.5 - 5·c`, clamped.
+/// This expression is mirrored exactly in `assets/shaders/aurora.wgsl`.
+///
+/// `up` and `sun` must be unit vectors in the same frame.
+pub fn aurora_day_side_factor(up: DVec3, sun: DVec3) -> f64 {
+    let cos_zenith_sun = up.dot(sun);
+    (0.5 - 5.0 * cos_zenith_sun).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +151,71 @@ mod tests {
         let off_axis = (mag.y * mag.y + mag.z * mag.z).sqrt();
         let expected_off = 15.0_f64.to_radians().sin();
         assert!((off_axis - expected_off).abs() < 1e-9);
+    }
+
+    #[test]
+    fn aurora_band_mask_peaks_at_band_center_lat() {
+        let center = 67.0_f64.to_radians();
+        let half_w = 5.0_f64.to_radians();
+        let peak = aurora_band_mask(center, center, half_w);
+        let edge = aurora_band_mask(center - half_w, center, half_w);
+        let outside = aurora_band_mask(center - 2.0 * half_w, center, half_w);
+
+        assert!((peak - 1.0).abs() < 1e-6, "peak={peak}");
+        assert!((edge - 0.5).abs() < 1e-3, "edge={edge}");
+        assert!(outside <= 0.05, "outside={outside}");
+    }
+
+    #[test]
+    fn aurora_band_mask_is_hemisphere_symmetric() {
+        let center = 67.0_f64.to_radians();
+        let half_w = 5.0_f64.to_radians();
+        let north = aurora_band_mask(center, center, half_w);
+        let south = aurora_band_mask(-center, center, half_w);
+        assert!((north - south).abs() < 1e-12);
+    }
+
+    #[test]
+    fn aurora_day_side_factor_is_zero_when_sun_overhead() {
+        let up = DVec3::Y;
+        let sun = DVec3::Y;
+        let f = aurora_day_side_factor(up, sun);
+        assert!(f < 1e-6, "f={f}");
+    }
+
+    #[test]
+    fn aurora_day_side_factor_is_one_at_midnight() {
+        let up = DVec3::Y;
+        let sun = -DVec3::Y;
+        let f = aurora_day_side_factor(up, sun);
+        assert!((f - 1.0).abs() < 1e-6, "f={f}");
+    }
+
+    #[test]
+    fn aurora_day_side_factor_is_half_at_horizon() {
+        // Sun exactly on horizon ⇒ factor == 0.5.
+        let up = DVec3::Y;
+        let sun = DVec3::X;
+        let f = aurora_day_side_factor(up, sun);
+        assert!((f - 0.5).abs() < 1e-9, "f={f}");
+    }
+
+    #[test]
+    fn aurora_day_side_factor_saturates_below_horizon() {
+        // Sun 5.7° below horizon ⇒ factor == 1.0.
+        let up = DVec3::Y;
+        // cos_zenith = -0.1 ⇒ sun.y = -0.1, sun.x = sqrt(1-0.01)
+        let sun = DVec3::new((1.0_f64 - 0.01).sqrt(), -0.1, 0.0);
+        let f = aurora_day_side_factor(up, sun);
+        assert!((f - 1.0).abs() < 1e-9, "f={f}");
+    }
+
+    #[test]
+    fn aurora_day_side_factor_is_zero_above_horizon() {
+        // Sun 5.7° above horizon ⇒ factor == 0.0.
+        let up = DVec3::Y;
+        let sun = DVec3::new((1.0_f64 - 0.01).sqrt(), 0.1, 0.0);
+        let f = aurora_day_side_factor(up, sun);
+        assert!(f < 1e-9, "f={f}");
     }
 }
