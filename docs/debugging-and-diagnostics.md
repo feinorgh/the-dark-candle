@@ -288,6 +288,18 @@ cargo test -- --nocapture
 cargo test --test simulations -- --nocapture
 ```
 
+### Notable Runtime Log Tags
+
+A few subsystems emit single-line tagged status messages that are useful when
+auditing visual behavior. Grep for the tag to harvest them from an agent
+capture run.
+
+| Tag | Source | When emitted | Meaning |
+|---|---|---|---|
+| `[StitchMesh]` | `src/world/v2/stitch_mesh.rs` | When the count of active LOD-seam stitch entities changes | `active stitches: N (was M)` — pairwise fine→coarse LOD-seam ribbons currently spawned. |
+| `[CornerStitch]` | `src/world/v2/stitch_mesh.rs` | When the count of corner-cap stitches changes | Three-way LOD-junction corner caps currently spawned. |
+| `[StitchCoverage]` | `src/world/v2/stitch_mesh.rs` (`V2StitchCoverage`) | When any coverage counter changes | Per-frame audit of every tangential fine→coarse adjacency: `candidates same_face cross_face missing_loops empty_clip radial_reject no_tri lod_jumps`. **`lod_jumps>0` warns that adjacencies with `lod_delta>1` exist — the current stitch algorithm only handles `delta=1`, so those would be unstitched seams.** Used to close RENDER-010 Phase 5. |
+
 ---
 
 ## 4. Headless ECS Testing

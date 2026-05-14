@@ -364,6 +364,39 @@ full `Skeleton`/IK path remains the eventual target.
 Full design notes: **[entity-bodies.md](entity-bodies.md)** (see
 "Post-Phase 10 addition: procedural multi-part bodies").
 
+### LOD Seam Stitching ✅ (RENDER-010 resolved)
+
+Narrow gaps between fine and coarse LOD chunks (and between adjacent
+cube faces) are now closed by an explicit stitch-mesh layer in
+`src/world/v2/stitch_mesh.rs`:
+
+- **Pairwise stitches** — for each fine chunk + tangential boundary
+  direction, the system locates the `lod+1` coarse neighbor (same-face
+  or cross-face via `CubeSphereCoord::cross_face_neighbor_at_lod`),
+  clips the coarse chain to the fine chain's tangential extent, and
+  zipper-triangulates the two boundary loops. Per-vertex normals and
+  colors are propagated through, so seam ribbons inherit the terrain
+  shading instead of appearing as flat white surfaces.
+- **Corner caps** — three-way LOD-junction quads close the small
+  triangular hole left at the corner of every pairwise stitch ribbon
+  (`V2CornerStitchMap`, `v2_corner_stitch_update`). The "same-coarse"
+  case is intentionally skipped to avoid 32 m-spanning triangles
+  through the interior of a coarse chunk.
+- **Radial proximity filter** — pairs whose mean planet-radius
+  diverges by more than `CHUNK_SIZE × 2^coarse_lod` are rejected, so
+  two hills at very different elevations with overlapping 1-D
+  projections are never falsely connected.
+- **Coverage diagnostic** — `V2StitchCoverage` resource exposes
+  per-frame counters (candidates, same-face/cross-face stitched,
+  missing loops, empty clip, radial rejects, no-triangulation, and a
+  multi-step `suspicious_lod_jumps` probe). Emits `[StitchCoverage] …`
+  log lines whenever any counter changes; used to objectively verify
+  the algorithm covers the full topology it needs to.
+
+Audit at planet-level 7 coastline showed `suspicious_lod_jumps = 0`
+and `radial_proximity_rejects = 0`, confirming no class of seam is
+left uncovered.
+
 ### Coupling & Integration ✅
 
 Cross-model fluid coupling between the three physics solvers:
