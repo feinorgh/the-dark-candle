@@ -510,6 +510,7 @@ impl Plugin for LightingPlugin {
             .init_resource::<PendingShadowUpdates>()
             .init_resource::<GameElapsedSeconds>()
             .add_systems(Startup, (spawn_lights, sky_dome::spawn_sky_dome))
+            .add_systems(Update, aurora::spawn_aurora_shell)
             .add_systems(
                 Update,
                 (
@@ -537,6 +538,7 @@ impl Plugin for LightingPlugin {
                 (
                     sky_dome::anchor_sky_dome_to_camera,
                     terrain_caustic_material::update_terrain_caustic_uniform,
+                    aurora::anchor_aurora_shell_to_planet,
                 )
                     .after(bevy::transform::TransformSystems::Propagate),
             );

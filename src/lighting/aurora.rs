@@ -14,11 +14,14 @@
 //!      `aurora_day_side_factor`) — mirror the WGSL logic and serve as the
 //!      test fixtures for the algorithm.
 
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::math::{DVec3, Vec3};
 use bevy::pbr::{Material, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
+
+use crate::floating_origin::RenderOrigin;
 
 // ── AuroraMaterial ─────────────────────────────────────────────────────────────
 
@@ -147,6 +150,62 @@ pub fn aurora_band_mask(lat_mag_rad: f64, band_center_rad: f64, half_width_rad: 
 pub fn aurora_day_side_factor(up: DVec3, sun: DVec3) -> f64 {
     let cos_zenith_sun = up.dot(sun);
     (0.5 - 5.0 * cos_zenith_sun).clamp(0.0, 1.0)
+}
+
+// ── Systems ────────────────────────────────────────────────────────────────────
+
+/// Update-schedule system: spawn one shell entity at planet center once
+/// `PlanetConfig` is available. Idempotent — bails out if the shell already
+/// exists. Runs in Update rather than Startup because `PlanetConfig` is
+/// inserted by the world plugin asynchronously after RON load.
+pub fn spawn_aurora_shell(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<AuroraMaterial>>,
+    planet: Option<Res<crate::world::planet::PlanetConfig>>,
+    existing: Query<&AuroraShell>,
+) {
+    if !existing.is_empty() {
+        return;
+    }
+    let Some(planet) = planet else { return };
+
+    let r_outer = (planet.sea_level_radius as f32) + 300_000.0;
+    let r_inner = (planet.sea_level_radius as f32) + 95_000.0;
+
+    let mesh = meshes.add(Sphere::new(1.0).mesh().uv(48, 24));
+
+    let center_rad = (planet.aurora_band_center_deg as f32).to_radians();
+    let half_rad = (planet.aurora_band_half_width_deg as f32).to_radians();
+
+    let material = materials.add(AuroraMaterial {
+        planet_center_render: Vec4::ZERO,
+        magnetic_north_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        sun_world_direction: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        params: Vec4::new(r_inner, r_outer, planet.aurora_strength as f32, 0.0),
+        band: Vec4::new(center_rad, half_rad, 12.0, 0.05),
+    });
+
+    commands.insert_resource(AuroraMaterialHandle(material.clone()));
+
+    commands.spawn((
+        AuroraShell,
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_scale(Vec3::splat(r_outer)),
+        NoFrustumCulling,
+    ));
+}
+
+/// PostUpdate (after `TransformSystems::Propagate`): place the shell at the
+/// planet centre in render-space. Planet body sits at world origin (0,0,0),
+/// so its render-space position is `-RenderOrigin.0`.
+pub fn anchor_aurora_shell_to_planet(
+    render_origin: Res<RenderOrigin>,
+    mut q: Query<&mut Transform, With<AuroraShell>>,
+) {
+    let Ok(mut tr) = q.single_mut() else { return };
+    tr.translation = (-render_origin.0).as_vec3();
 }
 
 #[cfg(test)]
