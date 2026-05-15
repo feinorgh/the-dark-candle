@@ -152,6 +152,17 @@ pub fn aurora_day_side_factor(up: DVec3, sun: DVec3) -> f64 {
     (0.5 - 5.0 * cos_zenith_sun).clamp(0.0, 1.0)
 }
 
+// ── Uniform helpers ────────────────────────────────────────────────────────────
+
+use crate::lighting::SunWorldDirection;
+
+/// Compose the params uniform (x = r_inner, y = r_outer, z = strength,
+/// w = elapsed seconds). Factored out so it can be unit-tested without a
+/// full Bevy World.
+pub fn build_params_vec4(r_inner: f32, r_outer: f32, strength: f32, elapsed_s: f32) -> Vec4 {
+    Vec4::new(r_inner, r_outer, strength, elapsed_s)
+}
+
 // ── Systems ────────────────────────────────────────────────────────────────────
 
 /// Update-schedule system: spawn one shell entity at planet center once
@@ -206,6 +217,52 @@ pub fn anchor_aurora_shell_to_planet(
 ) {
     let Ok(mut tr) = q.single_mut() else { return };
     tr.translation = (-render_origin.0).as_vec3();
+}
+
+/// Per-frame update system: refresh all five uniforms on the shared aurora
+/// material. Runs in PostUpdate (after `TransformSystems::Propagate`) so
+/// `RenderOrigin` reflects the current floating-origin rebase.
+pub fn update_aurora_material(
+    handle: Option<Res<AuroraMaterialHandle>>,
+    sun: Option<Res<SunWorldDirection>>,
+    render_origin: Res<RenderOrigin>,
+    planet: Option<Res<crate::world::planet::PlanetConfig>>,
+    time: Res<Time>,
+    mut materials: ResMut<Assets<AuroraMaterial>>,
+) {
+    let Some(handle) = handle else { return };
+    let Some(planet) = planet else { return };
+    let Some(material) = materials.get_mut(&handle.0) else {
+        return;
+    };
+
+    let r_outer = (planet.sea_level_radius as f32) + 300_000.0;
+    let r_inner = (planet.sea_level_radius as f32) + 95_000.0;
+    let strength = planet.aurora_strength as f32;
+    material.params = build_params_vec4(r_inner, r_outer, strength, time.elapsed_secs());
+
+    let center = (-render_origin.0).as_vec3();
+    material.planet_center_render = Vec4::new(center.x, center.y, center.z, 0.0);
+
+    let planet_north = DVec3::from_array(planet.rotation_axis);
+    let mag_axis = magnetic_north_axis(
+        planet_north,
+        planet.magnetic_pole_offset_deg[0],
+        planet.magnetic_pole_offset_deg[1],
+    );
+    material.magnetic_north_axis =
+        Vec4::new(mag_axis.x as f32, mag_axis.y as f32, mag_axis.z as f32, 0.0);
+
+    let sun_vec = if let Some(sun) = sun {
+        sun.0.as_vec3()
+    } else {
+        Vec3::Y
+    };
+    material.sun_world_direction = Vec4::new(sun_vec.x, sun_vec.y, sun_vec.z, 0.0);
+
+    let center_rad = (planet.aurora_band_center_deg as f32).to_radians();
+    let half_rad = (planet.aurora_band_half_width_deg as f32).to_radians();
+    material.band = Vec4::new(center_rad, half_rad, 12.0, 0.05);
 }
 
 #[cfg(test)]
@@ -330,5 +387,19 @@ mod tests {
         let sun = DVec3::new((1.0_f64 - 0.01).sqrt(), 0.1, 0.0);
         let f = aurora_day_side_factor(up, sun);
         assert!(f < 1e-9, "f={f}");
+    }
+
+    #[test]
+    fn aurora_strength_zero_propagates_to_uniform() {
+        use bevy::math::Vec4;
+        let p = build_params_vec4(100.0, 400.0, 0.0, 12.5);
+        assert_eq!(p, Vec4::new(100.0, 400.0, 0.0, 12.5));
+    }
+
+    #[test]
+    fn aurora_strength_nonzero_propagates() {
+        use bevy::math::Vec4;
+        let p = build_params_vec4(95_000.0, 300_000.0, 1.0, 0.0);
+        assert_eq!(p, Vec4::new(95_000.0, 300_000.0, 1.0, 0.0));
     }
 }

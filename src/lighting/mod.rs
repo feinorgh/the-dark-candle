@@ -539,6 +539,7 @@ impl Plugin for LightingPlugin {
                     sky_dome::anchor_sky_dome_to_camera,
                     terrain_caustic_material::update_terrain_caustic_uniform,
                     aurora::anchor_aurora_shell_to_planet,
+                    aurora::update_aurora_material,
                 )
                     .after(bevy::transform::TransformSystems::Propagate),
             );
