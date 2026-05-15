@@ -488,6 +488,10 @@ impl Plugin for LightingPlugin {
         // Register the sky dome material type.
         app.add_plugins(MaterialPlugin::<sky_dome::SkyMaterial>::default());
 
+        // Register the aurora material type.
+        app.add_plugins(aurora::aurora_material_plugin());
+        app.init_resource::<aurora::AuroraMaterialHandle>();
+
         // Register the terrain caustic ExtendedMaterial.  Used by the v2
         // chunk manager, pairwise LOD-seam stitches, and corner caps for the
         // underwater caustic-light contribution.

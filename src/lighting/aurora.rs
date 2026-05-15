@@ -15,6 +15,60 @@
 //!      test fixtures for the algorithm.
 
 use bevy::math::{DVec3, Vec3};
+use bevy::pbr::{Material, MaterialPlugin};
+use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+
+// ── AuroraMaterial ─────────────────────────────────────────────────────────────
+
+/// Marker component for the aurora shell entity.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct AuroraShell;
+
+/// Handle to the single shared `AuroraMaterial`. Stored as a resource so the
+/// update system can mutate the material in place each frame.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct AuroraMaterialHandle(pub Handle<AuroraMaterial>);
+
+/// Additive volumetric aurora material. Backed by `shaders/aurora.wgsl`.
+#[derive(Asset, bevy::reflect::TypePath, AsBindGroup, Debug, Clone)]
+pub struct AuroraMaterial {
+    /// Planet center in render-space (= `-RenderOrigin.0` cast to f32). w unused.
+    #[uniform(0)]
+    pub planet_center_render: Vec4,
+    /// Magnetic-north unit vector in render-space. xyz used, w unused.
+    #[uniform(1)]
+    pub magnetic_north_axis: Vec4,
+    /// Sun direction (from surface toward sun) in render-space, unit. xyz used.
+    #[uniform(2)]
+    pub sun_world_direction: Vec4,
+    /// x = r_inner (m), y = r_outer (m), z = strength, w = elapsed time (s).
+    #[uniform(3)]
+    pub params: Vec4,
+    /// x = band centre lat (rad), y = half-width (rad), z = curtain freq,
+    /// w = curtain animation speed (rad/s).
+    #[uniform(4)]
+    pub band: Vec4,
+}
+
+impl Material for AuroraMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/aurora.wgsl".into()
+    }
+    fn fragment_shader() -> ShaderRef {
+        "shaders/aurora.wgsl".into()
+    }
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Add
+    }
+}
+
+/// Plugin glue helper — call from `LightingPlugin::build` to register the
+/// material asset type so `MeshMaterial3d<AuroraMaterial>` can be spawned.
+pub fn aurora_material_plugin() -> MaterialPlugin<AuroraMaterial> {
+    MaterialPlugin::<AuroraMaterial>::default()
+}
 
 /// Compute the magnetic-north unit vector in the same frame as
 /// `planet_north_axis`, given a `(lat_offset_deg, lon_offset_deg)` tilt.
