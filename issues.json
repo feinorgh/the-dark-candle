@@ -1275,5 +1275,19 @@
       "Phase 3.3 hybrid plan: scaffolding + procedural pattern lands now; physical LUT deferred until caustics.rs gains wave-surface support.",
       "Render-diagnostic helper to spawn camera below sea level would also help visually verify future iterations."
     ]
+  },
+  {
+    "id": "AURORA-001",
+    "title": "Aurora: future magnetic-field extensions",
+    "status": "open",
+    "severity": "low",
+    "category": "lighting",
+    "description": "Phase 3.5 ships a Earth-like dipole aurora (AuroraMaterial + aurora.wgsl). Several magnetic-field extensions are deferred: (1) storm-coupled intensity \u2014 aurora strength driven by a solar-wind / Kp-index analogue; (2) non-dipolar / quadrupolar field components for exotic planet types; (3) multi-band Jovian-style aurora rings (multiple oval latitudes, different colours); (4) dynamic pole migration over geological time or storm events; (5) true orbital-altitude spawn for the agent-capture harness (CLI currently places the camera at surface level regardless of altitude argument \u2014 orbital nadir capture is best-effort surface view).",
+    "affected_files": [
+      "src/lighting/aurora.rs",
+      "assets/shaders/aurora.wgsl"
+    ],
+    "first_seen": "2026-05-17",
+    "resolution": null
   }
 ]
