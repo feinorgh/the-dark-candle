@@ -1747,6 +1747,17 @@
       "files": [
         "src/world/v2/stitch_mesh.rs"
       ]
+    },
+    {
+      "id": "AURORA-PHASE-3.5",
+      "title": "Aurora Borealis / Australis (Phase 3.5)",
+      "status": "complete",
+      "commit": "c37a5a7",
+      "description": "Additive volumetric aurora shell (AuroraMaterial + aurora.wgsl). Earth-like dipole axis, auroral oval band-mask, day-side suppression. Ray-marched curtain pattern with colour gradient (green core \u2192 magenta fringe). Anchored to planet centre each frame via RenderOrigin. Future extensions tracked in AURORA-001.",
+      "files": [
+        "src/lighting/aurora.rs",
+        "assets/shaders/aurora.wgsl"
+      ]
     }
   ],
   "tech_debt": [
@@ -1804,7 +1815,7 @@
   },
   "meta": {
     "generated_date": "2026-05-14",
-    "generated_from_commit": "ec7deef",
+    "generated_from_commit": "c37a5a7",
     "confidence": "high",
     "verified": true,
     "verification_method": "Each 'complete' feature verified by locating specific implementing function(s) with file paths and line numbers. Plugin::build() methods confirmed to register actual systems (not stubs). WGSL shader files confirmed present.",
